@@ -1,0 +1,95 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: myrag-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-rag_password}
+      MYSQL_DATABASE: ${DB_NAME:-rag}
+      MYSQL_USER: ${DB_USER:-rag}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-rag_password}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASSWORD:-rag_password}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: myrag-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: myrag-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    # 宿主机 6379 常被其它服务占用，映射到 6380
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    container_name: myrag-server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: mysql
+      QDRANT_HOST: qdrant
+      REDIS_HOST: redis
+      UPLOAD_DIR: /app/uploads
+      DATA_DIR: /app/data
+    volumes:
+      - uploads:/app/uploads
+      - data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: myrag-web
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "5173:80"
+
+volumes:
+  mysql-data:
+  qdrant-data:
+  redis-data:
+  uploads:
+  data:

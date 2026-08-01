@@ -1,0 +1,1 @@
+UPDATE `users` SET `role` = CASE `role` WHEN 'ADMIN' THEN 'SUPER_ADMIN' WHEN 'TEACHER' THEN 'USER' ELSE `role` END WHERE `role` IN ('ADMIN', 'TEACHER');

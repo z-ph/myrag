@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1785599915766,
+      "tag": "0000_clever_deathstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1785602756511,
+      "tag": "0001_groovy_dakota_north",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1785602770556,
+      "tag": "0002_role_backfill",
+      "breakpoints": true
+    }
+  ]
+}

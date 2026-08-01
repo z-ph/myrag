@@ -1,0 +1,37 @@
+{
+  "name": "@myrag/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm --filter @myrag/server build:types && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "pnpm --filter @myrag/server build:types && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.1.0",
+    "@myrag/shared": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
+    "antd": "^6.5.3",
+    "dayjs": "^1.11.13",
+    "hono": "^4.12.33",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@myrag/server": "workspace:*",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^27.0.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  }
+}
