@@ -1,4 +1,6 @@
 import type { ServerConfig, SettingsService } from '@myrag/shared';
+import { ChatOpenAI, OpenAIEmbeddings } from '@langchain/openai';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { AppError } from '../lib/errors';
 import { logger } from '../lib/util';
 
@@ -40,43 +42,6 @@ export interface LlmClient {
   visionChat(system: string, prompt: string, imageBase64: string): Promise<string>;
 }
 
-/** 从 OpenAI 兼容 /chat/completions SSE 流中解析 delta 文本 */
-export interface StreamDelta {
-  /** 正式回答增量 */
-  content: string;
-  /** 思考过程增量（reasoning_content 字段） */
-  reasoning: string;
-}
-
-/** 从 OpenAI 兼容 /chat/completions SSE 流中解析增量（content + reasoning_content 双通道） */
-export async function* parseChatStream(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamDelta> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === '[DONE]') return;
-      try {
-        const parsed = JSON.parse(data) as { choices?: { delta?: { content?: string; reasoning_content?: string } }[] };
-        const delta = parsed.choices?.[0]?.delta;
-        const content = delta?.content ?? '';
-        const reasoning = delta?.reasoning_content ?? '';
-        if (content || reasoning) yield { content, reasoning };
-      } catch {
-        // 忽略无法解析的心跳行
-      }
-    }
-  }
-}
-
 /** 推理块闭合标签：</think>（DeepSeek 系）/ </thinking>（GLM 系） */
 const THINK_CLOSE = /<\/(think|thinking)>/g;
 
@@ -106,143 +71,135 @@ export function stripReasoning(text: string): string {
   return clean.trim();
 }
 
-interface EndpointConfig {
-  baseUrl: string;
-  apiKey: string;
+/**
+ * 统一错误归一化：langchain / openai SDK 异常 → 语义化 AppError(502)；
+ * 调用方取消（AbortError）与既有 AppError 原样透传。
+ */
+function wrapLlmError(err: unknown, message: string): never {
+  if (err instanceof AppError) throw err;
+  if (err instanceof Error && err.name === 'AbortError') throw err;
+  logger.error(`[llm] ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+  throw new AppError(502, message);
 }
 
 /** 归一化端点（去尾部斜杠） */
-function endpointOf(baseUrl: string, apiKey: string): EndpointConfig {
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey };
+function baseUrlOf(url: string): string | undefined {
+  const normalized = url.replace(/\/+$/, '');
+  return normalized || undefined;
 }
 
+/**
+ * langchain.js 客户端封装：三个模型可指向不同 OpenAI 兼容端点。
+ * 流式双通道（content / reasoning_content）与 think 块剥离为 langchain 未覆盖的
+ * 业务逻辑，在消费端保留自研（reasoning 仅展示、不回灌上下文）。
+ */
 export function createLlmClient(cfg: ServerConfig, settings: SettingsService): LlmClient {
-  // 各类型模型可指向不同 OpenAI 兼容端点（config 已回退到全局值）
-  const chatEndpoint = endpointOf(cfg.llmChatBaseUrl, cfg.llmChatApiKey);
-  const embedEndpoint = endpointOf(cfg.llmEmbeddingBaseUrl, cfg.llmEmbeddingApiKey);
-  const visionEndpoint = endpointOf(cfg.llmVisionBaseUrl, cfg.llmVisionApiKey);
-
-  async function requestStream(
-    endpoint: EndpointConfig,
-    path: string,
-    payload: unknown,
-    signal?: AbortSignal,
-  ): Promise<Response> {
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${endpoint.apiKey}` };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), cfg.llmTimeoutMs);
-    const onAbort = () => controller.abort();
-    signal?.addEventListener('abort', onAbort);
-    try {
-      const res = await fetch(`${endpoint.baseUrl}${path}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        logger.error(`[llm] ${path} HTTP ${res.status}: ${text.slice(0, 300)}`);
-        throw new AppError(502, '模型服务调用失败，请稍后重试');
-      }
-      return res;
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    }
-  }
+  const chatModel = new ChatOpenAI({
+    model: cfg.llmChatModel,
+    apiKey: cfg.llmChatApiKey,
+    configuration: { baseURL: baseUrlOf(cfg.llmChatBaseUrl) },
+    timeout: cfg.llmTimeoutMs,
+    maxRetries: 2,
+  });
+  const visionModel = new ChatOpenAI({
+    model: cfg.llmVisionModel,
+    apiKey: cfg.llmVisionApiKey,
+    configuration: { baseURL: baseUrlOf(cfg.llmVisionBaseUrl) },
+    timeout: cfg.llmTimeoutMs,
+    maxRetries: 2,
+  });
+  const embedModel = new OpenAIEmbeddings({
+    model: cfg.llmEmbeddingModel,
+    apiKey: cfg.llmEmbeddingApiKey,
+    configuration: { baseURL: baseUrlOf(cfg.llmEmbeddingBaseUrl) },
+    timeout: cfg.llmTimeoutMs,
+    maxRetries: 2,
+    // 保持原样发送文本，不做换行替换（与历史向量行为一致）
+    stripNewLines: false,
+    // 显式 float 编码：openai SDK 6.x 默认强制 base64，兼容 float 数组的网关（如 mock-llm/LiteLLM）
+    encodingFormat: 'float',
+    // 部分网关（如 LiteLLM）拒绝 dimensions 透传；配置为 0 时不传、用模型默认维度
+    dimensions: cfg.llmEmbeddingDimensions > 0 ? cfg.llmEmbeddingDimensions : undefined,
+  });
 
   return {
     async chatStream(messages, onDelta, onReasoningDelta, signal) {
-      const res = await requestStream(chatEndpoint, '/chat/completions', {
-        model: cfg.llmChatModel,
-        messages,
-        stream: true,
-        temperature: settings.get().llmChatTemperature,
-      });
-      if (!res.body) throw new AppError(502, '模型服务返回空流');
-      let full = '';
-      let reasoningFull = '';
-      let sentLen = 0;
-      let reasoningSentLen = 0;
-      for await (const { content, reasoning } of parseChatStream(res.body)) {
-        // 思考通道：逐段透传给展示层（不回灌上下文）
-        if (reasoning && onReasoningDelta) {
-          reasoningFull += reasoning;
-          const rChunk = reasoningFull.slice(reasoningSentLen);
-          if (rChunk) {
-            onReasoningDelta(rChunk);
-            reasoningSentLen = reasoningFull.length;
+      try {
+        chatModel.temperature = settings.get().llmChatTemperature;
+        const stream = await chatModel.stream(
+          messages.map((m) => [m.role, m.content] as [ChatMessage['role'], string]),
+          { signal },
+        );
+        let full = '';
+        let reasoningFull = '';
+        let sentLen = 0;
+        let reasoningSentLen = 0;
+        for await (const chunk of stream) {
+          // 思考通道：逐段透传给展示层（不回灌上下文）；langchain 将 reasoning_content 归入 additional_kwargs
+          const reasoning = typeof chunk.additional_kwargs?.reasoning_content === 'string' ? chunk.additional_kwargs.reasoning_content : '';
+          if (reasoning && onReasoningDelta) {
+            reasoningFull += reasoning;
+            const rChunk = reasoningFull.slice(reasoningSentLen);
+            if (rChunk) {
+              onReasoningDelta(rChunk);
+              reasoningSentLen = reasoningFull.length;
+            }
+          }
+          const content = typeof chunk.content === 'string' ? chunk.content : '';
+          if (!content) continue;
+          full += content;
+          // content 内嵌 think 块未闭合前不发送，闭合后一次性剥离（避免泄漏推理内容）
+          if (hasUnclosedThink(full)) continue;
+          const clean = stripThink(full);
+          const piece = clean.slice(sentLen);
+          if (piece) {
+            onDelta(piece);
+            sentLen = clean.length;
           }
         }
-        if (!content) continue;
-        full += content;
-        // content 内嵌 think 块未闭合前不发送，闭合后一次性剥离（避免泄漏推理内容）
-        if (hasUnclosedThink(full)) continue;
-        const clean = stripThink(full);
-        const chunk = clean.slice(sentLen);
-        if (chunk) {
-          onDelta(chunk);
-          sentLen = clean.length;
-        }
+        return { content: stripThink(full), reasoning: reasoningFull };
+      } catch (err) {
+        wrapLlmError(err, '模型服务调用失败，请稍后重试');
       }
-      return { content: stripThink(full), reasoning: reasoningFull };
     },
 
     async chat(messages) {
-      const res = await requestStream(chatEndpoint, '/chat/completions', {
-        model: cfg.llmChatModel,
-        messages,
-        stream: false,
-        temperature: settings.get().llmChatTemperature,
-      });
-      const json = (await res.json()) as { choices?: { message?: { content?: string; reasoning_content?: string } }[] };
-      const message = json.choices?.[0]?.message;
-      const content = message?.content;
-      if (typeof content !== 'string') throw new AppError(502, '模型服务返回异常');
-      return { content: stripThink(content), reasoning: message?.reasoning_content ?? '' };
+      try {
+        chatModel.temperature = settings.get().llmChatTemperature;
+        const res = await chatModel.invoke(messages.map((m) => [m.role, m.content] as [ChatMessage['role'], string]));
+        const content = typeof res.content === 'string' ? res.content : '';
+        const reasoning = typeof res.additional_kwargs?.reasoning_content === 'string' ? res.additional_kwargs.reasoning_content : '';
+        return { content: stripThink(content), reasoning };
+      } catch (err) {
+        wrapLlmError(err, '模型服务调用失败，请稍后重试');
+      }
     },
 
     async embed(texts) {
-      const res = await requestStream(embedEndpoint, '/embeddings', {
-        model: cfg.llmEmbeddingModel,
-        input: texts,
-        encoding_format: 'float',
-        // 部分网关（如 LiteLLM）拒绝 dimensions 透传；配置为 0 时不传、用模型默认维度
-        ...(cfg.llmEmbeddingDimensions > 0 ? { dimensions: cfg.llmEmbeddingDimensions } : {}),
-      });
-      const json = (await res.json()) as { data?: { embedding?: number[] }[] };
-      const data = json.data;
-      if (!Array.isArray(data) || data.length !== texts.length) {
-        throw new AppError(502, '向量化服务返回异常');
+      try {
+        return await embedModel.embedDocuments(texts);
+      } catch (err) {
+        wrapLlmError(err, '向量化服务返回异常');
       }
-      return data.map((item) => {
-        const emb = item.embedding;
-        if (!Array.isArray(emb)) throw new AppError(502, '向量化服务返回异常');
-        return emb;
-      });
     },
 
     async visionChat(system, prompt, imageBase64) {
-      const res = await requestStream(visionEndpoint, '/chat/completions', {
-        model: cfg.llmVisionModel,
-        messages: [
-          { role: 'system', content: system },
-          {
-            role: 'user',
+      try {
+        visionModel.temperature = settings.get().llmVisionTemperature;
+        const res = await visionModel.invoke([
+          new SystemMessage(system),
+          new HumanMessage({
             content: [
               { type: 'text', text: prompt },
               { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
             ],
-          },
-        ],
-        stream: false,
-        temperature: settings.get().llmVisionTemperature,
-      });
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-      const content = json.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') throw new AppError(502, '视觉模型服务返回异常');
-      return stripThink(content);
+          }),
+        ]);
+        const content = typeof res.content === 'string' ? res.content : '';
+        return stripThink(content);
+      } catch (err) {
+        wrapLlmError(err, '视觉模型服务返回异常');
+      }
     },
   };
 }

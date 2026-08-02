@@ -69,7 +69,7 @@ const server = createServer((req, res) => {
         let step = 0;
         const timer = setInterval(() => {
           if (step < reasoningParts.length) {
-            res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: reasoningParts[step] } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { role: 'assistant', reasoning_content: reasoningParts[step] } }] })}\n\n`);
             step += 1;
             return;
           }
