@@ -2,7 +2,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import type { DocumentStatus, ServerConfig, FileType } from '@myrag/shared';
+import type { DocumentStatus, ServerConfig, FileType, SettingsService } from '@myrag/shared';
 import { DEFAULTS } from '@myrag/shared';
 import type { Db } from '../../db';
 import { documents, documentChunks } from '../../db/schema';
@@ -62,7 +62,7 @@ export function assertSupportedFile(filename: string, buffer: Buffer): FileType 
   return fileType;
 }
 
-export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient, cfg: ServerConfig): ProcessService {
+export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient, cfg: ServerConfig, settings: SettingsService): ProcessService {
   const uploadRoot = cfg.uploadDir;
 
   /** 单个已入库文档的向量化流程（从解析到写入），返回分块数 */
@@ -80,16 +80,17 @@ export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient
       throw new ParseError('未能从文档中提取到文本内容');
     }
 
-    // 2. 分块
-    const chunks = chunkText(cleanText, cfg.chunkSize, cfg.chunkOverlap, cfg.chunkKeywordsTopN);
+    // 2. 分块（参数来自动态设置，可运行时调整）
+    const s = settings.get();
+    const chunks = chunkText(cleanText, s.chunkSize, s.chunkOverlap, s.chunkKeywordsTopN);
     if (chunks.length === 0) throw new ParseError('未能从文档中提取到文本内容');
 
     // 3. 向量化（分批，批次上限可配）
     const documentTime = extractDocumentTime(cleanText);
     const documentKeywords = extractKeywords(cleanText);
     const vectors: number[][] = [];
-    for (let i = 0; i < chunks.length; i += cfg.embedBatchSize) {
-      const batch = chunks.slice(i, i + cfg.embedBatchSize);
+    for (let i = 0; i < chunks.length; i += s.embedBatchSize) {
+      const batch = chunks.slice(i, i + s.embedBatchSize);
       vectors.push(...(await llm.embed(batch.map((c) => c.text))));
     }
 

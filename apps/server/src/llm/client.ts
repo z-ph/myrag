@@ -1,4 +1,4 @@
-import type { ServerConfig } from '@myrag/shared';
+import type { ServerConfig, SettingsService } from '@myrag/shared';
 import { AppError } from '../lib/errors';
 import { logger } from '../lib/util';
 
@@ -80,7 +80,7 @@ function endpointOf(baseUrl: string, apiKey: string): EndpointConfig {
   return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey };
 }
 
-export function createLlmClient(cfg: ServerConfig): LlmClient {
+export function createLlmClient(cfg: ServerConfig, settings: SettingsService): LlmClient {
   // 各类型模型可指向不同 OpenAI 兼容端点（config 已回退到全局值）
   const chatEndpoint = endpointOf(cfg.llmChatBaseUrl, cfg.llmChatApiKey);
   const embedEndpoint = endpointOf(cfg.llmEmbeddingBaseUrl, cfg.llmEmbeddingApiKey);
@@ -122,7 +122,7 @@ export function createLlmClient(cfg: ServerConfig): LlmClient {
         model: cfg.llmChatModel,
         messages,
         stream: true,
-        temperature: cfg.llmChatTemperature,
+        temperature: settings.get().llmChatTemperature,
       });
       if (!res.body) throw new AppError(502, '模型服务返回空流');
       let full = '';
@@ -146,7 +146,7 @@ export function createLlmClient(cfg: ServerConfig): LlmClient {
         model: cfg.llmChatModel,
         messages,
         stream: false,
-        temperature: cfg.llmChatTemperature,
+        temperature: settings.get().llmChatTemperature,
       });
       const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       const content = json.choices?.[0]?.message?.content;
@@ -188,7 +188,7 @@ export function createLlmClient(cfg: ServerConfig): LlmClient {
           },
         ],
         stream: false,
-        temperature: cfg.llmVisionTemperature,
+        temperature: settings.get().llmVisionTemperature,
       });
       const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       const content = json.choices?.[0]?.message?.content;

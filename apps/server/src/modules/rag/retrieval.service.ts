@@ -1,5 +1,5 @@
 import { eq, inArray } from 'drizzle-orm';
-import type { ServerConfig, SourceReference, SourceType } from '@myrag/shared';
+import type { ServerConfig, SourceReference, SourceType, SettingsService } from '@myrag/shared';
 import type { Db } from '../../db';
 import { documentChunks } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
@@ -88,9 +88,8 @@ export function createRetrievalService(
   qdrant: QdrantStore,
   llm: LlmClient,
   cfg: ServerConfig,
+  settings: SettingsService,
 ): RetrievalService {
-  const bm25 = createBm25Scorer(cfg.bm25K1, cfg.bm25B);
-
   /** 从快照表批量补齐 hits 的文本与元数据 */
   async function hydrate(hits: VectorSearchHit[]): Promise<RetrievedChunk[]> {
     if (hits.length === 0) return [];
@@ -130,33 +129,35 @@ export function createRetrievalService(
 
   return {
     async retrieve(question, maxResults) {
-      const limit = maxResults ?? cfg.maxResults;
-      const topK = limit * cfg.candidateMultiplier;
+      const s = settings.get();
+      const limit = maxResults ?? s.maxResults;
+      const topK = limit * s.candidateMultiplier;
       const [vector] = await llm.embed([question]);
       if (!vector) throw new AppError(502, '向量化服务返回异常');
-      const hits = (await qdrant.search(vector, topK)).filter((h) => h.score >= cfg.minScore);
+      const hits = (await qdrant.search(vector, topK)).filter((h) => h.score >= s.minScore);
       const candidates = await hydrate(hits);
 
-      // BM25 混合重排
+      // BM25 混合重排（K1/B 参数取自动态设置）
+      const bm25 = createBm25Scorer(s.bm25K1, s.bm25B);
       const texts = candidates.map((c) => c.text);
       const bm25Scores = bm25.score(question, texts);
       const normVector = minMaxNormalize(candidates.map((c) => c.vectorScore));
       const normBm25 = minMaxNormalize(bm25Scores);
       candidates.forEach((c, i) => {
         c.bm25Score = normBm25[i] ?? 0;
-        c.score = (1 - cfg.bm25Weight) * (normVector[i] ?? 0) + cfg.bm25Weight * c.bm25Score;
+        c.score = (1 - s.bm25Weight) * (normVector[i] ?? 0) + s.bm25Weight * c.bm25Score;
       });
       candidates.sort((a, b) => b.score - a.score);
-      const afterRelevance = candidates.filter((c) => c.score >= cfg.relevanceThreshold);
+      const afterRelevance = candidates.filter((c) => c.score >= s.relevanceThreshold);
 
       // Jaccard 去重（保留分高者）
       const deduped: RetrievedChunk[] = [];
       for (const c of afterRelevance) {
-        const dup = deduped.some((d) => jaccard(d.text, c.text) >= cfg.jaccardThreshold);
+        const dup = deduped.some((d) => jaccard(d.text, c.text) >= s.jaccardThreshold);
         if (!dup) deduped.push(c);
       }
 
-      const selected = mmrSelect(deduped, cfg.mmrLambda, limit);
+      const selected = mmrSelect(deduped, s.mmrLambda, limit);
       const totalContextChars = selected.reduce((sum, c) => sum + c.text.length, 0);
 
       return {
@@ -167,22 +168,23 @@ export function createRetrievalService(
           afterDedup: deduped.length,
           afterSelection: selected.length,
           totalContextChars,
-          contextBudget: cfg.contextBudget,
+          contextBudget: s.contextBudget,
         },
       };
     },
 
     async retrieveByEmbedding(embedding, maxResults) {
-      const hits = (await qdrant.search(embedding, maxResults)).filter((h) => h.score >= cfg.minScore);
+      const hits = (await qdrant.search(embedding, maxResults)).filter((h) => h.score >= settings.get().minScore);
       const hydrated = await hydrate(hits);
       return hydrated;
     },
 
     async retrieveImageRoute(question, maxResults) {
-      const limit = maxResults ?? cfg.maxResults;
+      const s = settings.get();
+      const limit = maxResults ?? s.maxResults;
       const [vector] = await llm.embed([question]);
       if (!vector) throw new AppError(502, '向量化服务返回异常');
-      const hits = (await qdrant.search(vector, limit * cfg.candidateMultiplier)).filter((h) => h.score >= cfg.minScore);
+      const hits = (await qdrant.search(vector, limit * s.candidateMultiplier)).filter((h) => h.score >= s.minScore);
       return hydrate(hits);
     },
   };

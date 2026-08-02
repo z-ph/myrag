@@ -208,6 +208,17 @@ export const conversationMessages = mysqlTable(
   ],
 );
 
+// ---------- 运行时动态设置 ----------
+export const systemSettings = mysqlTable(
+  'system_settings',
+  {
+    key: varchar('key', { length: 64 }).primaryKey(),
+    /** 数值的 JSON 文本 */
+    value: text('value').notNull(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+  },
+);
+
 // ---------- 关系 ----------
 export const documentsRelations = relations(documents, ({ many }) => ({
   chunks: many(documentChunks),

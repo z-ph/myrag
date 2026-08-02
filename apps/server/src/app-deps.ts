@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import type { ServerConfig } from '@myrag/shared';
+import type { ServerConfig, SettingsService } from '@myrag/shared';
 import type { Db, DbHandle } from './db';
 import { createDb } from './db';
 import type { RedisStore } from './store/redis';
@@ -29,6 +29,7 @@ import type { ImageService } from './modules/rag/image.service';
 import { createImageService } from './modules/rag/image.service';
 import type { RagService } from './modules/rag/rag.service';
 import { createRagService } from './modules/rag/rag.service';
+import { createSettingsService } from './modules/settings/settings.service';
 import { logger } from './lib/util';
 
 /** 应用依赖容器：所有服务实例 */
@@ -47,6 +48,7 @@ export interface AppDeps {
   conversationService: ConversationService;
   retrievalService: RetrievalService;
   ragService: RagService;
+  settingsService: SettingsService;
   close: () => Promise<void>;
 }
 
@@ -62,18 +64,19 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const handle: DbHandle = createDb(cfg);
   const redis = createRedisStore(cfg);
   const qdrant = createQdrantStore(cfg);
-  const llm = createLlmClient(cfg);
+  const settingsService = createSettingsService(handle.db, redis);
+  const llm = createLlmClient(cfg, settingsService);
 
   const authService = createAuthService(handle.db, cfg);
   const usersService = createUsersService(handle.db);
-  const processService = createProcessService(handle.db, qdrant, llm, cfg);
+  const processService = createProcessService(handle.db, qdrant, llm, cfg, settingsService);
   const documentService = createDocumentService(handle.db, qdrant, cfg);
   const batchService = createBatchService(handle.db, processService, redis, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
-  const retrievalService = createRetrievalService(handle.db, qdrant, llm, cfg);
+  const retrievalService = createRetrievalService(handle.db, qdrant, llm, cfg, settingsService);
   const imageService = createImageService(llm, cfg);
-  const ragService = createRagService(llm, retrievalService, imageService, conversationService, redis, cfg);
+  const ragService = createRagService(llm, retrievalService, imageService, conversationService, redis, cfg, settingsService);
 
   const deps: AppDeps = {
     cfg,
@@ -90,7 +93,9 @@ export function createApp(cfg: ServerConfig): AppContainer {
     conversationService,
     retrievalService,
     ragService,
+    settingsService,
     close: async () => {
+      settingsService.close();
       await handle.close();
       await redis.close();
     },
@@ -104,6 +109,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
       await mkdir(`${cfg.dataDir}/chunks`, { recursive: true });
       await qdrant.ensureCollection();
       await authService.bootstrapAdmin();
+      await settingsService.init();
       // 无状态化：每个实例都是任务消费者；补偿扫描由分布式锁保证单实例执行
       batchService.startWorker();
       batchService.startRecoveryLoop();

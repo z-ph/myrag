@@ -158,7 +158,7 @@ export function createConversationRoutes(deps: AppDeps) {
         }),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          const detail = await deps.conversationService.getDetail(conversationId, c.get('auth').username, deps.cfg.memoryWindow);
+          const detail = await deps.conversationService.getDetail(conversationId, c.get('auth').username, deps.settingsService.get().memoryWindow);
           return c.json(detail);
         },
       )

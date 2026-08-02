@@ -15,6 +15,8 @@ export const RedisKeys = {
   generating: (conversationId: string) => `${P}:gen:${conversationId}`,
   /** 取消信号频道 */
   cancelChannel: `${P}:cancel`,
+  /** 动态设置变更广播频道 */
+  settingsChannel: `${P}:settings`,
   /** 匿名问答结果暂存：questionId → JSON（TTL 24h，易失非持久化） */
   anonResult: (questionId: string) => `${P}:anon:result:${questionId}`,
 } as const;

@@ -1,4 +1,4 @@
-import type { ServerConfig, ContextMessage, ImageUnderstandingResult, QuestionResult, SourceReference } from '@myrag/shared';
+import type { ServerConfig, ContextMessage, ImageUnderstandingResult, QuestionResult, SourceReference, SettingsService } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
 import { AppError, badRequest } from '../../lib/errors';
 import { logger } from '../../lib/util';
@@ -77,6 +77,7 @@ export function createRagService(
   conversationService: ConversationService,
   redis: RedisStore,
   cfg: ServerConfig,
+  settings: SettingsService,
 ): RagService {
   /** conversationId → 本实例进行中的生成控制器 */
   const activeGenerations = new Map<string, AbortController>();
@@ -110,7 +111,7 @@ export function createRagService(
     const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
       { role: 'system', content: anonymous ? ANONYMOUS_SYSTEM_PROMPT : SYSTEM_PROMPT },
     ];
-    for (const m of history.slice(-cfg.memoryWindow)) {
+    for (const m of history.slice(-settings.get().memoryWindow)) {
       messages.push({ role: m.role === 'USER' ? 'user' : 'assistant', content: m.content });
     }
     const userContent = contextText ? `以下是知识库检索到的相关资料：\n\n${contextText}\n\n问题：${question}` : question;
@@ -136,7 +137,8 @@ export function createRagService(
         retrieval.retrieveImageRoute(question, maxResults),
         retrieval.retrieveByEmbedding(imageEmbedding, maxResults),
       ]);
-      const textWeight = 1 - cfg.imageRetrievalWeight;
+      const imageWeight = settings.get().imageRetrievalWeight;
+      const textWeight = 1 - imageWeight;
       const merged = new Map<string, RetrievedChunk>();
       for (const c of textRoute) {
         const item = { ...c, score: c.score * textWeight, sourceType: 'TEXT' as const };
@@ -146,9 +148,9 @@ export function createRagService(
         const key = `${c.documentId}:${c.chunkIndex}`;
         const existing = merged.get(key);
         if (existing) {
-          existing.score += c.score * cfg.imageRetrievalWeight;
+          existing.score += c.score * imageWeight;
         } else {
-          merged.set(key, { ...c, score: c.score * cfg.imageRetrievalWeight, sourceType: 'IMAGE' as const });
+          merged.set(key, { ...c, score: c.score * imageWeight, sourceType: 'IMAGE' as const });
         }
       }
       chunks = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, maxResults);
@@ -161,9 +163,10 @@ export function createRagService(
 
     // 上下文预算截断
     let contextText = '';
+    const budget = settings.get().contextBudget;
     for (const c of chunks) {
       const piece = formatChunk(c);
-      if (contextText.length + piece.length > cfg.contextBudget) break;
+      if (contextText.length + piece.length > budget) break;
       contextText += `${piece}\n\n`;
     }
     if (imageUnderstanding) {
@@ -188,7 +191,7 @@ export function createRagService(
 
     let contextText: string | null = null;
     let sources: SourceReference[] = [];
-    const maxResults = input.maxResults ?? cfg.maxResults;
+    const maxResults = input.maxResults ?? settings.get().maxResults;
     if (input.useKnowledgeBase !== false) {
       ({ contextText, sources } = await buildContext(input.question, maxResults, imageUnderstanding));
     }
@@ -206,7 +209,7 @@ export function createRagService(
   ) {
     if (!input.userId) throw badRequest('缺少用户身份');
     await conversationService.ensure(input.conversationId, input.userId, input.question);
-    const detail = await conversationService.getDetail(input.conversationId, input.userId, cfg.memoryWindow);
+    const detail = await conversationService.getDetail(input.conversationId, input.userId, settings.get().memoryWindow);
     const history: ContextMessage[] = detail.recentMessages.map((m) => ({ role: m.role, content: m.content }));
     await conversationService.appendMessage(input.conversationId, 'USER', input.question);
     await conversationService.appendMessage(input.conversationId, 'ASSISTANT', '', 'GENERATING');
