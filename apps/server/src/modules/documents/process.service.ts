@@ -13,7 +13,8 @@ import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
 import { conflict, badRequest } from '../../lib/errors';
 
-const EMBED_BATCH = 32;
+// 单次向量化最大行数：百炼 text-embedding-v4 上限 10 行（OpenAI 兼容模式）
+const EMBED_BATCH = 10;
 
 export interface ProcessInput {
   userId: string;

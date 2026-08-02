@@ -43,13 +43,25 @@ export interface ServerConfig {
   instanceId: string;
 
   // LLM（OpenAI 兼容）
+  // 全局默认端点；各类型可单独覆盖（LLM_*_BASE_URL / LLM_*_API_KEY，未配置时回退到全局值）
   llmBaseUrl: string;
   llmApiKey: string;
   llmChatModel: string;
+  /** chat 专用端点，为空时使用 llmBaseUrl / llmApiKey */
+  llmChatBaseUrl: string;
+  llmChatApiKey: string;
   llmEmbeddingModel: string;
+  /** embedding 专用端点，为空时使用 llmBaseUrl / llmApiKey */
+  llmEmbeddingBaseUrl: string;
+  llmEmbeddingApiKey: string;
+  /** 向量维度（0 = 不传，使用模型默认维度；text-embedding-v3/v4 支持指定） */
+  llmEmbeddingDimensions: number;
   llmOcrModel: string;
   llmTimeoutMs: number;
   llmVisionModel: string;
+  /** vision/OCR 专用端点，为空时使用 llmBaseUrl / llmApiKey */
+  llmVisionBaseUrl: string;
+  llmVisionApiKey: string;
 
   // 认证
   jwtSecret: string;
@@ -105,10 +117,17 @@ const ServerConfigSchema = z.object({
   llmBaseUrl: z.string(),
   llmApiKey: z.string(),
   llmChatModel: z.string(),
+  llmChatBaseUrl: z.string(),
+  llmChatApiKey: z.string(),
   llmEmbeddingModel: z.string(),
+  llmEmbeddingDimensions: z.number(),
+  llmEmbeddingBaseUrl: z.string(),
+  llmEmbeddingApiKey: z.string(),
   llmOcrModel: z.string(),
   llmTimeoutMs: z.number(),
   llmVisionModel: z.string(),
+  llmVisionBaseUrl: z.string(),
+  llmVisionApiKey: z.string(),
   jwtSecret: z.string(),
   jwtTtlSeconds: z.number(),
   adminUsername: z.string(),
@@ -156,9 +175,16 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     llmBaseUrl: env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
     llmApiKey: env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmChatModel: env.LLM_CHAT_MODEL ?? env.OPENAI_CHAT_MODEL ?? 'glm-4.6v-flash',
+    llmChatBaseUrl: env.LLM_CHAT_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
+    llmChatApiKey: env.LLM_CHAT_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmEmbeddingModel: env.LLM_EMBEDDING_MODEL ?? env.OPENAI_EMBEDDING_MODEL ?? 'qwen3-vl-embedding-2b',
+    llmEmbeddingDimensions: num('LLM_EMBEDDING_DIMENSIONS', 0),
+    llmEmbeddingBaseUrl: env.LLM_EMBEDDING_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
+    llmEmbeddingApiKey: env.LLM_EMBEDDING_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmOcrModel: env.LLM_OCR_MODEL ?? env.OPENAI_OCR_MODEL ?? 'glm-ocr',
     llmVisionModel: env.LLM_VISION_MODEL ?? env.OPENAI_VISION_MODEL ?? 'glm-4.6v-flash',
+    llmVisionBaseUrl: env.LLM_VISION_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
+    llmVisionApiKey: env.LLM_VISION_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmTimeoutMs: num('LLM_TIMEOUT_MS', 120_000),
     jwtSecret: env.JWT_SECRET ?? 'dev-secret-change-me',
     jwtTtlSeconds: num('JWT_TTL_SECONDS', DEFAULTS.jwtTtlSeconds),
