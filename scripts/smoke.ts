@@ -98,6 +98,7 @@ async function main(): Promise<void> {
   const events = [...sseText.matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
   check('SSE 事件流完整', events.includes('start') && events.includes('delta') && events.includes('complete'), events.join(','));
   check('SSE 含来源', events.includes('sources'));
+  check('SSE 含思考过程（reasoning）', events.includes('reasoning'));
   check('SSE 回答非空', /【Mock 回答】/.test(sseText));
 
   console.log('[6] 会话管理');

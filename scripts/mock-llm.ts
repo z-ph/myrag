@@ -55,23 +55,33 @@ const server = createServer((req, res) => {
       const question = typeof lastUser?.content === 'string' ? lastUser.content : '';
       const answer = `【Mock 回答】已收到问题「${question.slice(0, 50)}」。这是本地冒烟测试的固定回复，不表示真实知识库回答。`;
 
+      // 模拟思考内容（reasoning_content 独立字段，流式逐段输出）
+      const reasoning = `用户问「${question.slice(0, 20)}」，先从知识库检索相关制度条款，再组织简明回答。`;
+
       if (body['stream'] === true) {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
         });
+        const reasoningParts = [reasoning.slice(0, 15), reasoning.slice(15, 30), reasoning.slice(30)];
         const parts = [answer.slice(0, 20), answer.slice(20, 40), answer.slice(40)];
-        let i = 0;
+        let step = 0;
         const timer = setInterval(() => {
-          if (i >= parts.length) {
-            res.write('data: [DONE]\n\n');
-            res.end();
-            clearInterval(timer);
+          if (step < reasoningParts.length) {
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: reasoningParts[step] } }] })}\n\n`);
+            step += 1;
             return;
           }
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: parts[i] } }] })}\n\n`);
-          i += 1;
+          const contentIdx = step - reasoningParts.length;
+          if (contentIdx < parts.length) {
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: parts[contentIdx] } }] })}\n\n`);
+            step += 1;
+            return;
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          clearInterval(timer);
         }, 30);
         return;
       }
@@ -79,7 +89,7 @@ const server = createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
-          choices: [{ message: { role: 'assistant', content: answer } }],
+          choices: [{ message: { role: 'assistant', content: answer, reasoning_content: reasoning } }],
           model: 'mock-chat',
         }),
       );
