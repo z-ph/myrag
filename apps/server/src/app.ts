@@ -8,7 +8,7 @@ import { createAuthRoutes } from './modules/auth/auth.routes';
 import { createUsersRoutes } from './modules/users/users.routes';
 import { createDocumentsRoutes } from './modules/documents/documents.routes';
 import { createUploadRoutes } from './modules/upload/upload.routes';
-import { createRagRoutes } from './modules/rag/rag.routes';
+import { createConversationRoutes, createQuestionRoutes } from './modules/rag/rag.routes';
 
 /**
  * 组装应用。链式累积路由 schema（const 链），返回值即 RPC 客户端（hc<AppType>）的类型真源。
@@ -26,7 +26,7 @@ export function buildApp(deps: AppDeps) {
         title: '财务处知识库 RAG API',
         version: '0.1.0',
         description:
-          '内部 RAG 知识库问答系统 API。统一响应 `{ code, message, data }`，`code=0` 表示成功；流式问答使用 SSE。',
+          '内部 RAG 知识库问答系统 API。资源化 REST 风格：成功直接返回资源表示，错误由 HTTP 状态码 + 统一错误体表达；流式问答使用 SSE。',
       },
     })
     .use('*', cors())
@@ -34,8 +34,9 @@ export function buildApp(deps: AppDeps) {
     .route('/auth', createAuthRoutes(deps))
     .route('/admin/users', createUsersRoutes(deps))
     .route('/documents', createDocumentsRoutes(deps))
-    .route('/documents/batch-upload', createUploadRoutes(deps))
-    .route('/rag', createRagRoutes(deps))
+    .route('/upload-sessions', createUploadRoutes(deps))
+    .route('/conversations', createConversationRoutes(deps))
+    .route('/questions', createQuestionRoutes(deps))
     // 以下原生方法保留在链尾（不参与 RPC 类型亦无妨）
     .get('/health', (c) => c.json({ status: 'ok', service: 'myrag-server' }))
     .get(

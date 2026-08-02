@@ -3,16 +3,16 @@ import type { LoginResponse } from '@myrag/shared';
 
 const BACK_END_URL = process.env.E2E_BACKEND_URL ?? 'http://localhost:8080';
 
-/** 通过 API 登录获取 token */
+/** 通过 API 登录获取 token（创建会话资源） */
 export async function apiLogin(username: string, password: string): Promise<string> {
-  const res = await fetch(`${BACK_END_URL}/auth/login`, {
+  const res = await fetch(`${BACK_END_URL}/auth/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
   });
   expect(res.ok).toBeTruthy();
-  const body = (await res.json()) as { data: LoginResponse };
-  return body.data.token;
+  const body = (await res.json()) as LoginResponse;
+  return body.token;
 }
 
 /** 等待聊天页出现非空 AI 回复（流式完成） */

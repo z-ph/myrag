@@ -65,8 +65,8 @@ export default function DocumentsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (documentId: string) => documentsApi.remove(documentId),
-    onSuccess: (result) => {
-      message.success(result.message);
+    onSuccess: () => {
+      message.success('已删除');
       invalidate();
     },
     onError: (err: Error) => message.error(err.message),
@@ -74,7 +74,7 @@ export default function DocumentsPage() {
 
   const recoveryMutation = useMutation({
     mutationFn: () => documentsApi.recoveryTrigger(),
-    onSuccess: (result) => message.success(`${result.message}（${result.triggeredTaskCount} 个任务）`),
+    onSuccess: (result) => message.success(`已触发 ${result.triggeredTaskCount} 个任务恢复`),
     onError: (err: Error) => message.error(err.message),
   });
 

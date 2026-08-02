@@ -1,6 +1,6 @@
 # API 风格改造方案（RESTful）
 
-> 本文档是 API 风格改造提案，当前版本目标：全站 RESTful 化。业务口径仍以 `docs/business.md` 为准，接口级细节以 `/api/openapi.json` 为准。
+> 本文档是 API 风格改造提案。**已实施完成（2026-08-02）**：全站已 RESTful 化，以下为契约定义与历史决策记录。业务口径以 `docs/business.md` 为准，接口级细节以 `/api/openapi.json` 为准。
 
 ## 1. 设计原则
 
@@ -64,7 +64,8 @@ RESTful 化的规则，全站统一执行：
 |---|---|---|
 | `POST /rag/ask` | `POST /conversations/{conversationId}/messages` | 问答 = 创建消息资源；`conversationId` 移入路径参数，会话懒创建；body 支持 `stream=true` 返回 SSE |
 | `POST /rag/ask/stream` | 合并入上一条 | 流式 = 同一端点 `stream=true`（OpenAI 先例），删除独立端点 |
-| `POST /rag/ask/anonymous` | `POST /questions`（公开） | 匿名问答 = 创建问题资源，不落库，支持 `stream=true` |
+| `POST /rag/ask/anonymous` | `POST /questions`（公开） | 匿名问答 = 创建问题资源，不落库；`stream=true` 返回 SSE，断开后服务端继续生成，结果暂存 Redis（TTL 24h） |
+| — | `GET /questions/{questionId}`（公开） | 查询匿名问答暂存结果（关闭页面后恢复；不存在/过期返回 404） |
 | `GET /rag/conversations` | `GET /conversations` | 会话提升为顶级资源，去掉 `/rag` 前缀 |
 | `GET /rag/conversations/{conversationId}` | `GET /conversations/{conversationId}` | |
 | `DELETE /rag/conversations/{conversationId}` | `DELETE /conversations/{conversationId}` | |
@@ -83,6 +84,7 @@ RESTful 化的规则，全站统一执行：
 | 登录端点 | `POST /auth/sessions` | 保留 `/auth/login` 是通行惯例，但创建会话资源更自洽 |
 | 批量任务与分片 | 任务挂 `documents/uploads`，分片独立 `/upload-sessions` | 两个概念（批量队列 vs 分片会话）不混用 |
 | 会话前缀 | 去掉 `/rag`，顶级 `/conversations` | RAG 语义下沉到 service 层，URL 只留资源 |
+| 匿名流式与恢复 | `POST /questions` 支持 `stream=true`（SSE）；断开后服务端继续生成，结果暂存 Redis TTL 24h，`GET /questions/{questionId}` 恢复 | 匿名/登录的本质差异是状态性：即弃 → 暂存（TTL）→ 持久（会话）；匿名端点不参与会话模型（无历史/取消/续问），仅补暂存恢复能力 |
 
 ## 4. 错误约定
 
@@ -90,15 +92,23 @@ RESTful 化的规则，全站统一执行：
 - 错误：HTTP 状态码表达类别（400/401/403/404/409/413/500），错误体 `{ code, message, details }` 提供稳定错误码与详情。
 - 前端 `unwrap` 简化为：`res.ok ? res.json() : throw ApiError`。
 
-## 5. 实施顺序与涉及文件
+## 5. 实施记录
 
-1. **契约层**：`packages/shared/schemas.ts`、`contract.ts`（去信封 schema、新增消息/会话/问题 schema 路径调整）
-2. **服务端路由**：`openapi.ts`（`okSchema` 移除）、`auth.routes.ts`、`documents.routes.ts`、`upload.routes.ts`、`rag.routes.ts`（拆 `/conversations` 与 `/questions` 两个子应用）、`app.ts` 挂载调整
-3. **前端调用点**：`apps/web/src/api/rpc.ts`、`client.ts`、`store/chat.ts`、上传相关组件
-4. **验证与文档**：`scripts/smoke.ts`、`apps/e2e` 断言更新，`docs/business.md` 权限矩阵更新
-5. **全量验证**：后端测试 + smoke + e2e 通过
+- 契约层：`packages/shared/schemas.ts`、`contract.ts`（去信封、新增 `rebuildAllResponseSchema`、`questionRequestSchema`）
+- 服务端：`openapi.ts`（删 `okSchema`）、`auth.routes.ts`、`documents.routes.ts`、`upload.routes.ts`、`rag.routes.ts`（拆 `createConversationRoutes` / `createQuestionRoutes`）、`users.routes.ts`、`app.ts`（挂载调整）、删除废弃的 `lib/response.ts`
+- 前端：`apps/web/src/api/rpc.ts`（unwrap 去信封、支持 204）、`api/index.ts`（路径映射全量迁移）、`DocumentsPage.tsx`（文案去 `message` 字段）
+- 验证：`scripts/smoke.ts`、`apps/e2e/tests/helpers.ts`、`docs/business.md` 权限矩阵
+- 验证结果：server 单测 26 通过、smoke 27/27、e2e 8/8、全 workspace typecheck 通过
 
-## 6. 明确不做
+## 6. 实施顺序（历史）
+
+1. 契约层（schemas/contract 去信封）
+2. 服务端路由（openapi.ts + 五个路由文件 + app.ts 挂载）
+3. 前端调用点（rpc.ts、api/index.ts、页面文案）
+4. 验证与文档（smoke/e2e/business.md）
+5. 全量验证（单测 + smoke + e2e + typecheck）
+
+## 7. 明确不做
 
 - 不引入 HATEOAS 与 API 版本前缀（内部系统，收益为零）
 - 不迁移 tRPC / GraphQL / JSON-RPC（hc + OpenAPI 保留）

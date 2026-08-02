@@ -48,7 +48,9 @@ test.describe('智能问答', () => {
     await waitForAnswer(page);
 
     const storage = await page.evaluate(() => {
-      const keys = Object.keys(localStorage).filter((k) => k.startsWith('myrag-anon-'));
+      const keys = Object.keys(localStorage).filter(
+        (k) => k.startsWith('myrag-anon-') && !k.startsWith('myrag-anon-qid-'), // 排除 questionId 存档键
+      );
       const messages = keys.length > 0 ? (JSON.parse(localStorage.getItem(keys[0]!) ?? '[]') as unknown[]) : [];
       return { keys: keys.length, messages: messages.length };
     });

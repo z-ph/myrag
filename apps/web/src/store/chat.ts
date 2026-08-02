@@ -21,6 +21,7 @@ export interface ConversationMeta {
 
 const INDEX_KEY = 'myrag-conv-index';
 const ANON_PREFIX = 'myrag-anon-';
+const ANON_QID_PREFIX = 'myrag-anon-qid-';
 const CURRENT_KEY = 'myrag-current-conv';
 
 function genId(): string {
@@ -50,6 +51,37 @@ function readAnonMessages(id: string): ChatMessage[] {
     return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * 恢复中断的匿名生成：最后一条 AI 消息未完成且本地存有 questionId 时，
+ * 查询服务端暂存结果（Redis TTL 24h）补全；PENDING 时轮询等待后台生成完成。
+ */
+async function tryRecoverAnon(id: string, msgs: ChatMessage[]): Promise<void> {
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'assistant' || last.status === 'COMPLETED' || last.content) return;
+  const qid = localStorage.getItem(`${ANON_QID_PREFIX}${id}`);
+  if (!qid) return;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const result = await ragApi.questionResult(qid);
+    if (!result) return; // 不存在或已过期：放弃恢复
+    if (result.status === 'COMPLETED' && result.answer) {
+      useChatStore.setState((s) => ({
+        messages: s.messages.map((m, i) =>
+          i === s.messages.length - 1
+            ? { ...m, content: result.answer as string, status: 'COMPLETED' as const, sources: result.sources }
+            : m,
+        ),
+      }));
+      localStorage.setItem(`${ANON_PREFIX}${id}`, JSON.stringify(useChatStore.getState().messages));
+      return;
+    }
+    if (result.status === 'PENDING') {
+      await new Promise((r) => setTimeout(r, 2000));
+      continue;
+    }
+    return;
   }
 }
 
@@ -157,7 +189,9 @@ export const useChatStore = create<ChatState>((set, get) => {
             })),
           });
         } else {
-          set({ messages: readAnonMessages(id) });
+          const msgs = readAnonMessages(id);
+          set({ messages: msgs });
+          await tryRecoverAnon(id, msgs);
         }
       } finally {
         set({ isLoadingHistory: false });
@@ -264,11 +298,33 @@ export const useChatStore = create<ChatState>((set, get) => {
           const context = history
             .filter((m) => m.status === 'COMPLETED' && m.content.trim())
             .map((m) => ({ role: m.role === 'user' ? ('USER' as const) : ('ASSISTANT' as const), content: m.content }));
-          const result = await ragApi.askAnonymous({ question: text, contextMessages: context, maxResults: 5 });
-          finish('COMPLETED', result.answer);
-          set((s) => ({
-            messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, sources: result.sources } : m)),
-          }));
+          // 匿名流式：断开后服务端继续生成，questionId 存档供重开恢复
+          await ragApi.askAnonymousStream(
+            { question: text, contextMessages: context, maxResults: 5 },
+            {
+              onStart(questionId) {
+                if (questionId) localStorage.setItem(`${ANON_QID_PREFIX}${conversationId}`, questionId);
+              },
+              onDelta(content) {
+                set((s) => ({
+                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
+                }));
+              },
+              onSources(sources) {
+                set((s) => ({
+                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, sources } : m)),
+                }));
+              },
+              onComplete(cancelled) {
+                finish(cancelled ? 'CANCELLED' : 'COMPLETED');
+              },
+              onError(msg) {
+                finish('ERROR', msg || '请求失败');
+                message.error(msg || '请求失败');
+              },
+            },
+            controller.signal,
+          );
         }
       } catch (err) {
         if (controller.signal.aborted) {

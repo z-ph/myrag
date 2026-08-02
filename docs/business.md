@@ -31,27 +31,30 @@
 
 | 能力 | 接口 |
 |---|---|
-| 问答（匿名，无会话持久化，前端传完整上下文） | `POST /rag/ask/anonymous` |
+| 问答（匿名，无会话持久化，前端传完整上下文） | `POST /questions`（`stream=true` 时 SSE 流式） |
+| 匿名问答结果恢复（暂存 24h） | `GET /questions/{questionId}` |
 | 文档列表（含文件名模糊搜索） | `GET /documents` |
-| 文档原始文件下载 | `GET /documents/{documentId}/download` |
+| 文档原始文件下载 | `GET /documents/{documentId}/file` |
 | API 文档 | `GET /api/docs`（Scalar UI）、`GET /api/openapi.json` |
 
-**问答两种模式的口径**：问答能力本身公开（匿名模式满足"不问会话也能用"）；会话模式（流式 SSE + 历史列表/详情/清空，`/rag/ask`、`/rag/ask/stream`、`/rag/conversations/**`）属个人数据，需登录。前端未登录走匿名接口，登录后自动切换会话模式。
+**问答两种模式的口径**：问答能力本身公开（匿名模式满足"不问会话也能用"）；会话模式（流式 SSE + 历史列表/详情/清空，`POST /conversations/{conversationId}/messages`、`GET /conversations/**`）属个人数据，需登录。前端未登录走匿名接口，登录后自动切换会话模式。
+
+**匿名 vs 登录的本质差异是状态性**（非身份）：匿名 = 无状态问答，生成结果暂存 Redis（TTL 24h，易失非持久化），客户端断开后服务端继续生成，可经 `GET /questions/{questionId}` 恢复；登录 = 有状态会话，消息落库、历史可查、可取消。
 
 ## 4. 权限矩阵
 
 | 接口 | 公开 | USER | STAFF | SUPER_ADMIN |
 |---|---|---|---|---|
-| `POST /auth/login`、`GET /auth/me` | — | ✅ | ✅ | ✅ |
-| `POST /rag/ask/anonymous` | ✅ | ✅ | ✅ | ✅ |
-| `GET /documents`、`GET /documents/{id}/download` | ✅ | ✅ | ✅ | ✅ |
+| `POST /auth/sessions`、`GET /auth/sessions/current` | — | ✅ | ✅ | ✅ |
+| `POST /questions`（匿名问答，含流式） | ✅ | ✅ | ✅ | ✅ |
+| `GET /documents`、`GET /documents/{id}/file` | ✅ | ✅ | ✅ | ✅ |
 | `GET /documents/health` | ✅ | ✅ | ✅ | ✅ |
-| `POST /rag/ask`、`POST /rag/ask/stream`、`GET /rag/conversations/**` | — | ✅ | ✅ | ✅ |
-| `POST /documents/upload`、`/batch-upload`、`GET /batch-upload/{taskId}` | — | ❌ | ✅ | ✅ |
-| `DELETE /documents/{id}`、`GET /documents/{id}/vector-detail` | — | ❌ | ✅ | ✅ |
+| `POST /conversations/{id}/messages`（同步/流式）、`GET /conversations/**`、`DELETE /conversations/{id}`、`POST /conversations/{id}/cancellation` | — | ✅ | ✅ | ✅ |
+| `POST /documents`（单文件）、`POST /documents/uploads`、`GET /documents/uploads/{taskId}` | — | ❌ | ✅ | ✅ |
+| `DELETE /documents/{id}`、`GET /documents/{id}/vectors` | — | ❌ | ✅ | ✅ |
 | `/upload-sessions/**`（分片上传） | — | ❌ | ✅ | ✅ |
-| `POST /documents/batch-upload/rebuild-all`（全量重建） | — | ❌ | ❌ | ✅ |
-| `POST /documents/batch-upload/recovery/trigger`（恢复任务） | — | ❌ | ❌ | ✅ |
+| `POST /documents/uploads/rebuild-all`（全量重建） | — | ❌ | ❌ | ✅ |
+| `POST /documents/uploads/recovery`（恢复任务） | — | ❌ | ❌ | ✅ |
 | `/admin/users/**`（RBAC 用户管理） | — | ❌ | ❌ | ✅ |
 
 中间件实现：`apps/server/src/middleware/auth.ts`（`requireAuth` / `requireStaff` / `requireSuperAdmin`）。

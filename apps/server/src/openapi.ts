@@ -1,19 +1,10 @@
 import { OpenAPIHono, z } from '@hono/zod-openapi';
 import type { AppVariables } from './app-deps';
 
-/** 统一成功响应包装 schema */
-export function okSchema<T extends z.ZodType>(dataSchema: T) {
-  return z.object({
-    code: z.literal(0),
-    message: z.string(),
-    data: dataSchema,
-  });
-}
-
 /** OpenAPI 安全方案（JWT Bearer） */
 export const bearerSecurity = [{ bearerAuth: [] }];
 
-/** 统一错误响应描述 */
+/** 统一错误响应描述（成功响应直接返回资源表示，不再包 {code,message,data} 信封） */
 export const errorResponses = {
   400: { description: '请求参数错误', content: { 'application/json': { schema: z.any() } } },
   401: { description: '未登录或登录已过期', content: { 'application/json': { schema: z.any() } } },

@@ -14,23 +14,18 @@ export type {
   DocumentDeleteResponse,
   DocumentVectorDetail,
   RecoveryTriggerResponse,
+  RebuildAllResponse,
   ChunkUploadSession,
   SourceReference,
   ImageUnderstandingResult,
   AskResponse,
-  AnonymousAskRequest,
+  QuestionRequest,
+  QuestionResult,
   ConversationMessage,
   ConversationDetail,
-  MessageResponse,
 } from './schemas';
 
-/** 统一响应包装：code=0 成功；非 0 为业务/系统错误码（与 HTTP 状态对应） */
-export interface ApiResponse<T> {
-  code: number;
-  message: string;
-  data: T;
-}
-
+/** 统一错误体：错误由 HTTP 状态码表达类别，错误体提供稳定错误码与详情 */
 export type ApiErrorBody = z.infer<typeof apiErrorSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 

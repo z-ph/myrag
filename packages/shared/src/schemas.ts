@@ -3,7 +3,7 @@ import { FILE_TYPES, MESSAGE_ROLES, MESSAGE_STATUSES, ROLES, SOURCE_TYPES, STORA
 
 // ---------- 通用 ----------
 export const apiErrorSchema = z.object({
-  code: z.number().describe('错误码（与 HTTP 状态对应）'),
+  code: z.number().describe('稳定错误码'),
   message: z.string().describe('面向用户的错误信息'),
   details: z.record(z.string(), z.string()).optional().describe('字段级错误'),
 });
@@ -93,7 +93,6 @@ export const documentListResponseSchema = z.object({
 export const documentDeleteResponseSchema = z.object({
   documentId: z.string(),
   deletedSegments: z.number(),
-  message: z.string(),
 });
 
 export const vectorPointItemSchema = z.object({
@@ -126,7 +125,10 @@ export const documentVectorDetailSchema = z.object({
 
 export const recoveryTriggerResponseSchema = z.object({
   triggeredTaskCount: z.number(),
-  message: z.string(),
+});
+
+export const rebuildAllResponseSchema = z.object({
+  taskId: z.string(),
 });
 
 export const chunkUploadSessionSchema = z.object({
@@ -172,11 +174,21 @@ export const contextMessageSchema = z.object({
   content: z.string().max(20_000),
 });
 
-export const anonymousAskRequestSchema = z.object({
+export const questionRequestSchema = z.object({
   question: z.string().min(1).max(4000),
   contextMessages: z.array(contextMessageSchema).max(20).default([]),
   maxResults: z.coerce.number().int().min(1).max(20).optional(),
   useKnowledgeBase: z.boolean().optional(),
+  stream: z.boolean().optional().describe('true 时返回 SSE 事件流，断开后服务端继续生成并暂存结果'),
+});
+
+/** 匿名问答结果暂存查询（Redis TTL，非持久化） */
+export const questionResultSchema = z.object({
+  questionId: z.string(),
+  status: z.enum(['PENDING', 'COMPLETED']),
+  answer: z.string().optional(),
+  sources: z.array(sourceReferenceSchema).optional(),
+  imageUnderstanding: imageUnderstandingResultSchema.optional(),
 });
 
 export const conversationMessageSchema = z.object({
@@ -203,9 +215,7 @@ export const conversationListSchema = z.array(
   }),
 );
 
-export const messageResponseSchema = z.object({
-  message: z.string(),
-});
+
 
 // ---------- 推断类型（供前后端共享，与 contract.ts 保持一致） ----------
 export type AuthUser = z.infer<typeof authUserSchema>;
@@ -220,12 +230,13 @@ export type DocumentListResponse = z.infer<typeof documentListResponseSchema>;
 export type DocumentDeleteResponse = z.infer<typeof documentDeleteResponseSchema>;
 export type DocumentVectorDetail = z.infer<typeof documentVectorDetailSchema>;
 export type RecoveryTriggerResponse = z.infer<typeof recoveryTriggerResponseSchema>;
+export type RebuildAllResponse = z.infer<typeof rebuildAllResponseSchema>;
 export type ChunkUploadSession = z.infer<typeof chunkUploadSessionSchema>;
 export type SourceReference = z.infer<typeof sourceReferenceSchema>;
 export type ImageUnderstandingResult = z.infer<typeof imageUnderstandingResultSchema>;
 export type AskResponse = z.infer<typeof askResponseSchema>;
-export type AnonymousAskRequest = z.infer<typeof anonymousAskRequestSchema>;
+export type QuestionRequest = z.infer<typeof questionRequestSchema>;
+export type QuestionResult = z.infer<typeof questionResultSchema>;
 export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
 export type ConversationDetail = z.infer<typeof conversationDetailSchema>;
-export type MessageResponse = z.infer<typeof messageResponseSchema>;
 export type ContextMessage = z.infer<typeof contextMessageSchema>;
