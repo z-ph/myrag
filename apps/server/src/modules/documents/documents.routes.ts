@@ -241,9 +241,8 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'get',
           path: '/{documentId}/vectors',
-          description: '文档向量存储详情（分块明细）',
-          security: bearerSecurity,
-          middleware: [requireStaff],
+          description: '文档向量存储详情（分块明细，公开）',
+          security: [],
           request: { params: documentIdParam },
           responses: {
             200: {
