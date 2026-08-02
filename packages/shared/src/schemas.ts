@@ -164,6 +164,8 @@ export const imageUnderstandingResultSchema = z.object({
 
 export const askResponseSchema = z.object({
   answer: z.string(),
+  /** 思考过程（仅展示用，不回灌多轮上下文） */
+  reasoning: z.string().optional(),
   conversationId: z.string(),
   sources: z.array(sourceReferenceSchema),
   imageUnderstanding: imageUnderstandingResultSchema.optional(),
@@ -187,6 +189,8 @@ export const questionResultSchema = z.object({
   questionId: z.string(),
   status: z.enum(['PENDING', 'COMPLETED']),
   answer: z.string().optional(),
+  /** 思考过程（仅展示用） */
+  reasoning: z.string().optional(),
   sources: z.array(sourceReferenceSchema).optional(),
   imageUnderstanding: imageUnderstandingResultSchema.optional(),
 });
@@ -194,6 +198,8 @@ export const questionResultSchema = z.object({
 export const conversationMessageSchema = z.object({
   role: z.enum(MESSAGE_ROLES),
   content: z.string(),
+  /** 思考过程（仅展示用，不回灌多轮上下文） */
+  reasoning: z.string().optional(),
   timestamp: z.string(),
   status: z.enum(MESSAGE_STATUSES).optional(),
 });

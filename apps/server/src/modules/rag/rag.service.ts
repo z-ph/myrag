@@ -4,18 +4,10 @@ import { AppError, badRequest } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { RedisStore } from '../../store/redis';
 import { RedisKeys } from '../../store/redis';
+import { buildMessages } from './prompts';
 import type { ConversationService } from './conversation.service';
 import type { ImageService } from './image.service';
 import { type RetrievalService, type RetrievedChunk, toSourceReferences } from './retrieval.service';
-
-const SYSTEM_PROMPT = `你是「财务处知识库」智能问答助手，服务于机构财务处的工作人员。
-回答规则：
-1. 优先依据提供的知识库资料回答；资料不足时明确说明，不要编造。
-2. 涉及制度条款时，标注资料来源文件名。
-3. 回答使用简体中文，条理清晰、简洁直接。`;
-
-const ANONYMOUS_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
-注意：当前为未登录匿名问答，仅提供基于知识库资料的客观回答。`;
 
 export interface AskInput {
   question: string;
@@ -30,6 +22,8 @@ export interface AskInput {
 
 export interface AskOutput {
   answer: string;
+  /** 思考过程（仅展示用，不回灌多轮上下文） */
+  reasoning?: string;
   conversationId: string;
   sources: SourceReference[];
   imageUnderstanding?: ImageUnderstandingResult;
@@ -38,7 +32,10 @@ export interface AskOutput {
 export interface StreamHandlers {
   /** 生成开始（匿名流式携带暂存用的 questionId） */
   onStart(questionId?: string): void;
+  /** 正式回答增量 */
   onDelta(content: string): void;
+  /** 思考过程增量（仅展示用，不回灌上下文） */
+  onReasoningDelta(content: string): void;
   onSources(sources: SourceReference[]): void;
   onComplete(cancelled: boolean): void;
   onError(message: string): void;
@@ -100,24 +97,6 @@ export function createRagService(
     unsubscribe?.();
     unsubscribe = null;
   };
-
-  /** 组装 LLM 消息：系统 + 历史 + 检索上下文 */
-  function buildMessages(
-    question: string,
-    history: ContextMessage[],
-    contextText: string | null,
-    anonymous: boolean,
-  ) {
-    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-      { role: 'system', content: anonymous ? ANONYMOUS_SYSTEM_PROMPT : SYSTEM_PROMPT },
-    ];
-    for (const m of history.slice(-settings.get().memoryWindow)) {
-      messages.push({ role: m.role === 'USER' ? 'user' : 'assistant', content: m.content });
-    }
-    const userContent = contextText ? `以下是知识库检索到的相关资料：\n\n${contextText}\n\n问题：${question}` : question;
-    messages.push({ role: 'user', content: userContent });
-    return messages;
-  }
 
   /** 检索并格式化上下文（文本/图片双路），返回上下文文本与来源 */
   async function buildContext(
@@ -182,8 +161,9 @@ export function createRagService(
     history: ContextMessage[],
     anonymous: boolean,
     onDelta: (text: string) => void,
+    onReasoningDelta: (text: string) => void,
     signal?: AbortSignal,
-  ): Promise<{ answer: string; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
+  ): Promise<{ answer: string; reasoning: string; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
     let imageUnderstanding: ImageUnderstandingResult | undefined;
     if (input.imageBase64) {
       imageUnderstanding = await imageService.understand(input.question, input.imageBase64);
@@ -196,15 +176,15 @@ export function createRagService(
       ({ contextText, sources } = await buildContext(input.question, maxResults, imageUnderstanding));
     }
 
-    const messages = buildMessages(input.question, history, contextText, anonymous);
-    const answer = await llm.chatStream(messages, onDelta, signal);
-    return { answer, sources, imageUnderstanding };
+    const messages = buildMessages(input.question, history, contextText, anonymous, settings.get().memoryWindow);
+    const result = await llm.chatStream(messages, onDelta, onReasoningDelta, signal);
+    return { answer: result.content, reasoning: result.reasoning, sources, imageUnderstanding };
   }
 
   /** 登录用户：持久化消息并执行生成 */
   async function generatePersisted(
     input: AskInput,
-    handlers: Pick<StreamHandlers, 'onDelta'>,
+    handlers: Pick<StreamHandlers, 'onDelta' | 'onReasoningDelta'>,
     signal?: AbortSignal,
   ) {
     if (!input.userId) throw badRequest('缺少用户身份');
@@ -214,9 +194,9 @@ export function createRagService(
     await conversationService.appendMessage(input.conversationId, 'USER', input.question);
     await conversationService.appendMessage(input.conversationId, 'ASSISTANT', '', 'GENERATING');
     try {
-      const result = await generate(input, history, false, handlers.onDelta, signal);
-      await conversationService.markMessage(input.conversationId, 'ASSISTANT', 'COMPLETED');
-      // 补充 AI 消息内容
+      const result = await generate(input, history, false, handlers.onDelta, handlers.onReasoningDelta, signal);
+      // 持久化 AI 回答与思考过程：content 供多轮历史回灌，reasoning 仅展示
+      await conversationService.markMessage(input.conversationId, 'ASSISTANT', 'COMPLETED', result.answer, result.reasoning);
       const msgs = await conversationService.getDetail(input.conversationId, input.userId, 1);
       return { ...result, detail: msgs };
     } catch (err) {
@@ -228,9 +208,10 @@ export function createRagService(
   return {
     async ask(input) {
       if (!input.question.trim()) throw badRequest('问题不能为空');
-      const result = await generatePersisted(input, { onDelta: () => {} });
+      const result = await generatePersisted(input, { onDelta: () => {}, onReasoningDelta: () => {} });
       return {
         answer: result.answer,
+        reasoning: result.reasoning || undefined,
         conversationId: input.conversationId,
         sources: result.sources,
         imageUnderstanding: result.imageUnderstanding,
@@ -263,6 +244,7 @@ export function createRagService(
       try {
         const result = await generatePersisted(input, handlers, controller.signal);
         handlers.onSources(result.sources);
+        if (result.reasoning) handlers.onReasoningDelta(result.reasoning);
         handlers.onComplete(false);
       } catch (err) {
         if (controller.signal.aborted) {
@@ -290,9 +272,11 @@ export function createRagService(
         contextMessages,
         true,
         () => {},
+        () => {},
       );
       return {
         answer: result.answer,
+        reasoning: result.reasoning || undefined,
         conversationId,
         sources: result.sources,
         imageUnderstanding: result.imageUnderstanding,
@@ -322,6 +306,7 @@ export function createRagService(
           contextMessages,
           true,
           (text) => handlers.onDelta(text),
+          (text) => handlers.onReasoningDelta(text),
           controller.signal,
         );
         handlers.onSources(result.sources);
@@ -331,6 +316,7 @@ export function createRagService(
             questionId,
             status: 'COMPLETED',
             answer: result.answer,
+            reasoning: result.reasoning || undefined,
             sources: result.sources,
             imageUnderstanding: result.imageUnderstanding,
           }),

@@ -4,6 +4,7 @@ import type { SourceReference } from './contract';
 export type SseEvent =
   | { event: 'start'; data: { conversationId: string } }
   | { event: 'delta'; data: string }
+  | { event: 'reasoning'; data: string }
   | { event: 'sources'; data: SourceReference[] }
   | { event: 'complete'; data: { conversationId: string; cancelled: boolean } }
   | { event: 'cancelled'; data: { conversationId: string; reason?: string } }

@@ -98,6 +98,7 @@ export function createConversationRoutes(deps: AppDeps) {
                   {
                     onStart() {},
                     onDelta: (content) => enqueue(encodeSse({ event: 'delta', data: content })),
+                    onReasoningDelta: (content) => enqueue(encodeSse({ event: 'reasoning', data: content })),
                     onSources: (sources) => enqueue(encodeSse({ event: 'sources', data: sources })),
                     onComplete: (cancelled) =>
                       enqueue(encodeSse({ event: 'complete', data: { conversationId, cancelled } })),
@@ -263,6 +264,7 @@ export function createQuestionRoutes(deps: AppDeps) {
                       enqueue(encodeSse({ event: 'start', data: { conversationId: qid } }));
                     },
                     onDelta: (content) => enqueue(encodeSse({ event: 'delta', data: content })),
+                    onReasoningDelta: (content) => enqueue(encodeSse({ event: 'reasoning', data: content })),
                     onSources: (sources) => enqueue(encodeSse({ event: 'sources', data: sources })),
                     onComplete: (cancelled) => enqueue(encodeSse({ event: 'complete', data: { conversationId: qid, cancelled } })),
                     onError: (message) => enqueue(encodeSse({ event: 'error', data: { message } })),

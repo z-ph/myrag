@@ -199,6 +199,8 @@ export const conversationMessages = mysqlTable(
     conversationId: varchar('conversation_id', { length: 128 }).notNull(),
     role: varchar('role', { length: 16 }).notNull(),
     content: longtext('content'),
+    /** 思考过程（仅展示用，不回灌多轮上下文） */
+    reasoning: longtext('reasoning'),
     status: varchar('status', { length: 16 }).notNull().default('COMPLETED'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),

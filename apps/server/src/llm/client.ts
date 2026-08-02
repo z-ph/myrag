@@ -17,11 +17,23 @@ export interface ImageChatMessage {
   content: string | (string | ChatImageContent)[];
 }
 
+export interface ChatStreamResult {
+  /** 正式回答（已剥离 content 内嵌推理残留） */
+  content: string;
+  /** 思考过程（reasoning_content 字段；仅展示用，不回灌上下文） */
+  reasoning: string;
+}
+
 export interface LlmClient {
-  /** 流式对话补全，逐段回调增量文本 */
-  chatStream(messages: ChatMessage[], onDelta: (text: string) => void, signal?: AbortSignal): Promise<string>;
-  /** 同步对话补全 */
-  chat(messages: ChatMessage[]): Promise<string>;
+  /** 流式对话补全：content 逐段回调，reasoning_content 经 onReasoningDelta 单独回调 */
+  chatStream(
+    messages: ChatMessage[],
+    onDelta: (text: string) => void,
+    onReasoningDelta?: (text: string) => void,
+    signal?: AbortSignal,
+  ): Promise<ChatStreamResult>;
+  /** 同步对话补全（返回回答与思考过程） */
+  chat(messages: ChatMessage[]): Promise<ChatStreamResult>;
   /** 批量向量化 */
   embed(texts: string[]): Promise<number[][]>;
   /** 图片理解（视觉模型，含 base64 图片与文本提示） */
@@ -29,7 +41,15 @@ export interface LlmClient {
 }
 
 /** 从 OpenAI 兼容 /chat/completions SSE 流中解析 delta 文本 */
-export async function* parseChatStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export interface StreamDelta {
+  /** 正式回答增量 */
+  content: string;
+  /** 思考过程增量（reasoning_content 字段） */
+  reasoning: string;
+}
+
+/** 从 OpenAI 兼容 /chat/completions SSE 流中解析增量（content + reasoning_content 双通道） */
+export async function* parseChatStream(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamDelta> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -45,9 +65,11 @@ export async function* parseChatStream(body: ReadableStream<Uint8Array>): AsyncG
       const data = trimmed.slice(5).trim();
       if (data === '[DONE]') return;
       try {
-        const parsed = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
+        const parsed = JSON.parse(data) as { choices?: { delta?: { content?: string; reasoning_content?: string } }[] };
+        const delta = parsed.choices?.[0]?.delta;
+        const content = delta?.content ?? '';
+        const reasoning = delta?.reasoning_content ?? '';
+        if (content || reasoning) yield { content, reasoning };
       } catch {
         // 忽略无法解析的心跳行
       }
@@ -55,19 +77,33 @@ export async function* parseChatStream(body: ReadableStream<Uint8Array>): AsyncG
   }
 }
 
+/** 推理块闭合标签：</think>（DeepSeek 系）/ </thinking>（GLM 系） */
+const THINK_CLOSE = /<\/(think|thinking)>/g;
+
 /**
- * 剥离模型推理残留（如 <think>…</think>），避免污染用户可见输出。
+ * 剥离模型推理残留（如 <think>…</think>、<thinking>…</thinking>），避免污染用户可见输出。
  * 兼容标签未闭合的情况（流式中途）。
  */
 export function stripThink(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+  return text.replace(/<(think|thinking)>[\s\S]*?<\/(think|thinking)>\s*/g, '').trim();
 }
 
-/** 是否还有未闭合的 <think（流式中途，需继续缓冲不发送） */
+/** 是否还有未闭合的推理块（流式中途，需继续缓冲不发送） */
 function hasUnclosedThink(text: string): boolean {
   const last = text.lastIndexOf('<think');
   if (last === -1) return false;
-  return !text.slice(last).includes('</think>');
+  return !THINK_CLOSE.test(text.slice(last));
+}
+
+/**
+ * 多轮历史回灌前的推理内容消毒：剥离已闭合的 <think>/<thinking> 块，
+ * 并丢弃旧历史数据中未闭合的推理残尾（如修复前已持久化的消息）。
+ */
+export function stripReasoning(text: string): string {
+  let clean = stripThink(text);
+  const open = clean.lastIndexOf('<think');
+  if (open !== -1) clean = clean.slice(0, open);
+  return clean.trim();
 }
 
 interface EndpointConfig {
@@ -117,7 +153,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
   }
 
   return {
-    async chatStream(messages, onDelta, signal) {
+    async chatStream(messages, onDelta, onReasoningDelta, signal) {
       const res = await requestStream(chatEndpoint, '/chat/completions', {
         model: cfg.llmChatModel,
         messages,
@@ -126,10 +162,22 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
       });
       if (!res.body) throw new AppError(502, '模型服务返回空流');
       let full = '';
+      let reasoningFull = '';
       let sentLen = 0;
-      for await (const delta of parseChatStream(res.body)) {
-        full += delta;
-        // think 块未闭合前不发送，闭合后一次性剥离（避免泄漏推理内容）
+      let reasoningSentLen = 0;
+      for await (const { content, reasoning } of parseChatStream(res.body)) {
+        // 思考通道：逐段透传给展示层（不回灌上下文）
+        if (reasoning && onReasoningDelta) {
+          reasoningFull += reasoning;
+          const rChunk = reasoningFull.slice(reasoningSentLen);
+          if (rChunk) {
+            onReasoningDelta(rChunk);
+            reasoningSentLen = reasoningFull.length;
+          }
+        }
+        if (!content) continue;
+        full += content;
+        // content 内嵌 think 块未闭合前不发送，闭合后一次性剥离（避免泄漏推理内容）
         if (hasUnclosedThink(full)) continue;
         const clean = stripThink(full);
         const chunk = clean.slice(sentLen);
@@ -138,7 +186,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
           sentLen = clean.length;
         }
       }
-      return stripThink(full);
+      return { content: stripThink(full), reasoning: reasoningFull };
     },
 
     async chat(messages) {
@@ -148,10 +196,11 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
         stream: false,
         temperature: settings.get().llmChatTemperature,
       });
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-      const content = json.choices?.[0]?.message?.content;
+      const json = (await res.json()) as { choices?: { message?: { content?: string; reasoning_content?: string } }[] };
+      const message = json.choices?.[0]?.message;
+      const content = message?.content;
       if (typeof content !== 'string') throw new AppError(502, '模型服务返回异常');
-      return stripThink(content);
+      return { content: stripThink(content), reasoning: message?.reasoning_content ?? '' };
     },
 
     async embed(texts) {
