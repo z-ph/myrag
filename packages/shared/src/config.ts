@@ -115,7 +115,7 @@ export interface ServerConfig {
   documentListLimit: number;
   /** 会话列表单页上限 */
   conversationListLimit: number;
-  /** MySQL 连接池大小 */
+  /** PostgreSQL 连接池大小 */
   dbPoolSize: number;
   /** Qdrant scroll 分页大小 */
   qdrantScrollLimit: number;
@@ -210,7 +210,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     uploadDir: env.UPLOAD_DIR ?? 'uploads',
     dataDir: env.DATA_DIR ?? 'data',
     dbHost: env.DB_HOST ?? 'localhost',
-    dbPort: num('DB_PORT', 3306),
+    dbPort: num('DB_PORT', 5432),
     dbUser: env.DB_USER ?? 'rag',
     dbPassword: env.DB_PASSWORD ?? 'rag',
     dbName: env.DB_NAME ?? 'rag',

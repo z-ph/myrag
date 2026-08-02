@@ -11,11 +11,11 @@
 
 ```
 packages/shared/  契约单一真源（zod schema + 常量 + 配置）
-apps/server/      Hono + Drizzle + MySQL + Qdrant + Redis（无状态化任务/取消）
+apps/server/      Hono + Drizzle + PostgreSQL + Qdrant + Redis（无状态化任务/取消）
 apps/web/         React + antd + zustand + react-query（Vite）
 apps/e2e/         Playwright 端到端
 scripts/          mock-llm（本地 OpenAI 兼容模拟）、smoke.ts（接口冒烟）
-docker-compose.yml  mysql + qdrant + redis + server + web 全栈编排
+docker-compose.yml  postgres + qdrant + redis + server + web 全栈编排
 ```
 
 ## 快速启动
@@ -32,7 +32,7 @@ docker compose up -d --build
 ### 本地开发
 
 ```bash
-docker compose up -d mysql qdrant redis   # 基础设施（redis 映射 6380，避开宿主 6379）
+docker compose up -d postgres qdrant redis   # 基础设施（redis 映射 6380，避开宿主 6379）
 pnpm dev                                  # server :8080 + web :5174
 node scripts/mock-llm.ts                  # 无真实 LLM 时冒烟用（:9999）
 ```
@@ -48,7 +48,7 @@ pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 
 ## 关键架构决策
 
-- **无状态化后端**：批量任务 Redis 队列（worker 幂等）、生成取消 Redis key + Pub/Sub 跨实例、恢复扫描分布式锁；状态在 MySQL/Redis，服务可水平扩容。
+- **无状态化后端**：批量任务 Redis 队列（worker 幂等）、生成取消 Redis key + Pub/Sub 跨实例、恢复扫描分布式锁；状态在 PostgreSQL/Redis，服务可水平扩容。
 - **契约即文档，RPC 端到端类型安全**：全部路由 `@hono/zod-openapi`，请求/响应 schema 即运行时校验，OpenAPI 自动生成（`/docs`）；后端导出 `AppType`，前端用 `hc<AppType>`（hono/client）生成类型安全客户端，接口层零手写请求/响应类型（见 `apps/web/src/api/`）。
 - **统一响应**：`{ code, message, data }`，错误携带语义化 HTTP 状态。
 - **检索管线**：Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR 重排 → 上下文预算截断；图片问答图文双路融合。

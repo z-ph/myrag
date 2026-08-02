@@ -2,7 +2,7 @@ import { defineConfig } from 'tsup';
 
 /**
  * 全量打包（noExternal）：运行时无 node_modules 依赖解析问题。
- * 输出 CJS：mysql2/exceljs 等 CJS 依赖在 ESM bundle 下动态 require 不兼容。
+ * 输出 CJS：pg/exceljs 等 CJS 依赖在 ESM bundle 下动态 require 不兼容。
  * node 内置模块自动保持 external。
  */
 export default defineConfig({

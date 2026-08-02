@@ -61,7 +61,7 @@ async function processTaskFiles(
     const staleThreshold = new Date(Date.now() - cfg.recoveryStaleMs);
     if (task.updatedAt > staleThreshold) return;
   }
-  await db.update(batchTasks).set({ status: 'PROCESSING', takenOver: true }).where(eq(batchTasks.taskId, taskId));
+  await db.update(batchTasks).set({ status: 'PROCESSING', takenOver: true, updatedAt: new Date() }).where(eq(batchTasks.taskId, taskId));
 
   const pendingResults = await db
     .select()
@@ -132,7 +132,7 @@ async function processTaskFiles(
   const status: TaskStatus = failure === 0 ? 'SUCCESS' : success > 0 ? 'PARTIAL' : 'FAILED';
   await db
     .update(batchTasks)
-    .set({ status, successCount: success, failureCount: failure, completedAt: new Date() })
+    .set({ status, successCount: success, failureCount: failure, completedAt: new Date(), updatedAt: new Date() })
     .where(eq(batchTasks.taskId, taskId));
   logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failure})`);
 }

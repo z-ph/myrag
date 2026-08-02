@@ -1,89 +1,90 @@
 {
-  "version": "5",
-  "dialect": "mysql",
-  "id": "d4dec2a6-e3c8-4724-80c1-9b2141cbaf6b",
+  "id": "41000924-6047-42c3-8ee2-769ab17f72ea",
   "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
   "tables": {
-    "batch_file_results": {
+    "public.batch_file_results": {
       "name": "batch_file_results",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "batch_file_results_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "task_id": {
           "name": "task_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "document_id": {
           "name": "document_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "user_id": {
           "name": "user_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "staged_path": {
           "name": "staged_path",
           "type": "varchar(512)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "filename": {
           "name": "filename",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "status": {
           "name": "status",
           "type": "varchar(32)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "message": {
           "name": "message",
           "type": "varchar(512)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "error_message": {
           "name": "error_message",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "embedding_count": {
           "name": "embedding_count",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
-          "autoincrement": false,
           "default": 0
         },
         "segment_count": {
           "name": "segment_count",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
-          "autoincrement": false,
           "default": 0
         },
         "created_at": {
@@ -91,93 +92,99 @@
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         }
       },
       "indexes": {
         "idx_batch_file_results_task_id": {
           "name": "idx_batch_file_results_task_id",
           "columns": [
-            "task_id"
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "batch_file_results_id": {
-          "name": "batch_file_results_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "batch_tasks": {
+    "public.batch_tasks": {
       "name": "batch_tasks",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "batch_tasks_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "task_id": {
           "name": "task_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "status": {
           "name": "status",
           "type": "varchar(32)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'PENDING'"
         },
         "total_files": {
           "name": "total_files",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": 0
         },
         "success_count": {
           "name": "success_count",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": 0
         },
         "failure_count": {
           "name": "failure_count",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": 0
         },
         "error_message": {
           "name": "error_message",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "taken_over": {
           "name": "taken_over",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": false
         },
         "created_at": {
@@ -185,91 +192,111 @@
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
+          "default": "now()"
         },
         "completed_at": {
           "name": "completed_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         }
       },
       "indexes": {
         "uq_batch_tasks_task_id": {
           "name": "uq_batch_tasks_task_id",
           "columns": [
-            "task_id"
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_batch_tasks_status": {
           "name": "idx_batch_tasks_status",
           "columns": [
-            "status"
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "batch_tasks_id": {
-          "name": "batch_tasks_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "conversation_messages": {
+    "public.conversation_messages": {
       "name": "conversation_messages",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "conversation_messages_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "conversation_id": {
           "name": "conversation_id",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "role": {
           "name": "role",
           "type": "varchar(16)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "content": {
           "name": "content",
-          "type": "longtext",
+          "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
+        },
+        "reasoning": {
+          "name": "reasoning",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "status": {
           "name": "status",
           "type": "varchar(16)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'COMPLETED'"
         },
         "created_at": {
@@ -277,352 +304,390 @@
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
+          "default": "now()"
         }
       },
       "indexes": {
         "idx_cm_conversation_created": {
           "name": "idx_cm_conversation_created",
           "columns": [
-            "conversation_id",
-            "created_at"
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "conversation_messages_id": {
-          "name": "conversation_messages_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "conversations": {
+    "public.conversations": {
       "name": "conversations",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "conversations_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "conversation_id": {
           "name": "conversation_id",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "user_id": {
           "name": "user_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "title": {
           "name": "title",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
+          "default": "now()"
         }
       },
       "indexes": {
         "uq_conversations_conversation_id": {
           "name": "uq_conversations_conversation_id",
           "columns": [
-            "conversation_id"
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_conversations_user_updated": {
           "name": "idx_conversations_user_updated",
           "columns": [
-            "user_id",
-            "updated_at"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "conversations_id": {
-          "name": "conversations_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "document_chunks": {
+    "public.document_chunks": {
       "name": "document_chunks",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "document_chunks_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "document_id": {
           "name": "document_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "chunk_index": {
           "name": "chunk_index",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "chunk_text": {
           "name": "chunk_text",
-          "type": "longtext",
+          "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "chunk_text_preview": {
           "name": "chunk_text_preview",
           "type": "varchar(500)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "chunk_size": {
           "name": "chunk_size",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "raw_chunk_size": {
           "name": "raw_chunk_size",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "chunk_hash": {
           "name": "chunk_hash",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "title": {
           "name": "title",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "category": {
           "name": "category",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "document_time": {
           "name": "document_time",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "ingested_at": {
           "name": "ingested_at",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "keywords": {
           "name": "keywords",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "document_keywords": {
           "name": "document_keywords",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "content_type": {
           "name": "content_type",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         }
       },
       "indexes": {
         "idx_document_chunks_document_id": {
           "name": "idx_document_chunks_document_id",
           "columns": [
-            "document_id"
+            {
+              "expression": "document_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_document_chunks_doc_chunk": {
           "name": "idx_document_chunks_doc_chunk",
           "columns": [
-            "document_id",
-            "chunk_index"
+            {
+              "expression": "document_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "chunk_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "document_chunks_id": {
-          "name": "document_chunks_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "documents": {
+    "public.documents": {
       "name": "documents",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "documents_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "document_id": {
           "name": "document_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "user_id": {
           "name": "user_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "filename": {
           "name": "filename",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "original_filename": {
           "name": "original_filename",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "file_type": {
           "name": "file_type",
           "type": "varchar(32)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "file_path": {
           "name": "file_path",
           "type": "varchar(512)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "file_size": {
           "name": "file_size",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "content_type": {
           "name": "content_type",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "preview_text": {
           "name": "preview_text",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "segment_count": {
           "name": "segment_count",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
-          "autoincrement": false,
           "default": 0
         },
         "vector_count": {
           "name": "vector_count",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
-          "autoincrement": false,
           "default": 0
         },
         "storage_mode": {
@@ -630,7 +695,6 @@
           "type": "varchar(32)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'FULL_INDEX'"
         },
         "status": {
@@ -638,197 +702,256 @@
           "type": "varchar(32)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'PENDING'"
         },
         "error_message": {
           "name": "error_message",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "file_hash": {
           "name": "file_hash",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "ocr_model": {
           "name": "ocr_model",
           "type": "varchar(128)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "ocr_duration_ms": {
           "name": "ocr_duration_ms",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "deleted": {
           "name": "deleted",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": false
         },
         "deleted_by": {
           "name": "deleted_by",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "deleted_at": {
           "name": "deleted_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "batch_task_id": {
           "name": "batch_task_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         },
         "processed_at": {
           "name": "processed_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         }
       },
       "indexes": {
         "uq_documents_document_id": {
           "name": "uq_documents_document_id",
           "columns": [
-            "document_id"
+            {
+              "expression": "document_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_documents_user_id": {
           "name": "idx_documents_user_id",
           "columns": [
-            "user_id"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_documents_status": {
           "name": "idx_documents_status",
           "columns": [
-            "status"
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_documents_deleted": {
           "name": "idx_documents_deleted",
           "columns": [
-            "deleted"
+            {
+              "expression": "deleted",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_documents_batch_task_id": {
           "name": "idx_documents_batch_task_id",
           "columns": [
-            "batch_task_id"
+            {
+              "expression": "batch_task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "documents_id": {
-          "name": "documents_id",
-          "columns": [
-            "id"
-          ]
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.system_settings": {
+      "name": "system_settings",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "upload_sessions": {
+    "public.upload_sessions": {
       "name": "upload_sessions",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "upload_sessions_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "upload_session_id": {
           "name": "upload_session_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "task_id": {
           "name": "task_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "user_id": {
           "name": "user_id",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "original_filename": {
           "name": "original_filename",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "total_chunks": {
           "name": "total_chunks",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "received_chunks": {
           "name": "received_chunks",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": 0
         },
         "total_size": {
           "name": "total_size",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "uploaded_size": {
           "name": "uploaded_size",
-          "type": "int",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": 0
         },
         "status": {
@@ -836,112 +959,133 @@
           "type": "varchar(32)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'INIT'"
         },
         "error_message": {
           "name": "error_message",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         },
         "completed_at": {
           "name": "completed_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         }
       },
       "indexes": {
         "uq_upload_sessions_session_id": {
           "name": "uq_upload_sessions_session_id",
           "columns": [
-            "upload_session_id"
+            {
+              "expression": "upload_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_upload_sessions_user_id": {
           "name": "idx_upload_sessions_user_id",
           "columns": [
-            "user_id"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_upload_sessions_status": {
           "name": "idx_upload_sessions_status",
           "columns": [
-            "status"
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "upload_sessions_id": {
-          "name": "upload_sessions_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "users": {
+    "public.users": {
       "name": "users",
+      "schema": "",
       "columns": {
         "id": {
           "name": "id",
-          "type": "int",
-          "primaryKey": false,
+          "type": "integer",
+          "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "identity": {
+            "type": "always",
+            "name": "users_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
         },
         "username": {
           "name": "username",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "password_hash": {
           "name": "password_hash",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "display_name": {
           "name": "display_name",
           "type": "varchar(100)",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
+          "notNull": true
         },
         "role": {
           "name": "role",
           "type": "varchar(16)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "'TEACHER'"
+          "default": "'USER'"
         },
         "enabled": {
           "name": "enabled",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": true
         },
         "deleted": {
@@ -949,7 +1093,6 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": false
         },
         "created_by": {
@@ -957,7 +1100,6 @@
           "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'system'"
         },
         "updated_by": {
@@ -965,85 +1107,99 @@
           "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
           "default": "'system'"
         },
         "deleted_by": {
           "name": "deleted_by",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
+          "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
+          "default": "now()"
         },
         "deleted_at": {
           "name": "deleted_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": false
         }
       },
       "indexes": {
         "uq_users_username": {
           "name": "uq_users_username",
           "columns": [
-            "username"
+            {
+              "expression": "username",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_users_enabled": {
           "name": "idx_users_enabled",
           "columns": [
-            "enabled"
+            {
+              "expression": "enabled",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         },
         "idx_users_deleted": {
           "name": "idx_users_deleted",
           "columns": [
-            "deleted"
+            {
+              "expression": "deleted",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "users_id": {
-          "name": "users_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraint": {}
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     }
   },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
   "views": {},
   "_meta": {
+    "columns": {},
     "schemas": {},
-    "tables": {},
-    "columns": {}
-  },
-  "internal": {
-    "tables": {},
-    "indexes": {}
+    "tables": {}
   }
 }

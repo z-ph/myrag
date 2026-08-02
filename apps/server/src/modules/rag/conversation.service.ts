@@ -36,7 +36,7 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
         if (titleHint && !existing.title) {
           await db
             .update(conversations)
-            .set({ title: titleHint.slice(0, 60) })
+            .set({ title: titleHint.slice(0, 60), updatedAt: new Date() })
             .where(eq(conversations.conversationId, conversationId));
         }
         return false;
@@ -71,9 +71,10 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
           .update(conversationMessages)
           .set(
             content === undefined && reasoning === undefined
-              ? { status }
+              ? { status, updatedAt: new Date() }
               : {
                   status,
+                  updatedAt: new Date(),
                   ...(content !== undefined ? { content } : {}),
                   ...(reasoning !== undefined ? { reasoning } : {}),
                 },

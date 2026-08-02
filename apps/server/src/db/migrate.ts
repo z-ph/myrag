@@ -2,7 +2,7 @@
  * 启动时迁移：执行 drizzle 生成的 SQL 迁移文件。
  * 用法：pnpm --filter @myrag/server db:migrate
  */
-import { migrate } from 'drizzle-orm/mysql2/migrator';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { loadServerConfig } from '@myrag/shared';
 import { createDb } from './index';
 

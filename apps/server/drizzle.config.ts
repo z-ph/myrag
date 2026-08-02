@@ -4,7 +4,7 @@ import { loadServerConfig } from '@myrag/shared';
 const cfg = loadServerConfig();
 
 export default defineConfig({
-  dialect: 'mysql',
+  dialect: 'postgresql',
   schema: './src/db/schema.ts',
   out: './drizzle',
   dbCredentials: {

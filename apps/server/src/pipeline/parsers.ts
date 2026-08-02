@@ -1,4 +1,4 @@
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
 import WordExtractor from 'word-extractor';
 import ExcelJS from 'exceljs';
@@ -25,9 +25,14 @@ export function parsePlainText(buffer: Buffer): string {
 export async function parsePdf(buffer: Buffer): Promise<{ text: string; isScanned: boolean }> {
   let text: string;
   try {
-    // @types/pdf-parse 声明为旧式非泛型 Buffer，与 node 24 类型不兼容
-    const result = await pdfParse(buffer as unknown as Buffer);
-    text = result.text ?? '';
+    // pdf-parse 2.x：data 会被 transfer 到 worker，传拷贝保住原 buffer（扫描件还需复用做 OCR）
+    const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    try {
+      const result = await parser.getText();
+      text = result.text ?? '';
+    } finally {
+      await parser.destroy();
+    }
   } catch (err) {
     throw new ParseError('PDF 解析失败，文件可能已损坏', err);
   }

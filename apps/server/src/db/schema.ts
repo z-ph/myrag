@@ -2,20 +2,19 @@ import { relations } from 'drizzle-orm';
 import {
   boolean,
   index,
-  int,
-  longtext,
-  mysqlTable,
+  integer,
+  pgTable,
   text,
   timestamp,
   uniqueIndex,
   varchar,
-} from 'drizzle-orm/mysql-core';
+} from 'drizzle-orm/pg-core';
 
 // ---------- 用户 ----------
-export const users = mysqlTable(
+export const users = pgTable(
   'users',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     username: varchar('username', { length: 64 }).notNull(),
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
     displayName: varchar('display_name', { length: 100 }).notNull(),
@@ -26,7 +25,7 @@ export const users = mysqlTable(
     updatedBy: varchar('updated_by', { length: 64 }).notNull().default('system'),
     deletedBy: varchar('deleted_by', { length: 64 }),
     createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
     deletedAt: timestamp('deleted_at'),
   },
   (t) => [
@@ -37,10 +36,10 @@ export const users = mysqlTable(
 );
 
 // ---------- 文档 ----------
-export const documents = mysqlTable(
+export const documents = pgTable(
   'documents',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     /** 业务侧与向量库统一标识（UUID） */
     documentId: varchar('document_id', { length: 64 }).notNull(),
     /** 上传人（用户名） */
@@ -51,17 +50,17 @@ export const documents = mysqlTable(
     originalFilename: varchar('original_filename', { length: 255 }).notNull(),
     fileType: varchar('file_type', { length: 32 }).notNull(),
     filePath: varchar('file_path', { length: 512 }).notNull(),
-    fileSize: int('file_size'),
+    fileSize: integer('file_size'),
     contentType: varchar('content_type', { length: 128 }),
     previewText: text('preview_text'),
-    segmentCount: int('segment_count').default(0),
-    vectorCount: int('vector_count').default(0),
+    segmentCount: integer('segment_count').default(0),
+    vectorCount: integer('vector_count').default(0),
     storageMode: varchar('storage_mode', { length: 32 }).notNull().default('FULL_INDEX'),
     status: varchar('status', { length: 32 }).notNull().default('PENDING'),
     errorMessage: text('error_message'),
     fileHash: varchar('file_hash', { length: 64 }),
     ocrModel: varchar('ocr_model', { length: 128 }),
-    ocrDurationMs: int('ocr_duration_ms'),
+    ocrDurationMs: integer('ocr_duration_ms'),
     deleted: boolean('deleted').notNull().default(false),
     deletedBy: varchar('deleted_by', { length: 64 }),
     deletedAt: timestamp('deleted_at'),
@@ -79,16 +78,16 @@ export const documents = mysqlTable(
 );
 
 // ---------- 文档分块快照 ----------
-export const documentChunks = mysqlTable(
+export const documentChunks = pgTable(
   'document_chunks',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     documentId: varchar('document_id', { length: 64 }).notNull(),
-    chunkIndex: int('chunk_index').notNull(),
-    chunkText: longtext('chunk_text'),
+    chunkIndex: integer('chunk_index').notNull(),
+    chunkText: text('chunk_text'),
     chunkTextPreview: varchar('chunk_text_preview', { length: 500 }),
-    chunkSize: int('chunk_size'),
-    rawChunkSize: int('raw_chunk_size'),
+    chunkSize: integer('chunk_size'),
+    rawChunkSize: integer('raw_chunk_size'),
     chunkHash: varchar('chunk_hash', { length: 128 }),
     title: varchar('title', { length: 255 }),
     category: varchar('category', { length: 128 }),
@@ -106,20 +105,20 @@ export const documentChunks = mysqlTable(
 );
 
 // ---------- 批量任务 ----------
-export const batchTasks = mysqlTable(
+export const batchTasks = pgTable(
   'batch_tasks',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     taskId: varchar('task_id', { length: 64 }).notNull(),
     status: varchar('status', { length: 32 }).notNull().default('PENDING'),
-    totalFiles: int('total_files').notNull().default(0),
-    successCount: int('success_count').notNull().default(0),
-    failureCount: int('failure_count').notNull().default(0),
+    totalFiles: integer('total_files').notNull().default(0),
+    successCount: integer('success_count').notNull().default(0),
+    failureCount: integer('failure_count').notNull().default(0),
     errorMessage: text('error_message'),
     /** 补偿扫描是否已接管（防止重复处理） */
     takenOver: boolean('taken_over').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
     completedAt: timestamp('completed_at'),
   },
   (t) => [
@@ -128,10 +127,10 @@ export const batchTasks = mysqlTable(
   ],
 );
 
-export const batchFileResults = mysqlTable(
+export const batchFileResults = pgTable(
   'batch_file_results',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     taskId: varchar('task_id', { length: 64 }).notNull(),
     documentId: varchar('document_id', { length: 64 }),
     /** 上传人 */
@@ -142,26 +141,26 @@ export const batchFileResults = mysqlTable(
     status: varchar('status', { length: 32 }).notNull(),
     message: varchar('message', { length: 512 }),
     errorMessage: text('error_message'),
-    embeddingCount: int('embedding_count').default(0),
-    segmentCount: int('segment_count').default(0),
+    embeddingCount: integer('embedding_count').default(0),
+    segmentCount: integer('segment_count').default(0),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => [index('idx_batch_file_results_task_id').on(t.taskId)],
 );
 
 // ---------- 分片上传会话 ----------
-export const uploadSessions = mysqlTable(
+export const uploadSessions = pgTable(
   'upload_sessions',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     uploadSessionId: varchar('upload_session_id', { length: 64 }).notNull(),
     taskId: varchar('task_id', { length: 64 }),
     userId: varchar('user_id', { length: 64 }).notNull(),
     originalFilename: varchar('original_filename', { length: 255 }).notNull(),
-    totalChunks: int('total_chunks').notNull(),
-    receivedChunks: int('received_chunks').notNull().default(0),
-    totalSize: int('total_size').notNull(),
-    uploadedSize: int('uploaded_size').notNull().default(0),
+    totalChunks: integer('total_chunks').notNull(),
+    receivedChunks: integer('received_chunks').notNull().default(0),
+    totalSize: integer('total_size').notNull(),
+    uploadedSize: integer('uploaded_size').notNull().default(0),
     status: varchar('status', { length: 32 }).notNull().default('INIT'),
     errorMessage: text('error_message'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -175,16 +174,16 @@ export const uploadSessions = mysqlTable(
 );
 
 // ---------- 会话与消息 ----------
-export const conversations = mysqlTable(
+export const conversations = pgTable(
   'conversations',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     /** 前端生成的业务会话 ID */
     conversationId: varchar('conversation_id', { length: 128 }).notNull(),
     userId: varchar('user_id', { length: 64 }).notNull(),
     title: varchar('title', { length: 255 }),
     createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('uq_conversations_conversation_id').on(t.conversationId),
@@ -192,18 +191,18 @@ export const conversations = mysqlTable(
   ],
 );
 
-export const conversationMessages = mysqlTable(
+export const conversationMessages = pgTable(
   'conversation_messages',
   {
-    id: int('id').autoincrement().primaryKey(),
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     conversationId: varchar('conversation_id', { length: 128 }).notNull(),
     role: varchar('role', { length: 16 }).notNull(),
-    content: longtext('content'),
+    content: text('content'),
     /** 思考过程（仅展示用，不回灌多轮上下文） */
-    reasoning: longtext('reasoning'),
+    reasoning: text('reasoning'),
     status: varchar('status', { length: 16 }).notNull().default('COMPLETED'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
   (t) => [
     index('idx_cm_conversation_created').on(t.conversationId, t.createdAt),
@@ -211,13 +210,13 @@ export const conversationMessages = mysqlTable(
 );
 
 // ---------- 运行时动态设置 ----------
-export const systemSettings = mysqlTable(
+export const systemSettings = pgTable(
   'system_settings',
   {
     key: varchar('key', { length: 64 }).primaryKey(),
     /** 数值的 JSON 文本 */
     value: text('value').notNull(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
 );
 

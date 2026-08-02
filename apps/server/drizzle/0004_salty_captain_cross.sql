@@ -1,1 +1,0 @@
-ALTER TABLE `conversation_messages` ADD `reasoning` longtext;

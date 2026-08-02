@@ -1,40 +1,12 @@
 {
   "version": "7",
-  "dialect": "mysql",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "5",
-      "when": 1785599915766,
-      "tag": "0000_clever_deathstrike",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1785602756511,
-      "tag": "0001_groovy_dakota_north",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": 1785602770556,
-      "tag": "0002_role_backfill",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "5",
-      "when": 1785649237614,
-      "tag": "0003_rainy_misty_knight",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "5",
-      "when": 1785651490432,
-      "tag": "0004_salty_captain_cross",
+      "version": "7",
+      "when": 1785672454399,
+      "tag": "0000_typical_vampiro",
       "breakpoints": true
     }
   ]

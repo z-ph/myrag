@@ -236,7 +236,7 @@ export function createProcessService(
           status: 'PENDING',
           batchTaskId: input.batchTaskId,
         })
-        .$returningId();
+        .returning({ id: documents.id });
       if (!row) throw new Error('文档记录插入失败');
 
       const doc = (await db.select().from(documents).where(eq(documents.id, row.id)).limit(1))[0]!;

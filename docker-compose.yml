@@ -1,19 +1,20 @@
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: myrag-mysql
+  postgres:
+    image: postgres:18-alpine
+    container_name: myrag-postgres
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-rag_password}
-      MYSQL_DATABASE: ${DB_NAME:-rag}
-      MYSQL_USER: ${DB_USER:-rag}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-rag_password}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-rag_password}
+      POSTGRES_DB: ${DB_NAME:-rag}
+      POSTGRES_USER: ${DB_USER:-rag}
     volumes:
-      - mysql-data:/var/lib/mysql
+      # PG 18+ 镜像要求挂载 /var/lib/postgresql（数据在版本子目录，便于 pg_upgrade）
+      - postgres-data:/var/lib/postgresql
+    # 宿主机 5432 常被其它服务占用，映射到 5433
     ports:
-      - "3306:3306"
+      - "5433:5432"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASSWORD:-rag_password}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rag} -d ${DB_NAME:-rag}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -51,7 +52,7 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: myrag-minio
     restart: unless-stopped
     command: server /data --console-address ":9101"
@@ -78,7 +79,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DB_HOST: mysql
+      DB_HOST: postgres
       QDRANT_HOST: qdrant
       REDIS_HOST: redis
       MINIO_ENDPOINT: minio:9000
@@ -91,7 +92,7 @@ services:
       - uploads:/app/uploads
       - data:/app/data
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       qdrant:
         condition: service_healthy
@@ -100,7 +101,7 @@ services:
       minio:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "8808:8080"
 
   web:
     build:
@@ -114,7 +115,7 @@ services:
       - "5173:80"
 
 volumes:
-  mysql-data:
+  postgres-data:
   qdrant-data:
   redis-data:
   minio-data:

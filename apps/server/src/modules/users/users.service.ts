@@ -95,7 +95,7 @@ export function createUsersService(db: Db): UsersService {
           createdBy: operator,
           updatedBy: operator,
         })
-        .$returningId();
+        .returning({ id: users.id });
       if (!row) throw new Error('用户创建失败');
       return this.getById(row.id);
     },
@@ -114,6 +114,7 @@ export function createUsersService(db: Db): UsersService {
           ...(req.role !== undefined ? { role: req.role } : {}),
           ...(req.enabled !== undefined ? { enabled: req.enabled } : {}),
           updatedBy: operator,
+          updatedAt: new Date(),
         })
         .where(eq(users.id, id));
       return this.getById(id);
@@ -125,7 +126,7 @@ export function createUsersService(db: Db): UsersService {
       if (target?.username === 'admin') throw badRequest('内置管理员账号不可删除');
       await db
         .update(users)
-        .set({ deleted: true, deletedBy: operator, deletedAt: new Date() })
+        .set({ deleted: true, deletedBy: operator, deletedAt: new Date(), updatedAt: new Date() })
         .where(eq(users.id, id));
     },
 
@@ -134,7 +135,7 @@ export function createUsersService(db: Db): UsersService {
       const passwordHash = await hashPassword(password);
       await db
         .update(users)
-        .set({ passwordHash, updatedBy: operator })
+        .set({ passwordHash, updatedBy: operator, updatedAt: new Date() })
         .where(eq(users.id, id));
     },
   };

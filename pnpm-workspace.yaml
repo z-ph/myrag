@@ -5,5 +5,8 @@ packages:
 allowBuilds:
   esbuild: true
 
+minimumReleaseAgeExclude:
+  - jose@6.2.7
+
 onlyBuiltDependencies:
   - esbuild

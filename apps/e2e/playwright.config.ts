@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 /**
- * e2e 依赖外部服务（MySQL/Qdrant/Redis）与后端、前端：
+ * e2e 依赖外部服务（PostgreSQL/Qdrant/Redis）与后端、前端：
  * 先 `pnpm --filter @myrag/server db:migrate` 并在项目根 `docker compose up -d` 启动基础设施，
  * 本配置自动拉起 server（8080）与 web（5173）。
  */

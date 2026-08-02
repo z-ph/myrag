@@ -90,7 +90,7 @@ export const DEFAULTS = {
   documentListLimit: 500,
   /** 会话列表单页上限 */
   conversationListLimit: 100,
-  /** MySQL 连接池大小 */
+  /** PostgreSQL 连接池大小 */
   dbPoolSize: 10,
   /** Qdrant scroll 分页大小 */
   qdrantScrollLimit: 100,
