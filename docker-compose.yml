@@ -114,7 +114,6 @@ services:
       args:
         # 必填（vite.config 构建期校验）；子路径部署改 VITE_BASE（如 /rag/），同时需在 nginx.conf 添加前缀 alias
         VITE_BASE: ${VITE_BASE}
-        BACK_END_URL: ${BACK_END_URL}
     container_name: myrag-web
     restart: unless-stopped
     depends_on:
