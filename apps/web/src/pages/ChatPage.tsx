@@ -48,6 +48,8 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
       size="small"
       className="reasoning-collapse"
       style={{ marginTop: 8, maxWidth: 640 }}
+      // 默认展开:思考过程流式可见,避免用户只看到“思考中…”标题干等
+      defaultActiveKey={['reasoning']}
       items={[
         {
           key: 'reasoning',
