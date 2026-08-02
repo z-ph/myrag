@@ -1,16 +1,12 @@
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
-// 配置真源为仓库根 .env（与 compose/后端同一份）；loadEnv 优先进程环境变量，其次 .env 文件。
+// 配置来源：进程环境变量优先（docker/CI 经 build args 注入），其次仓库根 .env 文件（本地 dev）。
 // 注意：不能依赖 import.meta.dirname——vite 会打包配置到临时目录导致路径偏移。
+// 容器构建没有 .env 文件（机密配置不得入镜像），VITE_BASE 由 ARG/ENV 提供。
 const repoRoot = resolve(process.cwd(), '../..');
-if (!existsSync(resolve(repoRoot, '.env'))) {
-  throw new Error(`[vite] 未找到仓库根 .env（${resolve(repoRoot, '.env')}）：请先 cp .env.example .env 并配置`);
-}
-// 空前缀：读取 .env 全部变量
 const env = loadEnv('production', repoRoot, '');
 
 const viteBase = env.VITE_BASE;
