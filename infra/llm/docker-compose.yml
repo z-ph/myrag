@@ -132,7 +132,7 @@ services:
     ports:
       - "4000:4000" # 统一对外端口
     volumes:
-      - ./litellm-config-ocr-vl.yaml:/app/config.yaml
+      - ./lite-llm.yaml:/app/config.yaml
     environment:
       - LITELLM_MASTER_KEY=sk-shiliuziyyds # 界面管理密钥
       - UI_USERNAME=admin # 界面登录账号
