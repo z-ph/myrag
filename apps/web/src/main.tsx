@@ -14,6 +14,12 @@ const queryClient = new QueryClient({
   },
 });
 
+// 路由 base 与 vite.config.ts 同源：VITE_BASE 由 define 编译期注入，
+// 缺失/格式错误在构建期报错，此处无兜底；
+// react-router basename 不接受尾斜杠（除根路径外），仅做 API 格式适配
+const VITE_BASE = import.meta.env.VITE_BASE as string;
+const routerBasename = VITE_BASE === '/' ? '/' : VITE_BASE.replace(/\/+$/, '');
+
 setupAuthEvents();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -21,7 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#2f54eb' } }}>
       <AntApp>
         <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
+          <BrowserRouter basename={routerBasename}>
             <App />
           </BrowserRouter>
         </QueryClientProvider>
