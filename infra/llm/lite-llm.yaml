@@ -1,0 +1,19 @@
+model_list:
+  - model_name: glm-4.6v-flash
+    litellm_params:
+      model: openai/glm-4.6v-flash
+      api_base: http://vllm-chat:8000/v1
+      api_key:
+  - model_name: qwen3-vl-embedding-2b
+    litellm_params:
+      model: openai/qwen3-vl-embedding-2b
+      api_base: http://vllm-embedding:8000/v1
+      api_key:
+  - model_name: glm-ocr
+    litellm_params:
+      model: openai/glm-ocr
+      api_base: http://vllm-ocr:8000/v1
+      api_key:
+general_settings:
+  master_key: sk-shiliuziyyds # 界面登录和 API 调用都用这个 Key
+  enable_auto_tool_choice: true # 允许透传自动选择工具的指令

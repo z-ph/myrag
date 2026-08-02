@@ -1,0 +1,145 @@
+services:
+  # --- 1. 聊天模型节点 ---
+  vllm-chat:
+    image: docker.m.daocloud.io/vllm/vllm-openai:latest
+    container_name: vllm
+    runtime: nvidia
+    environment:
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+    volumes:
+      - /home/admini/.cache/modelscope:/root/.cache/modelscope
+      - /home/admini/.cache/glm-4.6-vl-flash/vllm:/root/.cache/vllm # 包含 torch_compile 缓存
+      - /home/admini/.cache/glm-4.6-vl-flash/.nv:/root/.nv # NVIDIA 算子缓存
+    ipc: host
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"] # 使用第2张显卡
+              capabilities: [gpu]
+    command: >
+      --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-4___6V-Flash
+      --served-model-name glm-4.6v-flash
+      --trust-remote-code
+      --host 0.0.0.0
+      --gpu-memory-utilization 0.7
+      --enable-auto-tool-choice
+      --tool-call-parser glm45
+      --max-model-len 64000
+      --reasoning-parser glm45
+    healthcheck:
+      # 使用 python 代替 curl，因为 vLLM 官方镜像默认去除了 curl 命令
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
+      interval: 10s       # 正常运行后，每 10 秒检查一次
+      timeout: 5s         # 每次检查超过 5 秒未响应视为失败
+      retries: 3          # 连续失败 3 次将容器标记为 unhealthy
+      start_period: 300s  # � 关键：给模型留出 5 分钟的下载和加载显存时间！在此期间失败不计入总数
+
+    restart: unless-stopped
+  # --- 2. Embedding 模型节点 ---
+  vllm-embedding:
+    image: docker.m.daocloud.io/vllm/vllm-openai:latest
+    container_name: embed1
+    runtime: nvidia
+    environment:
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+    volumes:
+      - /home/admini/.cache/modelscope:/root/.cache/modelscope
+      - /home/admini/.cache/qwen3-embedding-4b/vllm:/root/.cache/vllm # 包含 torch_compile 缓存
+      - /home/admini/.cache/qwen3-embedding-4b/.nv:/root/.nv # NVIDIA 算子缓存
+    ipc: host
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"] # 同样使用第2张显卡
+              capabilities: [gpu]
+    ports:
+      - "8001:8000"
+    command: >
+      --model /root/.cache/modelscope/hub/models/Qwen/Qwen3-VL-Embedding-2B
+      --served-model-name qwen3-vl-embedding-2b
+      --trust-remote-code
+      --gpu-memory-utilization 0.21
+      --max-model-len 32000
+      --host 0.0.0.0
+      --runner pooling
+    healthcheck:
+      # 使用 python 代替 curl，因为 vLLM 官方镜像默认去除了 curl 命令
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
+      interval: 10s       # 正常运行后，每 10 秒检查一次
+      timeout: 5s         # 每次检查超过 5 秒未响应视为失败
+      retries: 3          # 连续失败 3 次将容器标记为 unhealthy
+      start_period: 300s  # � 关键：给模型留出 5 分钟的下载和加载显存时间！在此期间失败不计入总数
+    depends_on:
+      vllm-chat:
+        condition: service_healthy
+    restart: unless-stopped
+ # --- 3. OCR 模型节点 ---
+  vllm-ocr:
+    image: docker.m.daocloud.io/vllm/vllm-openai:latest
+    container_name: vllm-ocr
+    runtime: nvidia
+    environment:
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+    volumes:
+      - /home/admini/.cache/modelscope:/root/.cache/modelscope
+      - /home/admini/.cache/glm-ocr/vllm:/root/.cache/vllm
+      - /home/admini/.cache/glm-ocr/.nv:/root/.nv
+    ipc: host
+    expose:
+      - "8000"
+    ports:
+      - "8002:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    command: >
+      --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-OCR
+      --served-model-name glm-ocr
+      --trust-remote-code
+      --host 0.0.0.0
+      --gpu-memory-utilization 0.10
+      --max-model-len 25000
+    healthcheck:
+      # 使用 python 代替 curl，因为 vLLM 官方镜像默认去除了 curl 命令
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
+      interval: 10s       # 正常运行后，每 10 秒检查一次
+      timeout: 5s         # 每次检查超过 5 秒未响应视为失败
+      retries: 3          # 连续失败 3 次将容器标记为 unhealthy
+      start_period: 300s  # � 关键：给模型留出 5 分钟的下载和加载显存时间！在此期间失败不计入总数
+    depends_on:
+      vllm-embedding:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- 4. LiteLLM 聚合管理界面 ---
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: litellm1
+    ports:
+      - "4000:4000" # 统一对外端口
+    volumes:
+      - ./litellm-config-ocr-vl.yaml:/app/config.yaml
+    environment:
+      - LITELLM_MASTER_KEY=sk-shiliuziyyds # 界面管理密钥
+      - UI_USERNAME=admin # 界面登录账号
+      - UI_PASSWORD=admin # 界面登录密码
+    depends_on:
+      - vllm-chat
+      - vllm-embedding
+      - vllm-ocr
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    restart: always
