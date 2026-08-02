@@ -3,6 +3,10 @@ FROM node:24-alpine AS build
 RUN corepack enable
 WORKDIR /app
 
+# 部署子路径（compose 由 .env 的 VITE_BASE 注入，默认 /）
+ARG VITE_BASE=/
+ENV VITE_BASE=$VITE_BASE
+
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/web/package.json apps/web/

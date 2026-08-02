@@ -10,9 +10,9 @@ services:
     volumes:
       # PG 18+ 镜像要求挂载 /var/lib/postgresql（数据在版本子目录，便于 pg_upgrade）
       - postgres-data:/var/lib/postgresql
-    # 宿主机 5432 常被其它服务占用，映射到 5433
+    # 宿主映射端口由 .env 的 POSTGRES_HOST_PORT 控制（容器内固定 5432）
     ports:
-      - "5433:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rag} -d ${DB_NAME:-rag}"]
       interval: 5s
@@ -27,8 +27,8 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "${QDRANT_HOST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
       interval: 5s
@@ -42,9 +42,9 @@ services:
     restart: unless-stopped
     volumes:
       - redis-data:/data
-    # 宿主机 6379 常被其它服务占用，映射到 6380
+    # 宿主映射端口由 .env 的 REDIS_HOST_PORT 控制（容器内固定 6379）
     ports:
-      - "6380:6379"
+      - "${REDIS_HOST_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -61,10 +61,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     volumes:
       - minio-data:/data
-    # 宿主机 9000/9001 常被其它服务占用，映射到 9100/9101
+    # 宿主映射端口由 .env 的 MINIO_HOST_PORT / MINIO_CONSOLE_HOST_PORT 控制（容器内固定 9000/9101）
     ports:
-      - "9100:9000"
-      - "9101:9101"
+      - "${MINIO_HOST_PORT:-9100}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9101}:9101"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -80,8 +80,11 @@ services:
     env_file: .env
     environment:
       DB_HOST: postgres
+      # 容器网络内端口固定（.env 的 *HOST_PORT / DB_PORT 只影响宿主映射与本地开发）
+      DB_PORT: 5432
       QDRANT_HOST: qdrant
       REDIS_HOST: redis
+      REDIS_PORT: 6379
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -100,19 +103,24 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # 宿主映射端口由 .env 的 SERVER_HOST_PORT 控制（容器内固定 8080）
     ports:
-      - "8808:8080"
+      - "${SERVER_HOST_PORT:-8808}:8080"
 
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        # 部署子路径时改 .env 的 VITE_BASE（如 /rag/），同时需在 nginx.conf 添加前缀 alias
+        VITE_BASE: ${VITE_BASE:-/}
     container_name: myrag-web
     restart: unless-stopped
     depends_on:
       - server
+    # 宿主映射端口由 .env 的 WEB_HOST_PORT 控制（容器内固定 80）
     ports:
-      - "5173:80"
+      - "${WEB_HOST_PORT:-5173}:80"
 
 volumes:
   postgres-data:

@@ -60,3 +60,16 @@
 
 - `docker-compose.yml` 中 server 端口原被改为非法值 `88080:8080`（>65535），已修为 `8808:8080`。
 - `pnpm-workspace.yaml` 新增 `minimumReleaseAgeExclude: [jose@6.2.7]`（pnpm 11 自动添加，豁免新版本发布年龄检查）。
+
+## 端口与部署参数化（.env 控制）
+
+- **宿主端口全部交给 .env**:`POSTGRES_HOST_PORT` / `REDIS_HOST_PORT` / `QDRANT_HOST_PORT` / `QDRANT_GRPC_HOST_PORT` / `MINIO_HOST_PORT` / `MINIO_CONSOLE_HOST_PORT` / `SERVER_HOST_PORT` / `WEB_HOST_PORT`（compose 插值 `${VAR:-默认}`）。容器内端口固定，不受影响。
+- **修隐患**:server 容器内 `DB_PORT` / `REDIS_PORT` 在 compose environment 显式固定为容器网络端口（5432 / 6379），.env 中的值仅用于本地开发连宿主映射。
+- **前端部署子路径**:vite `base` 由 `VITE_BASE` 控制（默认 `/`，子路径如 `/rag/`）；web 镜像构建时经 `build.args` 注入（Dockerfile `ARG VITE_BASE`）。nginx.conf 附子路径 alias 示例。
+- **server 镜像改为 `pnpm deploy --prod --legacy`**:自包含生产依赖（真实文件而非符号链接），pdf-parse 等 external 包 runtime 可直接 require；删除原先拷贝根 node_modules 的做法。
+
+## 修复:pdf-parse 2.x 在 CJS 打包下崩溃
+
+- 症状：server 容器启动即崩 `ReferenceError: DOMMatrix is not defined`（tsup 全量打包把 pdfjs-dist 浏览器端代码打进 CJS bundle，模块顶层执行 `new DOMMatrix()`）。
+- 修复：tsup `noExternal` 排除 `pdf-parse`（`/^(?!pdf-parse$).*/`），运行时走 node_modules 原包（pdfjs-dist 5.x node 入口无需 DOM polyfill 即可文本提取）。
+- 验证：容器内 `require('pdf-parse')` + `PDFParse.getText()` 正常，真实 PDF 上传走通解析链路（后续 LLM 502 为容器访问外网网关问题，与解析无关）。

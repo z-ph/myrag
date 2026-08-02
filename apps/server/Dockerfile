@@ -14,17 +14,19 @@ COPY packages/shared packages/shared
 COPY apps/server apps/server
 RUN pnpm --filter @myrag/server build
 
+# 部署目录：自包含生产依赖（pnpm deploy 输出真实文件而非符号链接，
+# pdf-parse 等 external 依赖在 runtime 可直接 require）
+RUN pnpm --filter @myrag/server deploy --prod --legacy /app/deploy
+
 # ---------- 运行阶段 ----------
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-# 运行时仅需：构建产物、drizzle 迁移、完整依赖（迁移脚本与启动共用）
+# 运行时仅需：自包含依赖、构建产物、drizzle 迁移
+COPY --from=build /app/deploy /app
 COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/apps/server/drizzle ./drizzle
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/apps/server/package.json ./package.json
 
 # 上传文件与批处理暂存目录（挂载卷）
 RUN mkdir -p /app/uploads /app/data/batch /app/data/chunks
