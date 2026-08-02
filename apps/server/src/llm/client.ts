@@ -122,7 +122,7 @@ export function createLlmClient(cfg: ServerConfig): LlmClient {
         model: cfg.llmChatModel,
         messages,
         stream: true,
-        temperature: 0.3,
+        temperature: cfg.llmChatTemperature,
       });
       if (!res.body) throw new AppError(502, '模型服务返回空流');
       let full = '';
@@ -146,7 +146,7 @@ export function createLlmClient(cfg: ServerConfig): LlmClient {
         model: cfg.llmChatModel,
         messages,
         stream: false,
-        temperature: 0.3,
+        temperature: cfg.llmChatTemperature,
       });
       const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       const content = json.choices?.[0]?.message?.content;
@@ -188,7 +188,7 @@ export function createLlmClient(cfg: ServerConfig): LlmClient {
           },
         ],
         stream: false,
-        temperature: 0.2,
+        temperature: cfg.llmVisionTemperature,
       });
       const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       const content = json.choices?.[0]?.message?.content;

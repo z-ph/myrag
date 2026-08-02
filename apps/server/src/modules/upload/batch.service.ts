@@ -11,10 +11,6 @@ import { RedisKeys } from '../../store/redis';
 import { genId, logger } from '../../lib/util';
 import { badRequest } from '../../lib/errors';
 
-const CONCURRENCY = 2;
-const POLL_TIMEOUT_SECONDS = 5;
-const SCAN_LOCK_TTL_SECONDS = 30;
-
 export interface BatchService {
   /** 创建批量任务并入队（任意实例 worker 均可拾取） */
   createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
@@ -131,7 +127,7 @@ async function processTaskFiles(
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pendingResults.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(cfg.batchConcurrency, pendingResults.length) }, worker));
 
   const status: TaskStatus = failure === 0 ? 'SUCCESS' : success > 0 ? 'PARTIAL' : 'FAILED';
   await db
@@ -153,7 +149,7 @@ export function createBatchService(
   async function consumeLoop(): Promise<void> {
     while (workerRunning) {
       try {
-        const taskId = await redis.brpoplpush(RedisKeys.batchQueue, RedisKeys.batchInflight, POLL_TIMEOUT_SECONDS);
+        const taskId = await redis.brpoplpush(RedisKeys.batchQueue, RedisKeys.batchInflight, cfg.batchPollTimeoutSeconds);
         if (!taskId) continue;
         try {
           await processTaskFiles(db, processService, cfg, taskId);
@@ -218,7 +214,7 @@ export function createBatchService(
     },
 
     async recoveryScan() {
-      const locked = await redis.acquireLock(RedisKeys.batchScanLock, SCAN_LOCK_TTL_SECONDS);
+      const locked = await redis.acquireLock(RedisKeys.batchScanLock, cfg.batchScanLockTtlSeconds);
       if (!locked) return 0;
 
       try {

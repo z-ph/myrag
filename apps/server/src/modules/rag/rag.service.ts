@@ -1,6 +1,5 @@
 import type { ServerConfig, ContextMessage, ImageUnderstandingResult, QuestionResult, SourceReference } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
-import type { Db } from '../../db';
 import { AppError, badRequest } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { RedisStore } from '../../store/redis';
@@ -71,12 +70,7 @@ function formatChunk(chunk: RetrievedChunk): string {
   return `${head}【来源：${chunk.filename}】\n${chunk.text}`;
 }
 
-const GENERATING_TTL_SECONDS = 15 * 60;
-/** 匿名问答结果暂存 TTL（易失存储，非持久化） */
-const ANON_RESULT_TTL_SECONDS = 24 * 3600;
-
 export function createRagService(
-  db: Db,
   llm: LlmClient,
   retrieval: RetrievalService,
   imageService: ImageService,
@@ -252,7 +246,7 @@ export function createRagService(
       activeGenerations.get(input.conversationId)?.abort();
       activeGenerations.set(input.conversationId, controller);
       // 生成状态写入 Redis（无状态化：可观测 + 跨实例取消依据）
-      await redis.set(RedisKeys.generating(input.conversationId), cfg.instanceId, GENERATING_TTL_SECONDS);
+      await redis.set(RedisKeys.generating(input.conversationId), cfg.instanceId, cfg.generatingTtlSeconds);
 
       const cleanup = () => {
         externalSignal.removeEventListener('abort', onExternalAbort);
@@ -312,7 +306,7 @@ export function createRagService(
         await redis.set(
           RedisKeys.anonResult(questionId),
           JSON.stringify({ questionId, status: 'PENDING' }),
-          ANON_RESULT_TTL_SECONDS,
+          cfg.anonResultTtlSeconds,
         );
         handlers.onStart(questionId);
         const result = await generate(
@@ -337,7 +331,7 @@ export function createRagService(
             sources: result.sources,
             imageUnderstanding: result.imageUnderstanding,
           }),
-          ANON_RESULT_TTL_SECONDS,
+          cfg.anonResultTtlSeconds,
         );
         handlers.onComplete(false);
       } catch (err) {

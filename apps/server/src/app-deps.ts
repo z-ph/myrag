@@ -73,7 +73,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const conversationService = createConversationService(handle.db, cfg);
   const retrievalService = createRetrievalService(handle.db, qdrant, llm, cfg);
   const imageService = createImageService(llm, cfg);
-  const ragService = createRagService(handle.db, llm, retrievalService, imageService, conversationService, redis, cfg);
+  const ragService = createRagService(llm, retrievalService, imageService, conversationService, redis, cfg);
 
   const deps: AppDeps = {
     cfg,

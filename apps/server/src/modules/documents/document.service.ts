@@ -51,7 +51,7 @@ export function createDocumentService(db: Db, qdrant: QdrantStore, cfg: ServerCo
         eq(documents.deleted, false),
         keyword ? like(documents.originalFilename, `%${keyword}%`) : undefined,
       );
-      const rows = await db.select().from(documents).where(cond).orderBy(desc(documents.createdAt)).limit(500);
+      const rows = await db.select().from(documents).where(cond).orderBy(desc(documents.createdAt)).limit(cfg.documentListLimit);
       const [totalRow] = await db.select({ total: count() }).from(documents).where(cond);
       return { documents: rows.map(toListItem), total: totalRow?.total ?? 0 };
     },

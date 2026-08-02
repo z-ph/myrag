@@ -146,7 +146,7 @@ export function createQdrantStore(cfg: ServerConfig): QdrantStore {
       do {
         const result = await client.scroll(cfg.qdrantCollection, {
           filter: { must: [{ key: 'document_id', match: { value: documentId } }] },
-          limit: 100,
+          limit: cfg.qdrantScrollLimit,
           offset: typeof nextOffset === 'string' || typeof nextOffset === 'number' ? nextOffset : undefined,
           with_payload: true,
         });

@@ -58,6 +58,12 @@ export interface ServerConfig {
   llmEmbeddingDimensions: number;
   llmOcrModel: string;
   llmTimeoutMs: number;
+  /** 对话生成温度 */
+  llmChatTemperature: number;
+  /** 视觉模型温度 */
+  llmVisionTemperature: number;
+  /** 单次向量化最大行数（受模型/网关批次上限约束） */
+  embedBatchSize: number;
   llmVisionModel: string;
   /** vision/OCR 专用端点，为空时使用 llmBaseUrl / llmApiKey */
   llmVisionBaseUrl: string;
@@ -74,6 +80,8 @@ export interface ServerConfig {
   // RAG 参数
   chunkSize: number;
   chunkOverlap: number;
+  /** 每块关键词提取条数 */
+  chunkKeywordsTopN: number;
   maxResults: number;
   minScore: number;
   candidateMultiplier: number;
@@ -86,6 +94,24 @@ export interface ServerConfig {
   contextBudget: number;
   memoryWindow: number;
   imageRetrievalWeight: number;
+  /** 批量任务 worker 并发数 */
+  batchConcurrency: number;
+  /** 批量任务队列轮询间隔（秒） */
+  batchPollTimeoutSeconds: number;
+  /** 批量恢复扫描分布式锁 TTL（秒） */
+  batchScanLockTtlSeconds: number;
+  /** 生成中状态 TTL（秒） */
+  generatingTtlSeconds: number;
+  /** 匿名问答结果暂存 TTL（秒） */
+  anonResultTtlSeconds: number;
+  /** 文档列表单页上限 */
+  documentListLimit: number;
+  /** 会话列表单页上限 */
+  conversationListLimit: number;
+  /** MySQL 连接池大小 */
+  dbPoolSize: number;
+  /** Qdrant scroll 分页大小 */
+  qdrantScrollLimit: number;
   /** 批量任务补偿扫描间隔（毫秒） */
   recoveryScanIntervalMs: number;
   /** 任务超过该时长（毫秒）视为中断，可被补偿接管 */
@@ -125,6 +151,9 @@ const ServerConfigSchema = z.object({
   llmEmbeddingApiKey: z.string(),
   llmOcrModel: z.string(),
   llmTimeoutMs: z.number(),
+  llmChatTemperature: z.number(),
+  llmVisionTemperature: z.number(),
+  embedBatchSize: z.number(),
   llmVisionModel: z.string(),
   llmVisionBaseUrl: z.string(),
   llmVisionApiKey: z.string(),
@@ -135,6 +164,7 @@ const ServerConfigSchema = z.object({
   adminDisplayName: z.string(),
   chunkSize: z.number(),
   chunkOverlap: z.number(),
+  chunkKeywordsTopN: z.number(),
   maxResults: z.number(),
   minScore: z.number(),
   candidateMultiplier: z.number(),
@@ -147,6 +177,15 @@ const ServerConfigSchema = z.object({
   contextBudget: z.number(),
   memoryWindow: z.number(),
   imageRetrievalWeight: z.number(),
+  batchConcurrency: z.number(),
+  batchPollTimeoutSeconds: z.number(),
+  batchScanLockTtlSeconds: z.number(),
+  generatingTtlSeconds: z.number(),
+  anonResultTtlSeconds: z.number(),
+  documentListLimit: z.number(),
+  conversationListLimit: z.number(),
+  dbPoolSize: z.number(),
+  qdrantScrollLimit: z.number(),
   recoveryScanIntervalMs: z.number(),
   recoveryStaleMs: z.number(),
   logLevel: z.string(),
@@ -182,6 +221,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     llmEmbeddingBaseUrl: env.LLM_EMBEDDING_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
     llmEmbeddingApiKey: env.LLM_EMBEDDING_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmOcrModel: env.LLM_OCR_MODEL ?? env.OPENAI_OCR_MODEL ?? 'glm-ocr',
+    llmChatTemperature: num('LLM_CHAT_TEMPERATURE', DEFAULTS.llmChatTemperature),
+    llmVisionTemperature: num('LLM_VISION_TEMPERATURE', DEFAULTS.llmVisionTemperature),
+    embedBatchSize: num('EMBED_BATCH_SIZE', DEFAULTS.embedBatchSize),
     llmVisionModel: env.LLM_VISION_MODEL ?? env.OPENAI_VISION_MODEL ?? 'glm-4.6v-flash',
     llmVisionBaseUrl: env.LLM_VISION_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
     llmVisionApiKey: env.LLM_VISION_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
@@ -193,6 +235,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     adminDisplayName: env.ADMIN_DISPLAY_NAME ?? '系统管理员',
     chunkSize: num('RAG_CHUNK_SIZE', DEFAULTS.chunkSize),
     chunkOverlap: num('RAG_CHUNK_OVERLAP', DEFAULTS.chunkOverlap),
+    chunkKeywordsTopN: num('RAG_CHUNK_KEYWORDS_TOP_N', DEFAULTS.chunkKeywordsTopN),
     maxResults: num('RAG_MAX_RESULTS', DEFAULTS.maxResults),
     minScore: num('RAG_MIN_SCORE', DEFAULTS.minScore),
     candidateMultiplier: num('RAG_CANDIDATE_MULTIPLIER', DEFAULTS.candidateMultiplier),
@@ -205,6 +248,15 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     contextBudget: num('RAG_CONTEXT_BUDGET', DEFAULTS.contextBudget),
     memoryWindow: num('RAG_MEMORY_WINDOW', DEFAULTS.memoryWindow),
     imageRetrievalWeight: num('RAG_IMAGE_RETRIEVAL_WEIGHT', 0.3),
+    batchConcurrency: num('BATCH_CONCURRENCY', DEFAULTS.batchConcurrency),
+    batchPollTimeoutSeconds: num('BATCH_POLL_TIMEOUT_SECONDS', DEFAULTS.batchPollTimeoutSeconds),
+    batchScanLockTtlSeconds: num('BATCH_SCAN_LOCK_TTL_SECONDS', DEFAULTS.batchScanLockTtlSeconds),
+    generatingTtlSeconds: num('GENERATING_TTL_SECONDS', DEFAULTS.generatingTtlSeconds),
+    anonResultTtlSeconds: num('ANON_RESULT_TTL_SECONDS', DEFAULTS.anonResultTtlSeconds),
+    documentListLimit: num('DOCUMENT_LIST_LIMIT', DEFAULTS.documentListLimit),
+    conversationListLimit: num('CONVERSATION_LIST_LIMIT', DEFAULTS.conversationListLimit),
+    dbPoolSize: num('DB_POOL_SIZE', DEFAULTS.dbPoolSize),
+    qdrantScrollLimit: num('QDRANT_SCROLL_LIMIT', DEFAULTS.qdrantScrollLimit),
     recoveryScanIntervalMs: num('RECOVERY_SCAN_INTERVAL_MS', 60_000),
     recoveryStaleMs: num('RECOVERY_STALE_MS', 5 * 60_000),
     logLevel: env.LOG_LEVEL ?? 'info',

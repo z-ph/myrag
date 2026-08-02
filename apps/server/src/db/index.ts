@@ -19,7 +19,7 @@ export function createDb(cfg = loadServerConfig()): DbHandle {
     user: cfg.dbUser,
     password: cfg.dbPassword,
     database: cfg.dbName,
-    connectionLimit: 10,
+    connectionLimit: cfg.dbPoolSize,
     charset: 'utf8mb4',
     // MySQL 默认 8h 超时，确保空闲连接存活
     enableKeepAlive: true,

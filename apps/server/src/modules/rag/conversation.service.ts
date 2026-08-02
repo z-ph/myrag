@@ -1,5 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import type { ConversationDetail, ConversationMessage, MessageRole, MessageStatus } from '@myrag/shared';
+import type { ServerConfig } from '@myrag/shared';
 import type { Db } from '../../db';
 import { conversationMessages, conversations } from '../../db/schema';
 
@@ -22,7 +23,7 @@ function toMessage(row: typeof conversationMessages.$inferSelect): ConversationM
   };
 }
 
-export function createConversationService(db: Db, cfg: { memoryWindow: number }): ConversationService {
+export function createConversationService(db: Db, cfg: ServerConfig): ConversationService {
   return {
     async ensure(conversationId, userId, titleHint) {
       const [existing] = await db
@@ -104,7 +105,7 @@ export function createConversationService(db: Db, cfg: { memoryWindow: number })
         .from(conversations)
         .where(eq(conversations.userId, userId))
         .orderBy(desc(conversations.updatedAt))
-        .limit(100);
+        .limit(cfg.conversationListLimit);
       return rows.map((r) => ({ conversationId: r.conversationId, title: r.title, updatedAt: r.updatedAt.toISOString() }));
     },
 

@@ -104,7 +104,7 @@ function splitByBoundary(text: string, size: number): string[] {
  * 分块：按段落/行累积，尽量在段落边界切分；超长段落按句子边界切。
  * overlap 用于保留跨块上下文。
  */
-export function chunkText(raw: string, size: number, overlap: number): TextChunk[] {
+export function chunkText(raw: string, size: number, overlap: number, keywordsTopN = 5): TextChunk[] {
   const text = raw.replace(/\r\n/g, '\n').trim();
   if (!text) return [];
 
@@ -138,14 +138,14 @@ export function chunkText(raw: string, size: number, overlap: number): TextChunk
   flush();
 
   // 标题/关键词填充
-  const docKeywords = extractKeywords(text);
+  const docKeywords = extractKeywords(text, keywordsTopN);
   return chunks.map((chunk, i) => {
     const title = extractTitle(chunk.text);
     return {
       ...chunk,
       index: i,
       title: title ?? undefined,
-      keywords: extractKeywords(chunk.text) || docKeywords,
+      keywords: extractKeywords(chunk.text, keywordsTopN) || docKeywords,
     };
   });
 }

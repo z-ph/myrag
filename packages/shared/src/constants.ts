@@ -45,6 +45,8 @@ export const DEFAULTS = {
   chunkSize: 500,
   /** 分块重叠（字符） */
   chunkOverlap: 50,
+  /** 每块关键词提取条数 */
+  chunkKeywordsTopN: 5,
   /** 默认召回条数 */
   maxResults: 5,
   /** 向量召回最低分 */
@@ -72,6 +74,30 @@ export const DEFAULTS = {
   batchUploadMaxFiles: 50,
   /** 单文件大小上限 */
   maxFileSizeBytes: 50 * 1024 * 1024,
+  /** 单次向量化最大行数（受模型/网关批次上限约束） */
+  embedBatchSize: 10,
+  /** 批量任务 worker 并发数 */
+  batchConcurrency: 2,
+  /** 批量任务队列轮询间隔（秒） */
+  batchPollTimeoutSeconds: 5,
+  /** 批量恢复扫描分布式锁 TTL（秒） */
+  batchScanLockTtlSeconds: 30,
+  /** 生成中状态 TTL（秒） */
+  generatingTtlSeconds: 15 * 60,
+  /** 匿名问答结果暂存 TTL（秒） */
+  anonResultTtlSeconds: 24 * 3600,
+  /** 文档列表单页上限 */
+  documentListLimit: 500,
+  /** 会话列表单页上限 */
+  conversationListLimit: 100,
+  /** MySQL 连接池大小 */
+  dbPoolSize: 10,
+  /** Qdrant scroll 分页大小 */
+  qdrantScrollLimit: 100,
+  /** 对话生成温度（chat） */
+  llmChatTemperature: 0.3,
+  /** 视觉模型温度 */
+  llmVisionTemperature: 0.2,
   /** 支持的文件扩展名 */
   allowedExtensions: [
     '.txt', '.md', '.csv',

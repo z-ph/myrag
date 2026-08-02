@@ -13,9 +13,6 @@ import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
 import { conflict, badRequest } from '../../lib/errors';
 
-// 单次向量化最大行数：百炼 text-embedding-v4 上限 10 行（OpenAI 兼容模式）
-const EMBED_BATCH = 10;
-
 export interface ProcessInput {
   userId: string;
   originalFilename: string;
@@ -84,15 +81,15 @@ export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient
     }
 
     // 2. 分块
-    const chunks = chunkText(cleanText, cfg.chunkSize, cfg.chunkOverlap);
+    const chunks = chunkText(cleanText, cfg.chunkSize, cfg.chunkOverlap, cfg.chunkKeywordsTopN);
     if (chunks.length === 0) throw new ParseError('未能从文档中提取到文本内容');
 
-    // 3. 向量化（分批）
+    // 3. 向量化（分批，批次上限可配）
     const documentTime = extractDocumentTime(cleanText);
     const documentKeywords = extractKeywords(cleanText);
     const vectors: number[][] = [];
-    for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
-      const batch = chunks.slice(i, i + EMBED_BATCH);
+    for (let i = 0; i < chunks.length; i += cfg.embedBatchSize) {
+      const batch = chunks.slice(i, i + cfg.embedBatchSize);
       vectors.push(...(await llm.embed(batch.map((c) => c.text))));
     }
 
