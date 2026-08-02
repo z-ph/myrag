@@ -20,7 +20,7 @@ services:
       start_period: 20s
 
   qdrant:
-    image: qdrant/qdrant:v1.15.4
+    image: qdrant/qdrant:v1.18.3
     container_name: myrag-qdrant
     restart: unless-stopped
     volumes:
@@ -36,7 +36,7 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     container_name: myrag-redis
     restart: unless-stopped
     volumes:
@@ -51,7 +51,7 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
     container_name: myrag-minio
     restart: unless-stopped
     command: server /data --console-address ":9101"

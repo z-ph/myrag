@@ -5,7 +5,7 @@
   "description": "财务处知识库 RAG 系统 — TS monorepo（Hono + Drizzle + React + antd）",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @myrag/server --filter @myrag/web dev",
