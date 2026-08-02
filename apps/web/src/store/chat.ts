@@ -8,6 +8,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** 思考过程（仅展示，不回灌上下文） */
+  reasoning?: string;
   status: 'GENERATING' | 'COMPLETED' | 'CANCELLED' | 'ERROR';
   sources?: SourceReference[];
   imageUrl?: string;
@@ -70,7 +72,13 @@ async function tryRecoverAnon(id: string, msgs: ChatMessage[]): Promise<void> {
       useChatStore.setState((s) => ({
         messages: s.messages.map((m, i) =>
           i === s.messages.length - 1
-            ? { ...m, content: result.answer as string, status: 'COMPLETED' as const, sources: result.sources }
+            ? {
+                ...m,
+                content: result.answer as string,
+                reasoning: result.reasoning || m.reasoning,
+                status: 'COMPLETED' as const,
+                sources: result.sources,
+              }
             : m,
         ),
       }));
@@ -185,6 +193,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               id: `${m.role}-${m.timestamp}-${i}`,
               role: m.role === 'USER' ? 'user' : 'assistant',
               content: m.content,
+              reasoning: m.reasoning,
               status: m.status ?? 'COMPLETED',
             })),
           });
@@ -235,6 +244,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: '',
+        reasoning: '',
         status: 'GENERATING',
       };
       set((s) => ({
@@ -253,7 +263,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         set((s) => ({
           isGenerating: false,
           messages: s.messages.map((m) =>
-            m.id === aiMsg.id ? { ...m, status, content: content ?? m.content, sources: m.sources } : m,
+            m.id === aiMsg.id ? { ...m, status, content: content ?? m.content, reasoning: m.reasoning, sources: m.sources } : m,
           ),
         }));
         if (!useAuthStore.getState().user) {
@@ -270,6 +280,11 @@ export const useChatStore = create<ChatState>((set, get) => {
               onDelta(content) {
                 set((s) => ({
                   messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
+                }));
+              },
+              onReasoningDelta(content) {
+                set((s) => ({
+                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
                 }));
               },
               onSources(sources) {
@@ -308,6 +323,11 @@ export const useChatStore = create<ChatState>((set, get) => {
               onDelta(content) {
                 set((s) => ({
                   messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
+                }));
+              },
+              onReasoningDelta(content) {
+                set((s) => ({
+                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
                 }));
               },
               onSources(sources) {

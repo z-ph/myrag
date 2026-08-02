@@ -21,6 +21,7 @@ describe('ragApi.askStream', () => {
       vi.fn().mockResolvedValue(
         sseResponse([
           'event: start\ndata: {"conversationId":"conv-1"}\n\n',
+          'event: reasoning\ndata: {"content":"思考"}\n\n',
           'event: delta\ndata: {"content":"你"}\n\n',
           'event: delta\ndata: {"content":"好"}\n\n',
           'event: sources\ndata: [{"sourceType":"TEXT","filename":"a.pdf","excerpt":"内容","relevanceScore":0.8}]\n\n',
@@ -42,6 +43,9 @@ describe('ragApi.askStream', () => {
         onDelta(content) {
           calls.push(`delta:${content}`);
         },
+        onReasoningDelta(content) {
+          calls.push(`reasoning:${content}`);
+        },
         onSources(s) {
           sources = s;
           calls.push('sources');
@@ -56,7 +60,7 @@ describe('ragApi.askStream', () => {
       },
     );
 
-    expect(calls).toEqual(['start', 'delta:你', 'delta:好', 'sources', 'complete']);
+    expect(calls).toEqual(['start', 'reasoning:思考', 'delta:你', 'delta:好', 'sources', 'complete']);
     expect(sources).toHaveLength(1);
     expect(cancelled).toBe(false);
     vi.unstubAllGlobals();
@@ -73,6 +77,7 @@ describe('ragApi.askStream', () => {
       {
         onStart: () => {},
         onDelta: (c) => deltas.push(c),
+        onReasoningDelta: () => {},
         onSources: () => {},
         onComplete: () => {},
         onError: () => {},
@@ -93,6 +98,7 @@ describe('ragApi.askStream', () => {
       {
         onStart: () => {},
         onDelta: () => {},
+        onReasoningDelta: () => {},
         onSources: () => {},
         onComplete: () => {},
         onError: (m) => {

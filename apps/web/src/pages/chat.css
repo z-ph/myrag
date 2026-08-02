@@ -141,3 +141,18 @@
   height: 56px;
   border-radius: 6px;
 }
+
+/* 思考过程折叠区：浅色底、小字号，与正式回答区分 */
+.reasoning-collapse .ant-collapse-header {
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.reasoning-text {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #8c8c8c;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+}

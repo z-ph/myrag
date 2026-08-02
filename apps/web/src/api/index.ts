@@ -105,6 +105,8 @@ export const documentsApi = {
 export interface AskStreamHandlers {
   onStart(conversationId: string): void;
   onDelta(content: string): void;
+  /** 思考过程增量（仅展示） */
+  onReasoningDelta(content: string): void;
   onSources(sources: AskResponse['sources']): void;
   onComplete(cancelled: boolean): void;
   onError(message: string): void;
@@ -143,6 +145,9 @@ async function readSseStream(res: Response, handlers: AskStreamHandlers): Promis
             case 'delta':
               handlers.onDelta(typeof data === 'string' ? data : String((data as Record<string, unknown>).content ?? ''));
               break;
+            case 'reasoning':
+              handlers.onReasoningDelta(typeof data === 'string' ? data : String((data as Record<string, unknown>).content ?? ''));
+              break;
             case 'sources':
               handlers.onSources(Array.isArray(data) ? (data as AskResponse['sources']) : []);
               break;
@@ -156,7 +161,9 @@ async function readSseStream(res: Response, handlers: AskStreamHandlers): Promis
               break;
           }
         } catch {
+          // 字符串 data 未经 JSON 序列化（裸文本），直接按事件类型分发
           if (currentEvent === 'delta') handlers.onDelta(raw);
+          else if (currentEvent === 'reasoning') handlers.onReasoningDelta(raw);
         }
       }
     }

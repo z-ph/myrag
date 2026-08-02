@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Avatar, Button, Collapse, Empty, Input, List, Popconfirm, Spin, Tooltip } from 'antd';
 import {
   DeleteOutlined,
+  DownloadOutlined,
   FileImageOutlined,
   PlusOutlined,
   RobotOutlined,
@@ -17,7 +18,18 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
   const items = sources.map((s, i) => ({
     key: i,
     label: `${s.sourceType === 'IMAGE' ? '🖼' : '📄'} ${s.filename}${s.relevanceScore != null ? `（相关度 ${(s.relevanceScore * 100).toFixed(0)}%）` : ''}`,
-    children: <div className="source-excerpt">{s.excerpt}</div>,
+    children: (
+      <div className="source-excerpt">
+        {s.excerpt}
+        {s.documentId && (
+          <div style={{ marginTop: 8 }}>
+            <Button type="link" size="small" icon={<DownloadOutlined />} href={`/api/documents/${s.documentId}/file`} target="_blank">
+              下载文档
+            </Button>
+          </div>
+        )}
+      </div>
+    ),
   }));
   return (
     <Collapse
@@ -29,6 +41,24 @@ function SourceList({ sources }: { sources: SourceReference[] }) {
   );
 }
 
+function ReasoningBlock({ reasoning, generating }: { reasoning: string; generating: boolean }) {
+  if (!reasoning.trim()) return null;
+  return (
+    <Collapse
+      size="small"
+      className="reasoning-collapse"
+      style={{ marginTop: 8, maxWidth: 640 }}
+      items={[
+        {
+          key: 'reasoning',
+          label: generating ? '思考中…' : '思考过程',
+          children: <div className="reasoning-text">{reasoning}</div>,
+        },
+      ]}
+    />
+  );
+}
+
 function MessageItem({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user';
   return (
@@ -36,6 +66,7 @@ function MessageItem({ msg }: { msg: ChatMessage }) {
       <Avatar icon={isUser ? <UserOutlined /> : <RobotOutlined />} style={{ backgroundColor: isUser ? '#2f54eb' : '#52c41a' }} />
       <div className="msg-body">
         {msg.imageUrl && <img src={msg.imageUrl} alt="用户图片" className="msg-image" />}
+        <ReasoningBlock reasoning={msg.reasoning ?? ''} generating={msg.status === 'GENERATING'} />
         <div className={`msg-bubble ${msg.status === 'ERROR' ? 'msg-error' : ''} ${msg.status === 'CANCELLED' ? 'msg-cancelled' : ''}`}>
           {msg.content || (msg.status === 'GENERATING' ? '…' : '')}
           {msg.status === 'GENERATING' && <Spin size="small" style={{ marginLeft: 8 }} />}
