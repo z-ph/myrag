@@ -4,6 +4,8 @@ import type { Db, DbHandle } from './db';
 import { createDb } from './db';
 import type { RedisStore } from './store/redis';
 import { createRedisStore } from './store/redis';
+import type { ObjectStorage } from './store/object-storage';
+import { createObjectStorage } from './store/object-storage';
 import type { QdrantStore } from './vector/qdrant';
 import { createQdrantStore } from './vector/qdrant';
 import type { LlmClient } from './llm/client';
@@ -38,6 +40,7 @@ export interface AppDeps {
   db: Db;
   redis: RedisStore;
   qdrant: QdrantStore;
+  objectStorage: ObjectStorage;
   llm: LlmClient;
   authService: AuthService;
   usersService: UsersService;
@@ -66,11 +69,12 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const qdrant = createQdrantStore(cfg);
   const settingsService = createSettingsService(handle.db, redis);
   const llm = createLlmClient(cfg, settingsService);
+  const objectStorage = createObjectStorage(cfg);
 
   const authService = createAuthService(handle.db, cfg);
   const usersService = createUsersService(handle.db);
-  const processService = createProcessService(handle.db, qdrant, llm, cfg, settingsService);
-  const documentService = createDocumentService(handle.db, qdrant, cfg);
+  const processService = createProcessService(handle.db, qdrant, llm, objectStorage, cfg, settingsService);
+  const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg);
   const batchService = createBatchService(handle.db, processService, redis, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
@@ -83,6 +87,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
     db: handle.db,
     redis,
     qdrant,
+    objectStorage,
     llm,
     authService,
     usersService,
@@ -104,7 +109,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
   return {
     deps,
     async init() {
-      await mkdir(cfg.uploadDir, { recursive: true });
+      await objectStorage.ensureReady();
       await mkdir(`${cfg.dataDir}/batch`, { recursive: true });
       await mkdir(`${cfg.dataDir}/chunks`, { recursive: true });
       await qdrant.ensureCollection();

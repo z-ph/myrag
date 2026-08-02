@@ -34,6 +34,7 @@
     "jose": "^6.1.0",
     "jszip": "^3.10.1",
     "mammoth": "^1.11.0",
+    "minio": "^8.0.7",
     "mysql2": "^3.23.2",
     "pdf-parse": "^1.1.1",
     "word-extractor": "^1.0.4",

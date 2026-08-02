@@ -1,5 +1,3 @@
-import { createReadStream } from 'node:fs';
-import { Readable } from 'node:stream';
 import { and, count, desc, eq, like } from 'drizzle-orm';
 import type {
   DocumentDeleteResponse,
@@ -13,6 +11,7 @@ import type { ServerConfig } from '@myrag/shared';
 import type { Db } from '../../db';
 import { documentChunks, documents } from '../../db/schema';
 import type { QdrantStore } from '../../vector/qdrant';
+import type { ObjectStorage } from '../../store/object-storage';
 import { notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
 
@@ -44,7 +43,12 @@ function toListItem(row: typeof documents.$inferSelect): DocumentListItem {
   };
 }
 
-export function createDocumentService(db: Db, qdrant: QdrantStore, cfg: ServerConfig): DocumentService {
+export function createDocumentService(
+  db: Db,
+  qdrant: QdrantStore,
+  objectStorage: ObjectStorage,
+  cfg: ServerConfig,
+): DocumentService {
   return {
     async list(keyword) {
       const cond = and(
@@ -64,7 +68,8 @@ export function createDocumentService(db: Db, qdrant: QdrantStore, cfg: ServerCo
         .limit(1);
       if (!doc) return null;
       // 注意：不能在此调用 getReader()（会锁定流导致响应失败）；文件读取错误由响应层处理
-      const stream = Readable.toWeb(createReadStream(doc.filePath));
+      const stream = await objectStorage.getStream(doc.filePath);
+      if (!stream) return null;
       return {
         stream,
         filename: doc.originalFilename,

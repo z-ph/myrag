@@ -42,6 +42,13 @@ export interface ServerConfig {
   /** 本实例标识（多实例部署时自动生成） */
   instanceId: string;
 
+  // 对象存储（MinIO / S3 兼容；未配置时回退本地 uploadDir，生产必须配置）
+  objectStorageEndpoint: string;
+  objectStorageAccessKey: string;
+  objectStorageSecretKey: string;
+  objectStorageBucket: string;
+  objectStorageUseSsl: boolean;
+
   // LLM（OpenAI 兼容）
   // 全局默认端点；各类型可单独覆盖（LLM_*_BASE_URL / LLM_*_API_KEY，未配置时回退到全局值）
   llmBaseUrl: string;
@@ -140,6 +147,11 @@ const ServerConfigSchema = z.object({
   redisPort: z.number(),
   redisPassword: z.string(),
   instanceId: z.string(),
+  objectStorageEndpoint: z.string(),
+  objectStorageAccessKey: z.string(),
+  objectStorageSecretKey: z.string(),
+  objectStorageBucket: z.string(),
+  objectStorageUseSsl: z.boolean(),
   llmBaseUrl: z.string(),
   llmApiKey: z.string(),
   llmChatModel: z.string(),
@@ -211,6 +223,11 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     redisPort: num('REDIS_PORT', 6379),
     redisPassword: env.REDIS_PASSWORD ?? '',
     instanceId: env.INSTANCE_ID ?? `inst-${Math.random().toString(36).slice(2, 8)}`,
+    objectStorageEndpoint: env.MINIO_ENDPOINT ?? '',
+    objectStorageAccessKey: env.MINIO_ACCESS_KEY ?? '',
+    objectStorageSecretKey: env.MINIO_SECRET_KEY ?? '',
+    objectStorageBucket: env.MINIO_BUCKET ?? 'myrag-documents',
+    objectStorageUseSsl: bool('MINIO_USE_SSL', false),
     llmBaseUrl: env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
     llmApiKey: env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmChatModel: env.LLM_CHAT_MODEL ?? env.OPENAI_CHAT_MODEL ?? 'glm-4.6v-flash',

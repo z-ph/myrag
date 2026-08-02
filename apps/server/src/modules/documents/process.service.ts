@@ -1,4 +1,3 @@
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
@@ -8,6 +7,7 @@ import type { Db } from '../../db';
 import { documents, documentChunks } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore } from '../../vector/qdrant';
+import type { ObjectStorage } from '../../store/object-storage';
 import { chunkText, extractDocumentTime, extractKeywords, extractTitle } from '../../pipeline/chunker';
 import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
@@ -62,8 +62,14 @@ export function assertSupportedFile(filename: string, buffer: Buffer): FileType 
   return fileType;
 }
 
-export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient, cfg: ServerConfig, settings: SettingsService): ProcessService {
-  const uploadRoot = cfg.uploadDir;
+export function createProcessService(
+  db: Db,
+  qdrant: QdrantStore,
+  llm: LlmClient,
+  objectStorage: ObjectStorage,
+  cfg: ServerConfig,
+  settings: SettingsService,
+): ProcessService {
 
   /** 单个已入库文档的向量化流程（从解析到写入），返回分块数 */
   async function vectorize(
@@ -148,7 +154,8 @@ export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient
 
   async function processDocumentRow(doc: typeof documents.$inferSelect): Promise<ProcessResult> {
     try {
-      const buffer = await readFile(doc.filePath);
+      const buffer = await objectStorage.getBuffer(doc.filePath);
+      if (!buffer) throw new Error('文档文件不存在（对象存储或本地均未找到）');
       const { segmentCount, vectorCount } = await vectorize(
         doc.documentId,
         doc.fileType as FileType,
@@ -210,10 +217,9 @@ export function createProcessService(db: Db, qdrant: QdrantStore, llm: LlmClient
       }
 
       const documentId = genId('doc');
-      const dir = join(uploadRoot, documentId);
-      await mkdir(dir, { recursive: true });
-      const filePath = join(dir, input.originalFilename);
-      await writeFile(filePath, input.buffer);
+      // 对象存储 key：docs/{documentId}/{originalFilename}（未配置 MinIO 时本地回退同构）
+      const filePath = join('docs', documentId, input.originalFilename);
+      await objectStorage.put(filePath, input.buffer, detectContentType(input.originalFilename));
 
       const [row] = await db
         .insert(documents)
