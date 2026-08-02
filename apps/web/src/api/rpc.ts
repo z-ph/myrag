@@ -6,8 +6,10 @@ import { ApiError, getToken, setToken } from './client';
 /**
  * 类型安全客户端：路由 schema 唯一真源 = 后端 AppType（zod-openapi 路由注册），
  * 前端不再手写请求/响应类型。hc 路径键与后端路由一一对应。
+ * API 前缀由 VITE_BASE 派生（VITE_API_PREFIX，编译期注入）：
+ * base=/ → /api；base=/cwc/ragv2/ → /cwc/ragv2/api。
  */
-export const rpc = hc<AppType>('/api');
+export const rpc = hc<AppType>(import.meta.env.VITE_API_PREFIX as string);
 
 /** 请求头注入当前登录 token（登录态存在 localStorage） */
 export function authHeaders(): Record<string, string> {

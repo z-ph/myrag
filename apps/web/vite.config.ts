@@ -26,30 +26,40 @@ if (viteBase !== '/' && !(viteBase.startsWith('/') && viteBase.endsWith('/'))) {
 }
 
 export default defineConfig(({ command }) => {
+  // API 前缀 = base + /api（如 /cwc/ragv2/ → /cwc/ragv2/api），与页面路由同源，
+  // 线上经网关/nginx 转发到后端；dev 由 vite proxy 接管
+  const apiPrefix = viteBase === '/' ? '/api' : `${viteBase.replace(/\/+$/, '')}/api`;
+
   // BACK_END_URL 仅 dev 代理使用（生产构建由 nginx 反代，不经过 vite），
   // 只在 serve 时校验，docker 构建不依赖它；可在 apps/web/.env.local 覆盖
   const backEndUrl = env.BACK_END_URL;
-  if (command === 'serve' && !backEndUrl) {
-    throw new Error('[vite] BACK_END_URL 未配置：请在仓库根 .env 或 apps/web/.env.local 设置（如 http://localhost:8080）');
+  if (command === 'serve') {
+    if (!backEndUrl) {
+      throw new Error('[vite] BACK_END_URL 未配置：请在仓库根 .env 或 apps/web/.env.local 设置（如 http://localhost:8080）');
+    }
+    if (!/^https?:\/\//.test(backEndUrl)) {
+      throw new Error(`[vite] BACK_END_URL 格式错误："${backEndUrl}"，须为完整 URL（如 http://localhost:8080），API 前缀由 VITE_BASE 派生`);
+    }
   }
 
   return {
     plugins: [react()],
     base: viteBase,
-    // 编译期注入客户端（main.tsx 直接使用，无运行时兜底）
+    // 编译期注入客户端（main.tsx / rpc.ts 直接使用，无运行时兜底）
     define: {
       'import.meta.env.VITE_BASE': JSON.stringify(viteBase),
+      'import.meta.env.VITE_API_PREFIX': JSON.stringify(apiPrefix),
     },
     server: {
       host: true,
       port: 5174,
       strictPort: true,
       proxy: {
-        '/api': {
+        [apiPrefix]: {
           target: backEndUrl,
           changeOrigin: true,
-          // 后端无 /api 前缀，dev 代理负责剥掉
-          rewrite: (path) => path.replace(/^\/api/, ''),
+          // 后端无前缀，dev 代理负责剥掉
+          rewrite: (path) => path.replace(apiPrefix, ''),
         },
       },
     },
