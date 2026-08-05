@@ -1,23 +1,9 @@
 import type { ServerConfig, SettingsService } from '@myrag/shared';
 import { ChatOpenAI, OpenAIEmbeddings } from '@langchain/openai';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
+import type { InteropZodType } from '@langchain/core/utils/types';
 import { AppError } from '../lib/errors';
 import { logger } from '../lib/util';
-
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-export interface ChatImageContent {
-  type: 'image_url';
-  image_url: { url: string };
-}
-
-export interface ImageChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string | (string | ChatImageContent)[];
-}
 
 export interface ChatStreamResult {
   /** 正式回答（已剥离 content 内嵌推理残留） */
@@ -26,20 +12,48 @@ export interface ChatStreamResult {
   reasoning: string;
 }
 
+export interface VisionMessageInput {
+  system: string;
+  prompt: string;
+  imageBase64: string;
+}
+
 export interface LlmClient {
   /** 流式对话补全：content 逐段回调，reasoning_content 经 onReasoningDelta 单独回调 */
   chatStream(
-    messages: ChatMessage[],
+    messages: BaseMessage[],
     onDelta: (text: string) => void,
     onReasoningDelta?: (text: string) => void,
     signal?: AbortSignal,
   ): Promise<ChatStreamResult>;
   /** 同步对话补全（返回回答与思考过程） */
-  chat(messages: ChatMessage[]): Promise<ChatStreamResult>;
+  chat(messages: BaseMessage[]): Promise<ChatStreamResult>;
   /** 批量向量化 */
   embed(texts: string[]): Promise<number[][]>;
-  /** 图片理解（视觉模型，含 base64 图片与文本提示） */
+  /** 图片理解（视觉模型，自由文本；OCR 等场景） */
   visionChat(system: string, prompt: string, imageBase64: string): Promise<string>;
+  /**
+   * 图片理解 + 结构化输出（langchain withStructuredOutput）。
+   * 网关不支持 tool/json_schema 时由调用方自行 fallback 到 visionChat。
+   */
+  visionStructured<T extends Record<string, unknown>>(
+    schema: InteropZodType<T>,
+    input: VisionMessageInput,
+    options?: { name?: string },
+  ): Promise<T>;
+}
+
+/** 组装视觉模型多模态消息 */
+function buildVisionMessages(system: string, prompt: string, imageBase64: string): BaseMessage[] {
+  return [
+    new SystemMessage(system),
+    new HumanMessage({
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+      ],
+    }),
+  ];
 }
 
 /** 推理块闭合标签：</think>（DeepSeek 系）/ </thinking>（GLM 系） */
@@ -126,10 +140,8 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     async chatStream(messages, onDelta, onReasoningDelta, signal) {
       try {
         chatModel.temperature = settings.get().llmChatTemperature;
-        const stream = await chatModel.stream(
-          messages.map((m) => [m.role, m.content] as [ChatMessage['role'], string]),
-          { signal },
-        );
+        // 直接传入 langchain BaseMessage[]（由 ChatPromptTemplate 组装）
+        const stream = await chatModel.stream(messages, { signal });
         let full = '';
         let reasoningFull = '';
         let sentLen = 0;
@@ -166,7 +178,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     async chat(messages) {
       try {
         chatModel.temperature = settings.get().llmChatTemperature;
-        const res = await chatModel.invoke(messages.map((m) => [m.role, m.content] as [ChatMessage['role'], string]));
+        const res = await chatModel.invoke(messages);
         const content = typeof res.content === 'string' ? res.content : '';
         const reasoning = typeof res.additional_kwargs?.reasoning_content === 'string' ? res.additional_kwargs.reasoning_content : '';
         return { content: stripThink(content), reasoning };
@@ -186,19 +198,28 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     async visionChat(system, prompt, imageBase64) {
       try {
         visionModel.temperature = settings.get().llmVisionTemperature;
-        const res = await visionModel.invoke([
-          new SystemMessage(system),
-          new HumanMessage({
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
-            ],
-          }),
-        ]);
+        const res = await visionModel.invoke(buildVisionMessages(system, prompt, imageBase64));
         const content = typeof res.content === 'string' ? res.content : '';
         return stripThink(content);
       } catch (err) {
         wrapLlmError(err, '视觉模型服务返回异常');
+      }
+    },
+
+    async visionStructured(schema, input, options) {
+      try {
+        visionModel.temperature = settings.get().llmVisionTemperature;
+        // functionCalling 兼容面更广；严格 json_schema 依赖网关/模型能力
+        const structured = visionModel.withStructuredOutput(schema, {
+          name: options?.name ?? 'structured_vision',
+          method: 'functionCalling',
+        });
+        return await structured.invoke(buildVisionMessages(input.system, input.prompt, input.imageBase64));
+      } catch (err) {
+        // 不在此处归一化为 AppError：调用方需区分「网关不支持」以便 fallback
+        if (err instanceof AppError) throw err;
+        if (err instanceof Error && err.name === 'AbortError') throw err;
+        throw err;
       }
     },
   };

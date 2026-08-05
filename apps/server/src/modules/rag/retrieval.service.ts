@@ -1,47 +1,22 @@
-import { eq, inArray } from 'drizzle-orm';
-import type { ServerConfig, SourceReference, SourceType, SettingsService } from '@myrag/shared';
+import { inArray } from 'drizzle-orm';
+import { BaseRetriever } from '@langchain/core/retrievers';
+import { Document } from '@langchain/core/documents';
+import type { SettingsService } from '@myrag/shared';
 import type { Db } from '../../db';
 import { documentChunks } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore, VectorSearchHit } from '../../vector/qdrant';
 import { AppError } from '../../lib/errors';
 import { createBm25Scorer, jaccard } from './bm25';
+import type { ChunkDocument, ChunkMetadata } from './chunk';
 
-export interface RetrievedChunk {
-  documentId: string;
-  filename: string;
-  chunkIndex: number;
-  text: string;
-  title?: string;
-  keywords?: string;
-  category?: string;
-  vectorScore: number;
-  bm25Score: number;
-  /** 混合分（向量分归一化后按权重合成） */
-  score: number;
-  mmrScore?: number;
-  sourceType: SourceType;
-}
-
-export interface RetrievalResult {
-  chunks: RetrievedChunk[];
-  debug: {
-    totalCandidates: number;
-    afterRelevanceFilter: number;
-    afterDedup: number;
-    afterSelection: number;
-    totalContextChars: number;
-    contextBudget: number;
-  };
-}
-
-export interface RetrievalService {
-  /** 文本检索（向量召回 + BM25 重排 + 去重 + MMR） */
-  retrieve(question: string, maxResults?: number): Promise<RetrievalResult>;
-  /** 图片理解结果检索（仅向量召回，融合到文本结果） */
-  retrieveByEmbedding(embedding: number[], maxResults: number): Promise<RetrievedChunk[]>;
-  /** 供图片问答做图文融合的文本侧候选 */
-  retrieveImageRoute(question: string, maxResults: number): Promise<RetrievedChunk[]>;
+export interface RetrievalDebug {
+  totalCandidates: number;
+  afterRelevanceFilter: number;
+  afterDedup: number;
+  afterSelection: number;
+  totalContextChars: number;
+  contextBudget: number;
 }
 
 function minMaxNormalize(scores: number[]): number[] {
@@ -53,12 +28,8 @@ function minMaxNormalize(scores: number[]): number[] {
 }
 
 /** MMR 重排：λ 平衡相关性与多样性 */
-function mmrSelect(
-  candidates: RetrievedChunk[],
-  lambda: number,
-  limit: number,
-): RetrievedChunk[] {
-  const selected: RetrievedChunk[] = [];
+function mmrSelect(candidates: ChunkDocument[], lambda: number, limit: number): ChunkDocument[] {
+  const selected: ChunkDocument[] = [];
   const pool = [...candidates];
   while (selected.length < limit && pool.length > 0) {
     let bestIdx = 0;
@@ -67,34 +38,123 @@ function mmrSelect(
       const cand = pool[i]!;
       let maxSim = 0;
       for (const s of selected) {
-        const sim = jaccard(cand.text, s.text);
+        const sim = jaccard(cand.pageContent, s.pageContent);
         if (sim > maxSim) maxSim = sim;
       }
-      const mmr = lambda * cand.score - (1 - lambda) * maxSim;
+      const mmr = lambda * cand.metadata.score - (1 - lambda) * maxSim;
       if (mmr > bestScore) {
         bestScore = mmr;
         bestIdx = i;
       }
     }
     const chosen = pool.splice(bestIdx, 1)[0]!;
-    chosen.mmrScore = bestScore;
+    chosen.metadata.mmrScore = bestScore;
     selected.push(chosen);
   }
   return selected;
 }
 
-export function createRetrievalService(
-  db: Db,
-  qdrant: QdrantStore,
-  llm: LlmClient,
-  cfg: ServerConfig,
-  settings: SettingsService,
-): RetrievalService {
-  /** 从快照表批量补齐 hits 的文本与元数据 */
-  async function hydrate(hits: VectorSearchHit[]): Promise<RetrievedChunk[]> {
+export interface RagRetrieverFields {
+  db: Db;
+  qdrant: QdrantStore;
+  llm: LlmClient;
+  settings: SettingsService;
+}
+
+/**
+ * 检索器（langchain BaseRetriever）：文本问答的混合检索管线。
+ * `invoke(question)` = 向量召回 → BM25 混合重排 → 相关度过滤 → Jaccard 去重 → MMR 重排，返回 Document[]。
+ * 图片问答的两条候选路（`retrieveImageRoute` / `retrieveByEmbedding`）不属于「query → 文档」语义，保留为显式方法。
+ */
+export class RagRetriever extends BaseRetriever<ChunkMetadata> {
+  /** Serializable 命名空间（langchain Runnable 契约） */
+  lc_namespace = ['myrag', 'retrievers'];
+
+  private readonly db: Db;
+  private readonly qdrant: QdrantStore;
+  private readonly llm: LlmClient;
+  private readonly settings: SettingsService;
+  /** 最近一次 `invoke` 的管线调试信息（可观测用） */
+  lastDebug?: RetrievalDebug;
+
+  constructor(fields: RagRetrieverFields) {
+    super({ tags: ['rag', 'hybrid-retrieval'] });
+    this.db = fields.db;
+    this.qdrant = fields.qdrant;
+    this.llm = fields.llm;
+    this.settings = fields.settings;
+  }
+
+  /** 文本检索：完整混合管线（langchain BaseRetriever 入口） */
+  override async _getRelevantDocuments(question: string): Promise<ChunkDocument[]> {
+    return this.runPipeline(question, this.settings.get().maxResults);
+  }
+
+  /** 自定义召回条数（maxResults 是请求级参数，不属于 RunnableConfig，故单独走此入口） */
+  async retrieve(question: string, maxResults?: number): Promise<ChunkDocument[]> {
+    return this.runPipeline(question, maxResults ?? this.settings.get().maxResults);
+  }
+
+  /** 混合管线：向量召回 → BM25 重排 → 相关度过滤 → 去重 → MMR */
+  private async runPipeline(question: string, limit: number): Promise<ChunkDocument[]> {
+    const s = this.settings.get();
+    const [vector] = await this.llm.embed([question]);
+    if (!vector) throw new AppError(502, '向量化服务返回异常');
+    const hits = (await this.qdrant.search(vector, limit * s.candidateMultiplier)).filter((h) => h.score >= s.minScore);
+    const candidates = await this.hydrate(hits);
+
+    // BM25 混合重排（K1/B 参数取自动态设置）
+    const bm25 = createBm25Scorer(s.bm25K1, s.bm25B);
+    const texts = candidates.map((c) => c.pageContent);
+    const bm25Scores = bm25.score(question, texts);
+    const normVector = minMaxNormalize(candidates.map((c) => c.metadata.vectorScore));
+    const normBm25 = minMaxNormalize(bm25Scores);
+    candidates.forEach((c, i) => {
+      c.metadata.bm25Score = normBm25[i] ?? 0;
+      c.metadata.score = (1 - s.bm25Weight) * (normVector[i] ?? 0) + s.bm25Weight * c.metadata.bm25Score;
+    });
+    candidates.sort((a, b) => b.metadata.score - a.metadata.score);
+    const afterRelevance = candidates.filter((c) => c.metadata.score >= s.relevanceThreshold);
+
+    // Jaccard 去重（保留分高者）
+    const deduped: ChunkDocument[] = [];
+    for (const c of afterRelevance) {
+      const dup = deduped.some((d) => jaccard(d.pageContent, c.pageContent) >= s.jaccardThreshold);
+      if (!dup) deduped.push(c);
+    }
+
+    const selected = mmrSelect(deduped, s.mmrLambda, limit);
+    this.lastDebug = {
+      totalCandidates: candidates.length,
+      afterRelevanceFilter: afterRelevance.length,
+      afterDedup: deduped.length,
+      afterSelection: selected.length,
+      totalContextChars: selected.reduce((sum, c) => sum + c.pageContent.length, 0),
+      contextBudget: s.contextBudget,
+    };
+    return selected;
+  }
+
+  /** 图片理解结果检索（仅向量召回，融合到文本结果） */
+  async retrieveByEmbedding(embedding: number[], maxResults: number): Promise<ChunkDocument[]> {
+    const hits = (await this.qdrant.search(embedding, maxResults)).filter((h) => h.score >= this.settings.get().minScore);
+    return this.hydrate(hits);
+  }
+
+  /** 供图片问答做图文融合的文本侧候选 */
+  async retrieveImageRoute(question: string, maxResults: number): Promise<ChunkDocument[]> {
+    const s = this.settings.get();
+    const [vector] = await this.llm.embed([question]);
+    if (!vector) throw new AppError(502, '向量化服务返回异常');
+    const hits = (await this.qdrant.search(vector, maxResults * s.candidateMultiplier)).filter((h) => h.score >= s.minScore);
+    return this.hydrate(hits);
+  }
+
+  /** 从快照表批量补齐 hits 的文本与元数据，组装为 langchain Document */
+  private async hydrate(hits: VectorSearchHit[]): Promise<ChunkDocument[]> {
     if (hits.length === 0) return [];
     const docIds = [...new Set(hits.map((h) => h.payload.document_id))];
-    const snapshots = await db
+    const snapshots = await this.db
       .select({
         documentId: documentChunks.documentId,
         chunkIndex: documentChunks.chunkIndex,
@@ -106,97 +166,32 @@ export function createRetrievalService(
       .from(documentChunks)
       .where(inArray(documentChunks.documentId, docIds));
     const byKey = new Map(snapshots.map((s) => [`${s.documentId}:${s.chunkIndex}`, s]));
-    const out: RetrievedChunk[] = [];
+    const out: ChunkDocument[] = [];
     for (const hit of hits) {
       const snap = byKey.get(`${hit.payload.document_id}:${hit.payload.chunk_index}`);
       if (!snap || !snap.text) continue;
-      out.push({
-        documentId: hit.payload.document_id,
-        filename: hit.payload.filename,
-        chunkIndex: hit.payload.chunk_index,
-        text: snap.text,
-        title: snap.title ?? undefined,
-        keywords: snap.keywords ?? undefined,
-        category: snap.category ?? undefined,
-        vectorScore: hit.score,
-        bm25Score: 0,
-        score: hit.score,
-        sourceType: 'TEXT',
-      });
+      out.push(
+        new Document<ChunkMetadata>({
+          pageContent: snap.text,
+          metadata: {
+            documentId: hit.payload.document_id,
+            filename: hit.payload.filename,
+            chunkIndex: hit.payload.chunk_index,
+            title: snap.title ?? undefined,
+            keywords: snap.keywords ?? undefined,
+            category: snap.category ?? undefined,
+            sourceType: 'TEXT',
+            vectorScore: hit.score,
+            bm25Score: 0,
+            score: hit.score,
+          },
+        }),
+      );
     }
     return out;
   }
-
-  return {
-    async retrieve(question, maxResults) {
-      const s = settings.get();
-      const limit = maxResults ?? s.maxResults;
-      const topK = limit * s.candidateMultiplier;
-      const [vector] = await llm.embed([question]);
-      if (!vector) throw new AppError(502, '向量化服务返回异常');
-      const hits = (await qdrant.search(vector, topK)).filter((h) => h.score >= s.minScore);
-      const candidates = await hydrate(hits);
-
-      // BM25 混合重排（K1/B 参数取自动态设置）
-      const bm25 = createBm25Scorer(s.bm25K1, s.bm25B);
-      const texts = candidates.map((c) => c.text);
-      const bm25Scores = bm25.score(question, texts);
-      const normVector = minMaxNormalize(candidates.map((c) => c.vectorScore));
-      const normBm25 = minMaxNormalize(bm25Scores);
-      candidates.forEach((c, i) => {
-        c.bm25Score = normBm25[i] ?? 0;
-        c.score = (1 - s.bm25Weight) * (normVector[i] ?? 0) + s.bm25Weight * c.bm25Score;
-      });
-      candidates.sort((a, b) => b.score - a.score);
-      const afterRelevance = candidates.filter((c) => c.score >= s.relevanceThreshold);
-
-      // Jaccard 去重（保留分高者）
-      const deduped: RetrievedChunk[] = [];
-      for (const c of afterRelevance) {
-        const dup = deduped.some((d) => jaccard(d.text, c.text) >= s.jaccardThreshold);
-        if (!dup) deduped.push(c);
-      }
-
-      const selected = mmrSelect(deduped, s.mmrLambda, limit);
-      const totalContextChars = selected.reduce((sum, c) => sum + c.text.length, 0);
-
-      return {
-        chunks: selected,
-        debug: {
-          totalCandidates: candidates.length,
-          afterRelevanceFilter: afterRelevance.length,
-          afterDedup: deduped.length,
-          afterSelection: selected.length,
-          totalContextChars,
-          contextBudget: s.contextBudget,
-        },
-      };
-    },
-
-    async retrieveByEmbedding(embedding, maxResults) {
-      const hits = (await qdrant.search(embedding, maxResults)).filter((h) => h.score >= settings.get().minScore);
-      const hydrated = await hydrate(hits);
-      return hydrated;
-    },
-
-    async retrieveImageRoute(question, maxResults) {
-      const s = settings.get();
-      const limit = maxResults ?? s.maxResults;
-      const [vector] = await llm.embed([question]);
-      if (!vector) throw new AppError(502, '向量化服务返回异常');
-      const hits = (await qdrant.search(vector, limit * s.candidateMultiplier)).filter((h) => h.score >= s.minScore);
-      return hydrate(hits);
-    },
-  };
 }
 
-/** 组装检索来源引用（问答响应用） */
-export function toSourceReferences(chunks: RetrievedChunk[]): SourceReference[] {
-  return chunks.map((c) => ({
-    sourceType: c.sourceType,
-    filename: c.filename,
-    documentId: c.documentId,
-    excerpt: c.text.slice(0, 500),
-    relevanceScore: Number(c.score.toFixed(4)),
-  }));
+export function createRagRetriever(fields: RagRetrieverFields): RagRetriever {
+  return new RagRetriever(fields);
 }

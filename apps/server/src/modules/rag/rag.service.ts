@@ -7,7 +7,8 @@ import { RedisKeys } from '../../store/redis';
 import { buildMessages } from './prompts';
 import type { ConversationService } from './conversation.service';
 import type { ImageService } from './image.service';
-import { type RetrievalService, type RetrievedChunk, toSourceReferences } from './retrieval.service';
+import type { RagRetriever } from './retrieval.service';
+import { chunkKey, packContext, type ChunkDocument } from './chunk';
 
 export interface AskInput {
   question: string;
@@ -61,15 +62,9 @@ export interface RagService {
   teardown(): void;
 }
 
-/** 检索块格式化进上下文 */
-function formatChunk(chunk: RetrievedChunk): string {
-  const head = chunk.title ? `【标题：${chunk.title}】` : '';
-  return `${head}【来源：${chunk.filename}】\n${chunk.text}`;
-}
-
 export function createRagService(
   llm: LlmClient,
-  retrieval: RetrievalService,
+  retriever: RagRetriever,
   imageService: ImageService,
   conversationService: ConversationService,
   redis: RedisStore,
@@ -104,8 +99,7 @@ export function createRagService(
     maxResults: number,
     imageUnderstanding?: ImageUnderstandingResult,
   ): Promise<{ contextText: string | null; sources: SourceReference[] }> {
-    let chunks: RetrievedChunk[] = [];
-    let sources: SourceReference[] = [];
+    let docs: ChunkDocument[];
 
     if (imageUnderstanding) {
       // 图片问答：文本路（问题检索）+ 图片路（理解结果向量检索）融合
@@ -113,46 +107,40 @@ export function createRagService(
       const [imageEmbedding] = await llm.embed([imageText]);
       if (!imageEmbedding) throw new AppError(502, '向量化服务返回异常');
       const [textRoute, imageRoute] = await Promise.all([
-        retrieval.retrieveImageRoute(question, maxResults),
-        retrieval.retrieveByEmbedding(imageEmbedding, maxResults),
+        retriever.retrieveImageRoute(question, maxResults),
+        retriever.retrieveByEmbedding(imageEmbedding, maxResults),
       ]);
       const imageWeight = settings.get().imageRetrievalWeight;
       const textWeight = 1 - imageWeight;
-      const merged = new Map<string, RetrievedChunk>();
+      const merged = new Map<string, ChunkDocument>();
       for (const c of textRoute) {
-        const item = { ...c, score: c.score * textWeight, sourceType: 'TEXT' as const };
-        merged.set(`${c.documentId}:${c.chunkIndex}`, item);
+        const item = c as ChunkDocument;
+        item.metadata.score = item.metadata.score * textWeight;
+        item.metadata.sourceType = 'TEXT';
+        merged.set(chunkKey(item.metadata), item);
       }
       for (const c of imageRoute) {
-        const key = `${c.documentId}:${c.chunkIndex}`;
+        const key = chunkKey(c.metadata);
         const existing = merged.get(key);
         if (existing) {
-          existing.score += c.score * imageWeight;
+          existing.metadata.score += c.metadata.score * imageWeight;
         } else {
-          merged.set(key, { ...c, score: c.score * imageWeight, sourceType: 'IMAGE' as const });
+          c.metadata.score = c.metadata.score * imageWeight;
+          c.metadata.sourceType = 'IMAGE';
+          merged.set(key, c);
         }
       }
-      chunks = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, maxResults);
-      sources = toSourceReferences(chunks);
+      docs = [...merged.values()].sort((a, b) => b.metadata.score - a.metadata.score).slice(0, maxResults);
     } else {
-      const result = await retrieval.retrieve(question, maxResults);
-      chunks = result.chunks;
-      sources = toSourceReferences(chunks);
+      docs = await retriever.retrieve(question, maxResults);
     }
 
-    // 上下文预算截断
-    let contextText = '';
-    const budget = settings.get().contextBudget;
-    for (const c of chunks) {
-      const piece = formatChunk(c);
-      if (contextText.length + piece.length > budget) break;
-      contextText += `${piece}\n\n`;
-    }
+    const packed = packContext(docs, settings.get().contextBudget);
     if (imageUnderstanding) {
       const imageInfo = `【图片理解】\n摘要：${imageUnderstanding.imageSummary ?? ''}\nOCR：${imageUnderstanding.ocrText ?? ''}\n关键实体：${(imageUnderstanding.keyEntities ?? []).join('、')}\n针对问题：${imageUnderstanding.questionFocusedSummary ?? ''}`;
-      contextText = `${imageInfo}\n\n${contextText}`;
+      packed.contextText = packed.contextText ? `${imageInfo}\n\n${packed.contextText}` : imageInfo;
     }
-    return { contextText: contextText || null, sources };
+    return packed;
   }
 
   /** 生成核心：检索 → LLM，返回流式回调 */
@@ -176,7 +164,7 @@ export function createRagService(
       ({ contextText, sources } = await buildContext(input.question, maxResults, imageUnderstanding));
     }
 
-    const messages = buildMessages(input.question, history, contextText, anonymous, settings.get().memoryWindow);
+    const messages = await buildMessages(input.question, history, contextText, anonymous, settings.get().memoryWindow);
     const result = await llm.chatStream(messages, onDelta, onReasoningDelta, signal);
     return { answer: result.content, reasoning: result.reasoning, sources, imageUnderstanding };
   }

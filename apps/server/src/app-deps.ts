@@ -25,8 +25,8 @@ import type { ChunkedService } from './modules/upload/chunked.service';
 import { createChunkedService } from './modules/upload/chunked.service';
 import type { ConversationService } from './modules/rag/conversation.service';
 import { createConversationService } from './modules/rag/conversation.service';
-import type { RetrievalService } from './modules/rag/retrieval.service';
-import { createRetrievalService } from './modules/rag/retrieval.service';
+import type { RagRetriever } from './modules/rag/retrieval.service';
+import { createRagRetriever } from './modules/rag/retrieval.service';
 import type { ImageService } from './modules/rag/image.service';
 import { createImageService } from './modules/rag/image.service';
 import type { RagService } from './modules/rag/rag.service';
@@ -49,7 +49,8 @@ export interface AppDeps {
   batchService: BatchService;
   chunkedService: ChunkedService;
   conversationService: ConversationService;
-  retrievalService: RetrievalService;
+  /** langchain BaseRetriever：混合检索管线 */
+  retriever: RagRetriever;
   ragService: RagService;
   settingsService: SettingsService;
   close: () => Promise<void>;
@@ -78,9 +79,9 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const batchService = createBatchService(handle.db, processService, redis, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
-  const retrievalService = createRetrievalService(handle.db, qdrant, llm, cfg, settingsService);
-  const imageService = createImageService(llm, cfg);
-  const ragService = createRagService(llm, retrievalService, imageService, conversationService, redis, cfg, settingsService);
+  const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
+  const imageService = createImageService(llm);
+  const ragService = createRagService(llm, retriever, imageService, conversationService, redis, cfg, settingsService);
 
   const deps: AppDeps = {
     cfg,
@@ -96,7 +97,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
     batchService,
     chunkedService,
     conversationService,
-    retrievalService,
+    retriever,
     ragService,
     settingsService,
     close: async () => {

@@ -43,34 +43,36 @@ describe('buildMessages（多轮历史回灌 LLM）', () => {
     { role: 'USER', content: '伙食补助呢？' },
   ];
 
-  it('历史折叠为单条 user 回顾，assistant 内容剥离思维链', () => {
-    const messages = buildMessages('交通补助呢？', history, null, false, 6);
+  it('历史折叠为单条 user 回顾，assistant 内容剥离思维链', async () => {
+    const messages = await buildMessages('交通补助呢？', history, null, false, 6);
     // system + 历史回顾 + 当前问题（历史不再以 assistant 角色回灌，规避网关流式吞 reasoning）
     expect(messages).toHaveLength(3);
-    expect(messages[1]).toEqual({
-      role: 'user',
-      content: '历史对话回顾：\n问：差旅费标准是什么？\n答：住宿费按城市等级限额。\n问：伙食补助呢？',
-    });
-    expect(messages[1]!.content).not.toContain('<think');
-    expect(messages.every((m) => m.role !== 'assistant')).toBe(true);
-    expect(messages.at(-1)).toEqual({ role: 'user', content: '交通补助呢？' });
+    expect(messages[1]!.getType()).toBe('human');
+    expect(messages[1]!.content).toBe(
+      '历史对话回顾：\n问：差旅费标准是什么？\n答：住宿费按城市等级限额。\n问：伙食补助呢？',
+    );
+    expect(String(messages[1]!.content)).not.toContain('<think');
+    expect(messages.every((m) => m.getType() !== 'ai')).toBe(true);
+    expect(messages.at(-1)!.getType()).toBe('human');
+    expect(messages.at(-1)!.content).toBe('交通补助呢？');
   });
 
-  it('按 memoryWindow 截取最近历史', () => {
-    const messages = buildMessages('伙食补助呢？', history, null, false, 1);
+  it('按 memoryWindow 截取最近历史', async () => {
+    const messages = await buildMessages('伙食补助呢？', history, null, false, 1);
     expect(messages).toHaveLength(3); // system + 最近 1 条历史的折叠回顾 + 当前问题
-    expect(messages[1]).toEqual({ role: 'user', content: '历史对话回顾：\n问：伙食补助呢？' });
+    expect(messages[1]!.getType()).toBe('human');
+    expect(messages[1]!.content).toBe('历史对话回顾：\n问：伙食补助呢？');
   });
 
-  it('匿名模式使用匿名系统提示词', () => {
-    const messages = buildMessages('问题', [], null, true, 6);
-    expect(messages[0]!.role).toBe('system');
-    expect(messages[0]!.content).toContain('匿名');
+  it('匿名模式使用匿名系统提示词', async () => {
+    const messages = await buildMessages('问题', [], null, true, 6);
+    expect(messages[0]!.getType()).toBe('system');
+    expect(String(messages[0]!.content)).toContain('匿名');
   });
 
-  it('检索上下文拼在问题前', () => {
-    const messages = buildMessages('问题', [], '资料A', false, 6);
-    expect(messages.at(-1)!.content).toContain('资料A');
-    expect(messages.at(-1)!.content).toContain('问题');
+  it('检索上下文拼在问题前', async () => {
+    const messages = await buildMessages('问题', [], '资料A', false, 6);
+    expect(String(messages.at(-1)!.content)).toContain('资料A');
+    expect(String(messages.at(-1)!.content)).toContain('问题');
   });
 });
