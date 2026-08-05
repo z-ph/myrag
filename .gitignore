@@ -11,3 +11,4 @@ playwright-report/
 uploads/
 data/
 *.tsbuildinfo
+deploy/deploy.log

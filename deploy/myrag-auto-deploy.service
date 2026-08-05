@@ -1,0 +1,9 @@
+[Unit]
+Description=Auto deploy myrag (poll and rebuild)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# 按实际部署路径修改
+ExecStart=/opt/myrag/deploy/auto-deploy.sh

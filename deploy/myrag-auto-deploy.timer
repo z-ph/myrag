@@ -1,0 +1,11 @@
+[Unit]
+Description=Auto deploy myrag every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Unit=myrag-auto-deploy.service
+
+[Install]
+WantedBy=timers.target
