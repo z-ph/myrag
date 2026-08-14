@@ -104,17 +104,10 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
     async update(key, content, updatedBy) {
       ensureKey(key);
 
-      // 查当前最大 version
-      const [maxRow] = await db
-        .select({ maxVersion: sql<number>`COALESCE(MAX(${promptTemplateVersions.version}), 0)` })
-        .from(promptTemplateVersions)
-        .where(eq(promptTemplateVersions.key, key));
-      const nextVersion = (maxRow?.maxVersion ?? 0) + 1;
-
-      // 插版本记录
+      // 原子插入版本记录（子查询避免并发 version 重复）
       await db.insert(promptTemplateVersions).values({
         key,
-        version: nextVersion,
+        version: sql`(SELECT COALESCE(MAX(version), 0) + 1 FROM prompt_template_versions WHERE key = ${key})`,
         content,
         updatedBy,
       });
