@@ -101,12 +101,8 @@ export interface ServerConfig {
   contextBudget: number;
   memoryWindow: number;
   imageRetrievalWeight: number;
-  /** 批量任务 worker 并发数 */
+  /** 批量任务 worker 文件级并发数 */
   batchConcurrency: number;
-  /** 批量任务队列轮询间隔（秒） */
-  batchPollTimeoutSeconds: number;
-  /** 批量恢复扫描分布式锁 TTL（秒） */
-  batchScanLockTtlSeconds: number;
   /** 生成中状态 TTL（秒） */
   generatingTtlSeconds: number;
   /** 匿名问答结果暂存 TTL（秒） */
@@ -190,8 +186,6 @@ const ServerConfigSchema = z.object({
   memoryWindow: z.number(),
   imageRetrievalWeight: z.number(),
   batchConcurrency: z.number(),
-  batchPollTimeoutSeconds: z.number(),
-  batchScanLockTtlSeconds: z.number(),
   generatingTtlSeconds: z.number(),
   anonResultTtlSeconds: z.number(),
   documentListLimit: z.number(),
@@ -266,8 +260,6 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     memoryWindow: num('RAG_MEMORY_WINDOW', DEFAULTS.memoryWindow),
     imageRetrievalWeight: num('RAG_IMAGE_RETRIEVAL_WEIGHT', 0.3),
     batchConcurrency: num('BATCH_CONCURRENCY', DEFAULTS.batchConcurrency),
-    batchPollTimeoutSeconds: num('BATCH_POLL_TIMEOUT_SECONDS', DEFAULTS.batchPollTimeoutSeconds),
-    batchScanLockTtlSeconds: num('BATCH_SCAN_LOCK_TTL_SECONDS', DEFAULTS.batchScanLockTtlSeconds),
     generatingTtlSeconds: num('GENERATING_TTL_SECONDS', DEFAULTS.generatingTtlSeconds),
     anonResultTtlSeconds: num('ANON_RESULT_TTL_SECONDS', DEFAULTS.anonResultTtlSeconds),
     documentListLimit: num('DOCUMENT_LIST_LIMIT', DEFAULTS.documentListLimit),

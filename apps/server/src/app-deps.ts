@@ -76,7 +76,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const usersService = createUsersService(handle.db);
   const processService = createProcessService(handle.db, qdrant, llm, objectStorage, cfg, settingsService);
   const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg);
-  const batchService = createBatchService(handle.db, processService, redis, cfg);
+  const batchService = createBatchService(handle.db, processService, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
   const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
@@ -101,6 +101,8 @@ export function createApp(cfg: ServerConfig): AppContainer {
     ragService,
     settingsService,
     close: async () => {
+      // 先停任务 worker（等待进行中任务收尾），再关存储连接
+      await batchService.close();
       settingsService.close();
       await handle.close();
       await redis.close();
@@ -116,7 +118,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
       await qdrant.ensureCollection();
       await authService.bootstrapAdmin();
       await settingsService.init();
-      // 无状态化：每个实例都是任务消费者；补偿扫描由分布式锁保证单实例执行
+      // 无状态化：每个实例都是 BullMQ 任务消费者；崩溃任务由 stalled 检测 + 周期补偿扫描兜底
       batchService.startWorker();
       batchService.startRecoveryLoop();
       logger.info(`[init] 应用初始化完成 (instance=${cfg.instanceId})`);

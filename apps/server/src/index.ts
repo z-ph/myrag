@@ -26,9 +26,8 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info(`[server] 收到 ${signal}，正在关闭…`);
     server.close(async () => {
-      container.deps.batchService.stopRecoveryLoop();
       container.deps.ragService.teardown();
-      await container.deps.close();
+      await container.deps.close(); // 内含 batchService.close()（停扫描 + worker 收尾）
       process.exit(0);
     });
     // 兜底：5s 内未完成则强制退出

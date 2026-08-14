@@ -5,12 +5,6 @@ import type { ServerConfig } from '@myrag/shared';
 const P = 'myrag';
 
 export const RedisKeys = {
-  /** 批量任务队列（等待处理） */
-  batchQueue: `${P}:batch:queue`,
-  /** 批量任务处理中（防丢失） */
-  batchInflight: `${P}:batch:inflight`,
-  /** 批量恢复扫描分布式锁 */
-  batchScanLock: `${P}:batch:scan-lock`,
   /** 生成中状态：会话 → 实例 ID（TTL） */
   generating: (conversationId: string) => `${P}:gen:${conversationId}`,
   /** 取消信号频道 */
@@ -25,14 +19,6 @@ export interface RedisStore {
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
   del(...keys: string[]): Promise<void>;
   get(key: string): Promise<string | null>;
-  /** 分布式锁：获取成功返回 true（TTL 自动释放） */
-  acquireLock(key: string, ttlSeconds: number): Promise<boolean>;
-  /** 入队 */
-  lpush(queue: string, value: string): Promise<void>;
-  /** 阻塞移出队首并放入目标队列（原子），超时返回 null */
-  brpoplpush(queue: string, target: string, timeoutSeconds: number): Promise<string | null>;
-  /** 从队列移除指定值 */
-  lrem(queue: string, value: string, count?: number): Promise<void>;
   publish(channel: string, message: string): Promise<void>;
   /** 订阅频道，返回退订函数 */
   subscribe(channel: string, handler: (message: string) => void): Promise<() => void>;
@@ -64,19 +50,6 @@ export function createRedisStore(cfg: ServerConfig): RedisStore {
     },
     async get(key) {
       return client.get(key);
-    },
-    async acquireLock(key, ttlSeconds) {
-      const ok = await client.set(key, cfg.instanceId, 'EX', ttlSeconds, 'NX');
-      return ok === 'OK';
-    },
-    async lpush(queue, value) {
-      await client.lpush(queue, value);
-    },
-    async brpoplpush(queue, target, timeoutSeconds) {
-      return client.brpoplpush(queue, target, timeoutSeconds);
-    },
-    async lrem(queue, value, count = 0) {
-      await client.lrem(queue, count, value);
     },
     async publish(channel, message) {
       await client.publish(channel, message);

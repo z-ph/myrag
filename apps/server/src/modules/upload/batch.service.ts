@@ -1,13 +1,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import type { ServerConfig } from '@myrag/shared';
 import type { BatchTask, TaskStatus } from '@myrag/shared';
 import type { Db } from '../../db';
 import { batchFileResults, batchTasks } from '../../db/schema';
 import type { ProcessService } from '../documents/process.service';
-import type { RedisStore } from '../../store/redis';
-import { RedisKeys } from '../../store/redis';
 import { genId, logger } from '../../lib/util';
 import { badRequest } from '../../lib/errors';
 
@@ -15,13 +14,15 @@ export interface BatchService {
   /** 创建批量任务并入队（任意实例 worker 均可拾取） */
   createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
   getTask(taskId: string): Promise<BatchTask>;
-  /** 启动本实例的任务 worker（阻塞消费队列） */
+  /** 启动本实例的任务 worker（BullMQ 消费） */
   startWorker(): void;
-  /** 补偿扫描（分布式锁保护）：把超时/中断任务重新入队，返回触发数量 */
+  /** 补偿扫描：把超时/中断任务重新入队（jobId 幂等），返回触发数量 */
   recoveryScan(): Promise<number>;
   /** 周期补偿扫描 */
   startRecoveryLoop(): void;
   stopRecoveryLoop(): void;
+  /** 优雅关闭：停扫描、等待进行中任务收尾、断开队列连接 */
+  close(): Promise<void>;
 }
 
 function mapTask(row: typeof batchTasks.$inferSelect, results: typeof batchFileResults.$inferSelect[]): BatchTask {
@@ -56,12 +57,9 @@ async function processTaskFiles(
   const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
   if (!task) return;
   if (task.status === 'SUCCESS' || task.status === 'FAILED' || task.status === 'PARTIAL') return;
-  if (task.takenOver) {
-    // 其它实例正在处理；仅当任务已超时才能接管
-    const staleThreshold = new Date(Date.now() - cfg.recoveryStaleMs);
-    if (task.updatedAt > staleThreshold) return;
-  }
-  await db.update(batchTasks).set({ status: 'PROCESSING', takenOver: true, updatedAt: new Date() }).where(eq(batchTasks.taskId, taskId));
+  // BullMQ 以 jobId 去重 + stalled 检测保证同一任务不会被并发消费，崩溃后自动重跑；
+  // 无需旧的 takenOver 接管判断（该判断在重跑场景下反而会让任务永久卡死）
+  await db.update(batchTasks).set({ status: 'PROCESSING', updatedAt: new Date() }).where(eq(batchTasks.taskId, taskId));
 
   const pendingResults = await db
     .select()
@@ -137,36 +135,44 @@ async function processTaskFiles(
   logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failure})`);
 }
 
+/** BullMQ 队列名（name 不允许含冒号；Redis key 由 prefix:name 拼成 myrag:batch:*） */
+const QUEUE_NAME = 'batch';
+const QUEUE_PREFIX = 'myrag';
+
 export function createBatchService(
   db: Db,
   processService: ProcessService,
-  redis: RedisStore,
   cfg: ServerConfig,
 ): BatchService {
-  let workerRunning = false;
+  // BullMQ 自行管理 ioredis 连接，不复用业务 RedisStore（阻塞命令需要独立连接）
+  const connection: ConnectionOptions = {
+    host: cfg.redisHost,
+    port: cfg.redisPort,
+    password: cfg.redisPassword || undefined,
+  };
+  const queue = new Queue<{ taskId: string }>(QUEUE_NAME, {
+    connection,
+    prefix: QUEUE_PREFIX,
+    defaultJobOptions: {
+      // 任务终态已落库（batchTasks/batchFileResults 为真源），BullMQ 侧执行完即清，避免 Redis 膨胀
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  });
+  queue.on('error', (err) => logger.error('[batch] 队列异常:', err));
+
+  let worker: Worker<{ taskId: string }> | null = null;
   let recoveryTimer: ReturnType<typeof setInterval> | null = null;
 
-  async function consumeLoop(): Promise<void> {
-    while (workerRunning) {
-      try {
-        const taskId = await redis.brpoplpush(RedisKeys.batchQueue, RedisKeys.batchInflight, cfg.batchPollTimeoutSeconds);
-        if (!taskId) continue;
-        try {
-          await processTaskFiles(db, processService, cfg, taskId);
-        } catch (err) {
-          logger.error(`[batch] 处理任务 ${taskId} 异常:`, err);
-          // 放回队列由补偿扫描重试
-          await redis.lpush(RedisKeys.batchQueue, taskId).catch(() => {});
-        } finally {
-          await redis.lrem(RedisKeys.batchInflight, taskId).catch(() => {});
-        }
-      } catch (err) {
-        // Redis 瞬时故障：退避后继续
-        logger.error('[batch] 队列消费异常:', err);
-        const { promise, resolve } = Promise.withResolvers<void>();
-        setTimeout(resolve, 2000);
-        await promise;
-      }
+  /** 入队：jobId = taskId，重复入队为空操作（补偿扫描/重试不会并发重复消费） */
+  async function enqueue(taskId: string): Promise<void> {
+    await queue.add('process', { taskId }, { jobId: taskId });
+  }
+
+  function stopRecoveryLoop(): void {
+    if (recoveryTimer) {
+      clearInterval(recoveryTimer);
+      recoveryTimer = null;
     }
   }
 
@@ -191,7 +197,7 @@ export function createBatchService(
           stagedPath,
         });
       }
-      await redis.lpush(RedisKeys.batchQueue, taskId);
+      await enqueue(taskId);
       return this.getTask(taskId);
     },
 
@@ -207,34 +213,42 @@ export function createBatchService(
     },
 
     startWorker() {
-      if (workerRunning) return;
-      workerRunning = true;
-      void consumeLoop();
-      logger.info('[batch] 任务 worker 已启动');
+      if (worker) return;
+      worker = new Worker<{ taskId: string }>(
+        QUEUE_NAME,
+        async (job) => {
+          await processTaskFiles(db, processService, cfg, job.data.taskId);
+        },
+        {
+          connection,
+          prefix: QUEUE_PREFIX,
+          // 任务级串行（与旧实现一致）；文件级并发由 processTaskFiles 内 batchConcurrency 控制
+          concurrency: 1,
+        },
+      );
+      // EventEmitter 的 error 事件无监听会抛异常进程退出
+      worker.on('error', (err) => logger.error('[batch] worker 异常:', err));
+      worker.on('failed', (job, err) => logger.error(`[batch] 任务 ${job?.data.taskId ?? '?'} 执行失败:`, err));
+      logger.info('[batch] 任务 worker 已启动 (BullMQ)');
     },
 
     async recoveryScan() {
-      const locked = await redis.acquireLock(RedisKeys.batchScanLock, cfg.batchScanLockTtlSeconds);
-      if (!locked) return 0;
-
-      try {
-        const stale = new Date(Date.now() - cfg.recoveryStaleMs);
-        const staleTasks = await db
-          .select()
-          .from(batchTasks)
-          .where(
-            and(
-              inArray(batchTasks.status, ['PENDING', 'PROCESSING']),
-              lt(batchTasks.updatedAt, stale),
-            ),
-          );
-        for (const task of staleTasks) {
-          await redis.lpush(RedisKeys.batchQueue, task.taskId);
-        }
-        return staleTasks.length;
-      } finally {
-        await redis.del(RedisKeys.batchScanLock);
+      // BullMQ 已自动重跑 stalled job；这里兜底「入队前进程崩溃 / 失败已被清除」的任务。
+      // jobId 幂等：已在队列中的任务 add 为空操作，无需旧的分布式锁。
+      const stale = new Date(Date.now() - cfg.recoveryStaleMs);
+      const staleTasks = await db
+        .select()
+        .from(batchTasks)
+        .where(
+          and(
+            inArray(batchTasks.status, ['PENDING', 'PROCESSING']),
+            lt(batchTasks.updatedAt, stale),
+          ),
+        );
+      for (const task of staleTasks) {
+        await enqueue(task.taskId);
       }
+      return staleTasks.length;
     },
 
     startRecoveryLoop() {
@@ -245,11 +259,14 @@ export function createBatchService(
       recoveryTimer.unref?.();
     },
 
-    stopRecoveryLoop() {
-      if (recoveryTimer) {
-        clearInterval(recoveryTimer);
-        recoveryTimer = null;
-      }
+    stopRecoveryLoop,
+
+    async close() {
+      stopRecoveryLoop();
+      // worker.close() 会等待进行中的任务处理完
+      await worker?.close();
+      worker = null;
+      await queue.close();
     },
   };
 }

@@ -29,6 +29,7 @@
     "@qdrant/js-client-rest": "^1.18.0",
     "@scalar/hono-api-reference": "^0.11.12",
     "bcryptjs": "^3.0.3",
+    "bullmq": "6.1.1",
     "drizzle-orm": "^0.45.2",
     "exceljs": "^4.4.0",
     "hono": "^4.12.33",

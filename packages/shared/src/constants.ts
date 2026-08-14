@@ -76,12 +76,8 @@ export const DEFAULTS = {
   maxFileSizeBytes: 50 * 1024 * 1024,
   /** 单次向量化最大行数（受模型/网关批次上限约束） */
   embedBatchSize: 10,
-  /** 批量任务 worker 并发数 */
+  /** 批量任务 worker 文件级并发数 */
   batchConcurrency: 2,
-  /** 批量任务队列轮询间隔（秒） */
-  batchPollTimeoutSeconds: 5,
-  /** 批量恢复扫描分布式锁 TTL（秒） */
-  batchScanLockTtlSeconds: 30,
   /** 生成中状态 TTL（秒） */
   generatingTtlSeconds: 15 * 60,
   /** 匿名问答结果暂存 TTL（秒） */

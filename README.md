@@ -48,7 +48,7 @@ pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 
 ## 关键架构决策
 
-- **无状态化后端**：批量任务 Redis 队列（worker 幂等）、生成取消 Redis key + Pub/Sub 跨实例、恢复扫描分布式锁；状态在 PostgreSQL/Redis，服务可水平扩容。
+- **无状态化后端**：批量任务队列用 BullMQ（`jobId=taskId` 幂等入队、stalled 任务自动重跑、周期补偿扫描兜底未入队任务）、生成取消 Redis key + Pub/Sub 跨实例；状态在 PostgreSQL/Redis，服务可水平扩容。
 - **契约即文档，RPC 端到端类型安全**：全部路由 `@hono/zod-openapi`，请求/响应 schema 即运行时校验，OpenAPI 自动生成（`/docs`）；后端导出 `AppType`，前端用 `hc<AppType>`（hono/client）生成类型安全客户端，接口层零手写请求/响应类型（见 `apps/web/src/api/`）。
 - **统一响应**：`{ code, message, data }`，错误携带语义化 HTTP 状态。
 - **2-Step RAG（langchain.js）**：`RagRetriever`（`BaseRetriever`）混合检索 → `Document` 统一块模型 → `ChatPromptTemplate` 组装 → `ChatOpenAI` / `OpenAIEmbeddings` 生成与向量化；管线为 Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR 重排 → 上下文预算截断；图片问答图文双路融合。对齐说明见 `docs/langchain-alignment.md`。

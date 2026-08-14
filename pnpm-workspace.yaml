@@ -4,9 +4,12 @@ packages:
 
 allowBuilds:
   esbuild: true
+  # msgpackr 的原子化解包加速（bullmq 传递依赖）；跳过构建，走纯 JS 回退
+  msgpackr-extract: false
 
 minimumReleaseAgeExclude:
   - jose@6.2.7
+  - bullmq@6.1.1
 
 onlyBuiltDependencies:
   - esbuild
