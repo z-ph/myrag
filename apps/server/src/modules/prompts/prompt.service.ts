@@ -57,13 +57,13 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
             key,
             content,
             updatedBy: 'system',
-          });
+          }).onConflictDoNothing();
           await db.insert(promptTemplateVersions).values({
             key,
             version: 1,
             content,
             updatedBy: 'system',
-          });
+          }).onConflictDoNothing();
           cache.set(key, content);
         }
       }
@@ -105,11 +105,14 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
       ensureKey(key);
 
       await db.transaction(async (tx) => {
-        // 1. UPDATE prompt_templates（行锁使同 key 并发串行化）
+        // 1. upsert prompt_templates（行不存在则建、存在则更新，两种情况都拿到行锁）
         await tx
-          .update(promptTemplates)
-          .set({ content, updatedAt: new Date(), updatedBy })
-          .where(eq(promptTemplates.key, key));
+          .insert(promptTemplates)
+          .values({ key, content, updatedAt: new Date(), updatedBy })
+          .onConflictDoUpdate({
+            target: promptTemplates.key,
+            set: { content, updatedAt: new Date(), updatedBy },
+          });
 
         // 2. 事务内 SELECT MAX(version) + INSERT（串行化后无竞态）
         const [maxRow] = await tx
