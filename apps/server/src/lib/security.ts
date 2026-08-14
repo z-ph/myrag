@@ -22,13 +22,13 @@ export interface JwtPayload {
   role: Role;
 }
 
-/** 签发 JWT（HS256） */
-export async function signToken(payload: JwtPayload, cfg = loadServerConfig()): Promise<string> {
+/** 签发 JWT（HS256），可传入独立 TTL（秒），缺省使用 cfg.jwtTtlSeconds */
+export async function signToken(payload: JwtPayload, cfg = loadServerConfig(), ttlSeconds?: number): Promise<string> {
   return new SignJWT({ username: payload.username, role: payload.role })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(payload.sub)
     .setIssuedAt()
-    .setExpirationTime(`${cfg.jwtTtlSeconds}s`)
+    .setExpirationTime(`${ttlSeconds ?? cfg.jwtTtlSeconds}s`)
     .sign(new TextEncoder().encode(cfg.jwtSecret));
 }
 

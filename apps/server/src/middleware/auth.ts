@@ -30,6 +30,14 @@ export const requireAuth = createMiddleware<{ Variables: { auth: AuthContext } }
   await next();
 });
 
+/** 需要注册用户（拒绝 GUEST 角色，用于依赖 users 表的端点如 /sessions/current） */
+export const requireRegistered = createMiddleware<{ Variables: { auth: AuthContext } }>(async (c, next) => {
+  const auth = await resolveAuth(c);
+  if (auth.role === 'GUEST') throw unauthorized('未登录或登录已过期');
+  c.set('auth', auth);
+  await next();
+});
+
 /** 需要 STAFF 或 SUPER_ADMIN（文档管理类操作，自包含鉴权） */
 export const requireStaff = createMiddleware<{ Variables: { auth: AuthContext } }>(async (c, next) => {
   const auth = await resolveAuth(c);

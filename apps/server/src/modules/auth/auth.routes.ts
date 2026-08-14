@@ -1,8 +1,8 @@
 import { createRoute, z } from '@hono/zod-openapi';
-import { loginRequestSchema, loginResponseSchema, authUserSchema } from '@myrag/shared';
+import { loginRequestSchema, loginResponseSchema, authUserSchema, guestSessionResponseSchema } from '@myrag/shared';
 import type { AppDeps } from '../../app-deps';
 import { createOpenApiApp, errorResponses } from '../../openapi';
-import { requireAuth } from '../../middleware/auth';
+import { requireRegistered } from '../../middleware/auth';
 
 export function createAuthRoutes(deps: AppDeps) {
   const { authService } = deps;
@@ -36,11 +36,30 @@ export function createAuthRoutes(deps: AppDeps) {
 
       .openapi(
         createRoute({
+          method: 'post',
+          path: '/guest-sessions',
+          description: '签发匿名访客会话 token（无需凭证，用于未登录问答落库）',
+          security: [],
+          responses: {
+            201: {
+              description: '签发成功',
+              content: { 'application/json': { schema: guestSessionResponseSchema } },
+            },
+          },
+        }),
+        async (c) => {
+          const result = await authService.createGuestSession();
+          return c.json(result, 201);
+        },
+      )
+
+      .openapi(
+        createRoute({
           method: 'get',
           path: '/sessions/current',
           description: '获取当前登录用户信息（当前会话）',
           security: [{ bearerAuth: [] }],
-          middleware: [requireAuth],
+          middleware: [requireRegistered],
           responses: {
             200: {
               description: '当前用户',

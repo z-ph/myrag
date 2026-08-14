@@ -5,7 +5,7 @@ import { hashPassword, signToken, verifyPassword } from '../../lib/security';
 import { unauthorized } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { ServerConfig } from '@myrag/shared';
-import type { AuthUser, LoginResponse, Role } from '@myrag/shared';
+import type { AuthUser, GuestSessionResponse, LoginResponse, Role } from '@myrag/shared';
 
 export interface AuthService {
   login(username: string, password: string): Promise<LoginResponse>;
@@ -14,6 +14,8 @@ export interface AuthService {
   /** 首次启动种子管理员（仅当 users 表为空时） */
   bootstrapAdmin(): Promise<void>;
   toAuthUser(row: { id: number; username: string; displayName: string; role: string }): AuthUser;
+  /** 签发匿名访客会话 token（不落 users 表） */
+  createGuestSession(): Promise<GuestSessionResponse>;
 }
 
 export function createAuthService(db: Db, cfg: ServerConfig): AuthService {
@@ -67,6 +69,12 @@ export function createAuthService(db: Db, cfg: ServerConfig): AuthService {
         updatedBy: 'system',
       });
       logger.info(`[auth] 已创建初始管理员账号: ${cfg.adminUsername}`);
+    },
+
+    async createGuestSession() {
+      const id = 'guest-' + crypto.randomUUID();
+      const token = await signToken({ sub: id, username: id, role: 'GUEST' }, cfg, cfg.guestJwtTtlSeconds);
+      return { token };
     },
   };
 }
