@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ImageUnderstandingResult } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
 import { logger } from '../../lib/util';
+import type { PromptService } from '../prompts/prompt.service';
 
 /** 图片理解：视觉模型输出 OCR + 摘要 + 实体 + 聚焦总结 */
 export interface ImageService {
@@ -20,8 +21,6 @@ export const imageAnalysisSchema = z.object({
 });
 
 export type ImageAnalysis = z.infer<typeof imageAnalysisSchema>;
-
-const SYSTEM_PROMPT = `你是财务单据与文档的图片理解引擎。请仔细观察图片，提取文字与关键信息。`;
 
 const STRUCTURED_USER_PROMPT = (question: string) =>
   `用户问题：${question}\n请分析图片并按约定字段返回结构化结果。`;
@@ -74,13 +73,14 @@ export function parseImageAnalysisText(rawAnalysis: string): ImageUnderstandingR
   };
 }
 
-export function createImageService(llm: LlmClient): ImageService {
+export function createImageService(llm: LlmClient, promptService: PromptService): ImageService {
   return {
     async understand(question, imageBase64) {
+      const systemPrompt = promptService.get('vision.system');
       // 1) 优先 langchain withStructuredOutput（类型安全、字段校验）
       try {
         const analysis = await llm.visionStructured(imageAnalysisSchema, {
-          system: SYSTEM_PROMPT,
+          system: systemPrompt,
           prompt: STRUCTURED_USER_PROMPT(question),
           imageBase64,
         });
@@ -92,7 +92,7 @@ export function createImageService(llm: LlmClient): ImageService {
       }
 
       // 2) 回退：自由文本 + 本地 JSON 解析（兼容不完整 OpenAI 网关 / mock-llm）
-      const rawAnalysis = await llm.visionChat(SYSTEM_PROMPT, FALLBACK_USER_PROMPT(question), imageBase64);
+      const rawAnalysis = await llm.visionChat(systemPrompt, FALLBACK_USER_PROMPT(question), imageBase64);
       return parseImageAnalysisText(rawAnalysis);
     },
   };

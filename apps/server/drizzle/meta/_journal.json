@@ -8,6 +8,13 @@
       "when": 1785672454399,
       "tag": "0000_typical_vampiro",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786726191117,
+      "tag": "0001_stale_christian_walker",
+      "breakpoints": true
     }
   ]
 }

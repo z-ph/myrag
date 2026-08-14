@@ -11,6 +11,8 @@ export const RedisKeys = {
   cancelChannel: `${P}:cancel`,
   /** 动态设置变更广播频道 */
   settingsChannel: `${P}:settings`,
+  /** 提示词变更广播频道 */
+  promptsChannel: `${P}:prompts`,
 } as const;
 
 export interface RedisStore {

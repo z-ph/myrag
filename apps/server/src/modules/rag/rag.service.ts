@@ -9,6 +9,7 @@ import type { ConversationService } from './conversation.service';
 import type { ImageService } from './image.service';
 import type { RagRetriever } from './retrieval.service';
 import { chunkKey, packContext, type ChunkDocument } from './chunk';
+import type { PromptService } from '../prompts/prompt.service';
 
 export interface AskInput {
   question: string;
@@ -19,6 +20,8 @@ export interface AskInput {
   imageBase64?: string;
   /** 登录用户（匿名问答不传） */
   userId?: string;
+  /** 是否匿名问答（决定 system prompt 选择） */
+  anonymous?: boolean;
 }
 
 export interface AskOutput {
@@ -59,6 +62,7 @@ export function createRagService(
   redis: RedisStore,
   cfg: ServerConfig,
   settings: SettingsService,
+  promptService: PromptService,
 ): RagService {
   /** conversationId → 本实例进行中的生成控制器 */
   const activeGenerations = new Map<string, AbortController>();
@@ -136,7 +140,6 @@ export function createRagService(
   async function generate(
     input: AskInput,
     history: ContextMessage[],
-    anonymous: boolean,
     onDelta: (text: string) => void,
     onReasoningDelta: (text: string) => void,
     signal?: AbortSignal,
@@ -153,7 +156,8 @@ export function createRagService(
       ({ contextText, sources } = await buildContext(input.question, maxResults, imageUnderstanding));
     }
 
-    const messages = await buildMessages(input.question, history, contextText, anonymous, settings.get().memoryWindow);
+    const systemPrompt = promptService.get(input.anonymous ? 'qa.systemGuest' : 'qa.system');
+    const messages = await buildMessages(input.question, history, contextText, systemPrompt, settings.get().memoryWindow);
     const result = await llm.chatStream(messages, onDelta, onReasoningDelta, signal);
     return { answer: result.content, reasoning: result.reasoning, sources, imageUnderstanding };
   }
@@ -171,7 +175,7 @@ export function createRagService(
     await conversationService.appendMessage(input.conversationId, 'USER', input.question);
     await conversationService.appendMessage(input.conversationId, 'ASSISTANT', '', 'GENERATING');
     try {
-      const result = await generate(input, history, false, handlers.onDelta, handlers.onReasoningDelta, signal);
+      const result = await generate(input, history, handlers.onDelta, handlers.onReasoningDelta, signal);
       // 持久化 AI 回答与思考过程：content 供多轮历史回灌，reasoning 仅展示
       await conversationService.markMessage(input.conversationId, 'ASSISTANT', 'COMPLETED', result.answer, result.reasoning);
       const msgs = await conversationService.getDetail(input.conversationId, input.userId, 1);

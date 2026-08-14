@@ -10,6 +10,7 @@ import { createDocumentsRoutes } from './modules/documents/documents.routes';
 import { createUploadRoutes } from './modules/upload/upload.routes';
 import { createConversationRoutes } from './modules/rag/rag.routes';
 import { createSettingsRoutes } from './modules/settings/settings.routes';
+import { createPromptRoutes } from './modules/prompts/prompts.routes';
 
 /**
  * 组装应用。链式累积路由 schema（const 链），返回值即 RPC 客户端（hc<AppType>）的类型真源。
@@ -35,6 +36,7 @@ export function buildApp(deps: AppDeps) {
     .route('/auth', createAuthRoutes(deps))
     .route('/admin/users', createUsersRoutes(deps))
     .route('/admin/settings', createSettingsRoutes(deps))
+    .route('/admin/prompts', createPromptRoutes(deps))
     .route('/documents', createDocumentsRoutes(deps))
     .route('/upload-sessions', createUploadRoutes(deps))
     .route('/conversations', createConversationRoutes(deps))

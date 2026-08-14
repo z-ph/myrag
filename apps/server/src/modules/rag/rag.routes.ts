@@ -75,7 +75,7 @@ export function createConversationRoutes(deps: AppDeps) {
           const userId = c.get('auth').username;
 
           if (!form.stream) {
-            const result = await ragService.ask({ ...form, conversationId, userId });
+            const result = await ragService.ask({ ...form, conversationId, userId, anonymous: c.get('auth').role === 'GUEST' });
             return c.json(result);
           }
 
@@ -87,7 +87,7 @@ export function createConversationRoutes(deps: AppDeps) {
               try {
                 enqueue(encodeSse({ event: 'start', data: { conversationId } }));
                 await ragService.askStream(
-                  { ...form, conversationId, userId },
+                  { ...form, conversationId, userId, anonymous: c.get('auth').role === 'GUEST' },
                   {
                     onStart() {},
                     onDelta: (content) => enqueue(encodeSse({ event: 'delta', data: content })),

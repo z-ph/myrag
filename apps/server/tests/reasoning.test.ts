@@ -37,6 +37,9 @@ describe('stripReasoning（多轮历史消毒）', () => {
 });
 
 describe('buildMessages（多轮历史回灌 LLM）', () => {
+  const SYSTEM = '系统提示词';
+  const ANON = '系统提示词\n匿名提示词。';
+
   const history: ContextMessage[] = [
     { role: 'USER', content: '差旅费标准是什么？' },
     { role: 'ASSISTANT', content: '<think>检索制度库</think>住宿费按城市等级限额。' },
@@ -44,7 +47,7 @@ describe('buildMessages（多轮历史回灌 LLM）', () => {
   ];
 
   it('历史折叠为单条 user 回顾，assistant 内容剥离思维链', async () => {
-    const messages = await buildMessages('交通补助呢？', history, null, false, 6);
+    const messages = await buildMessages('交通补助呢？', history, null, SYSTEM, 6);
     // system + 历史回顾 + 当前问题（历史不再以 assistant 角色回灌，规避网关流式吞 reasoning）
     expect(messages).toHaveLength(3);
     expect(messages[1]!.getType()).toBe('human');
@@ -58,20 +61,20 @@ describe('buildMessages（多轮历史回灌 LLM）', () => {
   });
 
   it('按 memoryWindow 截取最近历史', async () => {
-    const messages = await buildMessages('伙食补助呢？', history, null, false, 1);
+    const messages = await buildMessages('伙食补助呢？', history, null, SYSTEM, 1);
     expect(messages).toHaveLength(3); // system + 最近 1 条历史的折叠回顾 + 当前问题
     expect(messages[1]!.getType()).toBe('human');
     expect(messages[1]!.content).toBe('历史对话回顾：\n问：伙食补助呢？');
   });
 
   it('匿名模式使用匿名系统提示词', async () => {
-    const messages = await buildMessages('问题', [], null, true, 6);
+    const messages = await buildMessages('问题', [], null, ANON, 6);
     expect(messages[0]!.getType()).toBe('system');
     expect(String(messages[0]!.content)).toContain('匿名');
   });
 
   it('检索上下文拼在问题前', async () => {
-    const messages = await buildMessages('问题', [], '资料A', false, 6);
+    const messages = await buildMessages('问题', [], '资料A', SYSTEM, 6);
     expect(String(messages.at(-1)!.content)).toContain('资料A');
     expect(String(messages.at(-1)!.content)).toContain('问题');
   });

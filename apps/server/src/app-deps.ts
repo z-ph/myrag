@@ -32,6 +32,8 @@ import { createImageService } from './modules/rag/image.service';
 import type { RagService } from './modules/rag/rag.service';
 import { createRagService } from './modules/rag/rag.service';
 import { createSettingsService } from './modules/settings/settings.service';
+import type { PromptService } from './modules/prompts/prompt.service';
+import { createPromptService } from './modules/prompts/prompt.service';
 import { logger } from './lib/util';
 
 /** 应用依赖容器：所有服务实例 */
@@ -53,6 +55,7 @@ export interface AppDeps {
   retriever: RagRetriever;
   ragService: RagService;
   settingsService: SettingsService;
+  promptService: PromptService;
   close: () => Promise<void>;
 }
 
@@ -69,6 +72,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const redis = createRedisStore(cfg);
   const qdrant = createQdrantStore(cfg);
   const settingsService = createSettingsService(handle.db, redis);
+  const promptService = createPromptService(handle.db, redis);
   const llm = createLlmClient(cfg, settingsService);
   const objectStorage = createObjectStorage(cfg);
 
@@ -80,8 +84,8 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
   const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
-  const imageService = createImageService(llm);
-  const ragService = createRagService(llm, retriever, imageService, conversationService, redis, cfg, settingsService);
+  const imageService = createImageService(llm, promptService);
+  const ragService = createRagService(llm, retriever, imageService, conversationService, redis, cfg, settingsService, promptService);
 
   const deps: AppDeps = {
     cfg,
@@ -100,10 +104,12 @@ export function createApp(cfg: ServerConfig): AppContainer {
     retriever,
     ragService,
     settingsService,
+    promptService,
     close: async () => {
       // 先停任务 worker（等待进行中任务收尾），再关存储连接
       await batchService.close();
       settingsService.close();
+      promptService.close();
       await handle.close();
       await redis.close();
     },
@@ -118,6 +124,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
       await qdrant.ensureCollection();
       await authService.bootstrapAdmin();
       await settingsService.init();
+      await promptService.init();
       // 无状态化：每个实例都是 BullMQ 任务消费者；崩溃任务由 stalled 检测 + 周期补偿扫描兜底
       batchService.startWorker();
       batchService.startRecoveryLoop();

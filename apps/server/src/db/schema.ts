@@ -220,6 +220,32 @@ export const systemSettings = pgTable(
   },
 );
 
+// ---------- 提示词模板 ----------
+export const promptTemplates = pgTable(
+  'prompt_templates',
+  {
+    key: varchar('key', { length: 64 }).primaryKey(),
+    content: text('content').notNull(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    updatedBy: varchar('updated_by', { length: 64 }).notNull(),
+  },
+);
+
+export const promptTemplateVersions = pgTable(
+  'prompt_template_versions',
+  {
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+    key: varchar('key', { length: 64 }).notNull(),
+    version: integer('version').notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedBy: varchar('updated_by', { length: 64 }).notNull(),
+  },
+  (t) => [
+    index('idx_prompt_template_versions_key').on(t.key),
+  ],
+);
+
 // ---------- 关系 ----------
 export const documentsRelations = relations(documents, ({ many }) => ({
   chunks: many(documentChunks),
@@ -245,3 +271,7 @@ export type ConversationRow = typeof conversations.$inferSelect;
 export type NewConversationRow = typeof conversations.$inferInsert;
 export type ConversationMessageRow = typeof conversationMessages.$inferSelect;
 export type NewConversationMessageRow = typeof conversationMessages.$inferInsert;
+export type PromptTemplateRow = typeof promptTemplates.$inferSelect;
+export type NewPromptTemplateRow = typeof promptTemplates.$inferInsert;
+export type PromptTemplateVersionRow = typeof promptTemplateVersions.$inferSelect;
+export type NewPromptTemplateVersionRow = typeof promptTemplateVersions.$inferInsert;

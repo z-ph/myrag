@@ -3,15 +3,6 @@ import { HumanMessage, type BaseMessage, type BaseMessageLike } from '@langchain
 import type { ContextMessage } from '@myrag/shared';
 import { stripReasoning } from '../../llm/client';
 
-export const SYSTEM_PROMPT = `你是「财务处知识库」智能问答助手，服务于机构财务处的工作人员。
-回答规则：
-1. 优先依据提供的知识库资料回答；资料不足时明确说明，不要编造。
-2. 涉及制度条款时，标注资料来源文件名。
-3. 回答使用简体中文，条理清晰、简洁直接。`;
-
-export const ANONYMOUS_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
-注意：当前为未登录匿名问答，仅提供基于知识库资料的客观回答。`;
-
 /**
  * RAG 问答提示模板（langchain ChatPromptTemplate）：system + 可选历史回顾占位 + 提问。
  * 历史折叠为单条 user 回顾消息（问答对文本），原因：
@@ -41,19 +32,19 @@ function foldHistoryRecap(history: ContextMessage[], memoryWindow: number): stri
   return pairs.join('\n');
 }
 
-/** 组装 LLM 消息（langchain BaseMessage[]）：系统 + 历史折叠回顾 + 检索上下文 + 当前问题。 */
+/** 组装 LLM 消息（langchain BaseMessage[]）：系统（由调用方传入成品文本）+ 历史折叠回顾 + 检索上下文 + 当前问题。 */
 export async function buildMessages(
   question: string,
   history: ContextMessage[],
   contextText: string | null,
-  anonymous: boolean,
+  systemPrompt: string,
   memoryWindow: number,
 ): Promise<BaseMessage[]> {
   const recap = foldHistoryRecap(history, memoryWindow);
   const historyMessages: BaseMessageLike[] = recap ? [new HumanMessage(`历史对话回顾：\n${recap}`)] : [];
   const prompt = contextText ? QA_PROMPT_WITH_CONTEXT : QA_PROMPT_PLAIN;
   return prompt.formatMessages({
-    system: anonymous ? ANONYMOUS_SYSTEM_PROMPT : SYSTEM_PROMPT,
+    system: systemPrompt,
     history: historyMessages,
     context: contextText ?? '',
     question,
