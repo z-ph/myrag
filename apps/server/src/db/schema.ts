@@ -242,6 +242,7 @@ export const promptTemplateVersions = pgTable(
     updatedBy: varchar('updated_by', { length: 64 }).notNull(),
   },
   (t) => [
+    uniqueIndex('uq_prompt_template_versions_key_version').on(t.key, t.version),
     index('idx_prompt_template_versions_key').on(t.key),
   ],
 );

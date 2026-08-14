@@ -15,6 +15,13 @@
       "when": 1786726191117,
       "tag": "0001_stale_christian_walker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786726721718,
+      "tag": "0002_needy_bromley",
+      "breakpoints": true
     }
   ]
 }

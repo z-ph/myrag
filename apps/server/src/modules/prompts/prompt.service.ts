@@ -104,28 +104,27 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
     async update(key, content, updatedBy) {
       ensureKey(key);
 
-      // 原子插入版本记录（子查询避免并发 version 重复）
-      await db.insert(promptTemplateVersions).values({
-        key,
-        version: sql`(SELECT COALESCE(MAX(version), 0) + 1 FROM prompt_template_versions WHERE key = ${key})`,
-        content,
-        updatedBy,
-      });
-
-      // upsert 模板表
-      const existing = await db
-        .select({ key: promptTemplates.key })
-        .from(promptTemplates)
-        .where(eq(promptTemplates.key, key))
-        .limit(1);
-      if (existing.length > 0) {
-        await db
+      await db.transaction(async (tx) => {
+        // 1. UPDATE prompt_templates（行锁使同 key 并发串行化）
+        await tx
           .update(promptTemplates)
           .set({ content, updatedAt: new Date(), updatedBy })
           .where(eq(promptTemplates.key, key));
-      } else {
-        await db.insert(promptTemplates).values({ key, content, updatedBy });
-      }
+
+        // 2. 事务内 SELECT MAX(version) + INSERT（串行化后无竞态）
+        const [maxRow] = await tx
+          .select({ max: sql<number>`COALESCE(MAX(${promptTemplateVersions.version}), 0)` })
+          .from(promptTemplateVersions)
+          .where(eq(promptTemplateVersions.key, key));
+        const nextVersion = (maxRow?.max ?? 0) + 1;
+
+        await tx.insert(promptTemplateVersions).values({
+          key,
+          version: nextVersion,
+          content,
+          updatedBy,
+        });
+      });
 
       // 更新缓存 + 广播
       cache.set(key, content);

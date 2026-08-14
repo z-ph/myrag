@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_prompt_template_versions_key_version" ON "prompt_template_versions" USING btree ("key","version");
