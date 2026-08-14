@@ -1,18 +1,11 @@
 import { createRoute, z } from '@hono/zod-openapi';
 import type { Context } from 'hono';
-import {
-  askResponseSchema,
-  conversationDetailSchema,
-  conversationListSchema,
-  questionRequestSchema,
-  questionResultSchema,
-} from '@myrag/shared';
+import { askResponseSchema, conversationDetailSchema, conversationListSchema } from '@myrag/shared';
 import type { AppDeps, AppVariables } from '../../app-deps';
 import { createOpenApiApp, errorResponses, bearerSecurity } from '../../openapi';
 import { requireAuth } from '../../middleware/auth';
-import { badRequest, notFound } from '../../lib/errors';
+import { badRequest } from '../../lib/errors';
 import { encodeSse } from '@myrag/shared';
-import type { ContextMessage } from '@myrag/shared';
 
 const convParam = z.object({ conversationId: z.string().min(1).max(128) });
 
@@ -206,109 +199,4 @@ export function createConversationRoutes(deps: AppDeps) {
   );
 }
 
-const questionParam = z.object({ questionId: z.string().min(1).max(64) });
 
-/** 公开问答域（挂载 /questions，匿名，不落库，结果暂存 Redis TTL） */
-export function createQuestionRoutes(deps: AppDeps) {
-  const { ragService } = deps;
-
-  return (
-    createOpenApiApp()
-      .openapi(
-        createRoute({
-          method: 'post',
-          path: '/',
-          description:
-            '匿名问答（创建问题资源）：前端传完整上下文，服务端不保存会话；stream=true 返回 SSE 事件流，客户端断开后服务端继续生成，结果暂存 24h 可经 GET /{questionId} 恢复',
-          security: [],
-          request: {
-            body: { content: { 'application/json': { schema: questionRequestSchema } } },
-          },
-          responses: {
-            200: { description: '问答结果', content: { 'application/json': { schema: askResponseSchema } } },
-            ...errorResponses,
-          },
-        }),
-        async (c) => {
-          const body = c.req.valid('json');
-
-          if (!body.stream) {
-            const result = await ragService.askAnonymous(
-              body.question,
-              body.contextMessages as ContextMessage[],
-              { maxResults: body.maxResults, useKnowledgeBase: body.useKnowledgeBase },
-            );
-            return c.json(result);
-          }
-
-          // 流式：SSE 事件流（断开后服务端继续生成，结果写入 Redis 暂存）
-          const encoder = new TextEncoder();
-          const stream = new ReadableStream<Uint8Array>({
-            async start(controller) {
-              const enqueue = (text: string) => {
-                try {
-                  controller.enqueue(encoder.encode(text));
-                } catch {
-                  // 客户端已断开：忽略推送，生成在 service 内继续完成
-                }
-              };
-              try {
-                let qid = '';
-                await ragService.askAnonymousStream(
-                  body.question,
-                  body.contextMessages as ContextMessage[],
-                  { maxResults: body.maxResults, useKnowledgeBase: body.useKnowledgeBase },
-                  {
-                    onStart: (questionId) => {
-                      qid = questionId ?? '';
-                      enqueue(encodeSse({ event: 'start', data: { conversationId: qid } }));
-                    },
-                    onDelta: (content) => enqueue(encodeSse({ event: 'delta', data: content })),
-                    onReasoningDelta: (content) => enqueue(encodeSse({ event: 'reasoning', data: content })),
-                    onSources: (sources) => enqueue(encodeSse({ event: 'sources', data: sources })),
-                    onComplete: (cancelled) => enqueue(encodeSse({ event: 'complete', data: { conversationId: qid, cancelled } })),
-                    onError: (message) => enqueue(encodeSse({ event: 'error', data: { message } })),
-                  },
-                );
-              } finally {
-                try {
-                  controller.close();
-                } catch {
-                  // 流已被客户端取消
-                }
-              }
-            },
-          });
-
-          c.header('Content-Type', 'text/event-stream');
-          c.header('Cache-Control', 'no-cache');
-          c.header('Connection', 'keep-alive');
-          // 运行时两种响应形态（JSON / SSE），OpenAPI 仅声明 JSON 形态
-          return c.body(stream) as never;
-        },
-      )
-
-      .openapi(
-        createRoute({
-          method: 'get',
-          path: '/{questionId}',
-          description: '查询匿名问答暂存结果（关闭页面后恢复用；不存在或已过期返回 404）',
-          security: [],
-          request: { params: questionParam },
-          responses: {
-            200: {
-              description: '暂存结果',
-              content: { 'application/json': { schema: questionResultSchema } },
-            },
-            404: errorResponses[404],
-          },
-        }),
-        async (c) => {
-          const { questionId } = c.req.valid('param');
-          const result = await ragService.getAnonymousResult(questionId);
-          if (!result) throw notFound('暂存结果不存在或已过期');
-          return c.json(result);
-        },
-      )
-  );
-}

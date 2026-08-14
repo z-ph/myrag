@@ -8,7 +8,7 @@ import { createAuthRoutes } from './modules/auth/auth.routes';
 import { createUsersRoutes } from './modules/users/users.routes';
 import { createDocumentsRoutes } from './modules/documents/documents.routes';
 import { createUploadRoutes } from './modules/upload/upload.routes';
-import { createConversationRoutes, createQuestionRoutes } from './modules/rag/rag.routes';
+import { createConversationRoutes } from './modules/rag/rag.routes';
 import { createSettingsRoutes } from './modules/settings/settings.routes';
 
 /**
@@ -38,7 +38,6 @@ export function buildApp(deps: AppDeps) {
     .route('/documents', createDocumentsRoutes(deps))
     .route('/upload-sessions', createUploadRoutes(deps))
     .route('/conversations', createConversationRoutes(deps))
-    .route('/questions', createQuestionRoutes(deps))
     // 以下原生方法保留在链尾（不参与 RPC 类型亦无妨）
     .get('/health', (c) => c.json({ status: 'ok', service: 'myrag-server' }))
     .get(

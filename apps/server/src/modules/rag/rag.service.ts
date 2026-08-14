@@ -1,4 +1,4 @@
-import type { ServerConfig, ContextMessage, ImageUnderstandingResult, QuestionResult, SourceReference, SettingsService } from '@myrag/shared';
+import type { ServerConfig, ContextMessage, ImageUnderstandingResult, SourceReference, SettingsService } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
 import { AppError, badRequest } from '../../lib/errors';
 import { logger } from '../../lib/util';
@@ -31,8 +31,8 @@ export interface AskOutput {
 }
 
 export interface StreamHandlers {
-  /** 生成开始（匿名流式携带暂存用的 questionId） */
-  onStart(questionId?: string): void;
+  /** 生成开始 */
+  onStart(): void;
   /** 正式回答增量 */
   onDelta(content: string): void;
   /** 思考过程增量（仅展示用，不回灌上下文） */
@@ -45,17 +45,6 @@ export interface StreamHandlers {
 export interface RagService {
   ask(input: AskInput): Promise<AskOutput>;
   askStream(input: AskInput, handlers: StreamHandlers, signal: AbortSignal): Promise<void>;
-  /** 匿名问答：前端传完整上下文，服务端不落库 */
-  askAnonymous(question: string, contextMessages: ContextMessage[], opts: { maxResults?: number; useKnowledgeBase?: boolean }): Promise<AskOutput>;
-  /** 匿名流式问答：不随客户端断开中断，生成完成结果暂存 Redis（TTL 24h） */
-  askAnonymousStream(
-    question: string,
-    contextMessages: ContextMessage[],
-    opts: { maxResults?: number; useKnowledgeBase?: boolean },
-    handlers: StreamHandlers,
-  ): Promise<void>;
-  /** 查询匿名问答暂存结果（不存在或已过期返回 null） */
-  getAnonymousResult(questionId: string): Promise<QuestionResult | null>;
   /** 取消会话进行中的生成 */
   cancel(conversationId: string): Promise<void>;
   /** 注销跨实例取消订阅（关闭时调用） */
@@ -244,88 +233,6 @@ export function createRagService(
         }
       } finally {
         cleanup();
-      }
-    },
-
-    async askAnonymous(question, contextMessages, opts) {
-      if (!question.trim()) throw badRequest('问题不能为空');
-      const conversationId = `anon-${Date.now().toString(36)}`;
-      const result = await generate(
-        {
-          question,
-          conversationId,
-          maxResults: opts.maxResults,
-          useKnowledgeBase: opts.useKnowledgeBase,
-        },
-        contextMessages,
-        true,
-        () => {},
-        () => {},
-      );
-      return {
-        answer: result.answer,
-        reasoning: result.reasoning || undefined,
-        conversationId,
-        sources: result.sources,
-        imageUnderstanding: result.imageUnderstanding,
-      };
-    },
-
-    async askAnonymousStream(question, contextMessages, opts, handlers) {
-      if (!question.trim()) throw badRequest('问题不能为空');
-      // 问题 ID 即暂存 key；生成生命周期独立于客户端连接（断开后继续完成）
-      const questionId = `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-      // 内部控制信号，不绑定客户端断开（匿名生成不提供取消）
-      const controller = new AbortController();
-      try {
-        await redis.set(
-          RedisKeys.anonResult(questionId),
-          JSON.stringify({ questionId, status: 'PENDING' }),
-          cfg.anonResultTtlSeconds,
-        );
-        handlers.onStart(questionId);
-        const result = await generate(
-          {
-            question,
-            conversationId: questionId,
-            maxResults: opts.maxResults,
-            useKnowledgeBase: opts.useKnowledgeBase,
-          },
-          contextMessages,
-          true,
-          (text) => handlers.onDelta(text),
-          (text) => handlers.onReasoningDelta(text),
-          controller.signal,
-        );
-        handlers.onSources(result.sources);
-        await redis.set(
-          RedisKeys.anonResult(questionId),
-          JSON.stringify({
-            questionId,
-            status: 'COMPLETED',
-            answer: result.answer,
-            reasoning: result.reasoning || undefined,
-            sources: result.sources,
-            imageUnderstanding: result.imageUnderstanding,
-          }),
-          cfg.anonResultTtlSeconds,
-        );
-        handlers.onComplete(false);
-      } catch (err) {
-        await redis.del(RedisKeys.anonResult(questionId));
-        const message = err instanceof Error ? err.message : '生成失败';
-        logger.error('[rag] 匿名流式问答失败:', err);
-        handlers.onError(message);
-      }
-    },
-
-    async getAnonymousResult(questionId) {
-      const raw = await redis.get(RedisKeys.anonResult(questionId));
-      if (!raw) return null;
-      try {
-        return JSON.parse(raw) as QuestionResult;
-      } catch {
-        return null;
       }
     },
 
