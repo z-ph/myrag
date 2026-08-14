@@ -27,6 +27,8 @@ export const RUNTIME_SETTING_KEYS = [
   'imageRetrievalWeight',
   'llmChatTemperature',
   'llmVisionTemperature',
+  'guestCleanupEnabled',
+  'guestRetentionDays',
 ] as const;
 
 export type RuntimeSettingKey = (typeof RUNTIME_SETTING_KEYS)[number];
@@ -54,6 +56,8 @@ export const RUNTIME_SETTING_DEFAULTS: RuntimeSettings = {
   imageRetrievalWeight: 0.3,
   llmChatTemperature: DEFAULTS.llmChatTemperature,
   llmVisionTemperature: DEFAULTS.llmVisionTemperature,
+  guestCleanupEnabled: DEFAULTS.guestCleanupEnabled,
+  guestRetentionDays: DEFAULTS.guestRetentionDays,
 };
 
 /** 部分更新校验（PUT /admin/settings 请求体） */
@@ -76,6 +80,9 @@ export const runtimeSettingsPartialSchema = z.object({
   imageRetrievalWeight: z.number().min(0).max(1).optional(),
   llmChatTemperature: z.number().min(0).max(2).optional(),
   llmVisionTemperature: z.number().min(0).max(2).optional(),
+  /** 0=关 1=开 */
+  guestCleanupEnabled: z.number().int().min(0).max(1).optional(),
+  guestRetentionDays: z.number().int().min(1).max(365).optional(),
 });
 
 /** 完整设置响应 schema（GET /admin/settings） */

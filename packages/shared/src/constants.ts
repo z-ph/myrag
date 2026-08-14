@@ -31,8 +31,9 @@ export type MessageRole = (typeof MESSAGE_ROLES)[number];
  * - SUPER_ADMIN 超级管理员：唯一（内置 admin），管理 RBAC 与系统级操作
  * - STAFF 文档管理员：文档上传/删除等管理操作
  * - USER 普通用户：登录后可会话问答，无管理权限
+ * - GUEST 匿名访客：仅会话问答，由系统签发
  */
-export const ROLES = ['SUPER_ADMIN', 'STAFF', 'USER'] as const;
+export const ROLES = ['SUPER_ADMIN', 'STAFF', 'USER', 'GUEST'] as const;
 export type Role = (typeof ROLES)[number];
 
 /** 来源类型与路由 */
@@ -80,8 +81,12 @@ export const DEFAULTS = {
   batchConcurrency: 2,
   /** 生成中状态 TTL（秒） */
   generatingTtlSeconds: 15 * 60,
-  /** 匿名问答结果暂存 TTL（秒） */
-  anonResultTtlSeconds: 24 * 3600,
+  /** 访客 token 有效期，独立于登录 token（秒） */
+  guestJwtTtlSeconds: 30 * 24 * 3600,
+  /** 访客会话保留天数默认值，runtime settings 可覆盖 */
+  guestRetentionDays: 7,
+  /** 访客清理开关，0=关 1=开 */
+  guestCleanupEnabled: 1,
   /** 文档列表单页上限 */
   documentListLimit: 500,
   /** 会话列表单页上限 */
@@ -108,3 +113,22 @@ export const DEFAULTS = {
   /** 登录用户会话消息 TTL（天），用于清理 */
   messageRetentionDays: 30,
 } as const;
+
+/** 提示词 DB 化的默认值（key 即 DB 主键） */
+export const DEFAULT_PROMPTS = {
+  'qa.system': `你是「财务处知识库」智能问答助手，服务于机构财务处的工作人员。
+回答规则：
+1. 优先依据提供的知识库资料回答；资料不足时明确说明，不要编造。
+2. 涉及制度条款时，标注资料来源文件名。
+3. 回答使用简体中文，条理清晰、简洁直接。`,
+  'qa.systemGuest': `你是「财务处知识库」智能问答助手，服务于机构财务处的工作人员。
+回答规则：
+1. 优先依据提供的知识库资料回答；资料不足时明确说明，不要编造。
+2. 涉及制度条款时，标注资料来源文件名。
+3. 回答使用简体中文，条理清晰、简洁直接。
+注意：当前为未登录匿名问答，仅提供基于知识库资料的客观回答。`,
+  'vision.system': '你是财务单据与文档的图片理解引擎。请仔细观察图片，提取文字与关键信息。',
+} as const;
+
+export const PROMPT_KEYS = Object.keys(DEFAULT_PROMPTS) as Array<keyof typeof DEFAULT_PROMPTS>;
+export type PromptKey = keyof typeof DEFAULT_PROMPTS;

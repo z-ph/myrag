@@ -105,8 +105,8 @@ export interface ServerConfig {
   batchConcurrency: number;
   /** 生成中状态 TTL（秒） */
   generatingTtlSeconds: number;
-  /** 匿名问答结果暂存 TTL（秒） */
-  anonResultTtlSeconds: number;
+  /** 访客 token 有效期，独立于登录 token（秒） */
+  guestJwtTtlSeconds: number;
   /** 文档列表单页上限 */
   documentListLimit: number;
   /** 会话列表单页上限 */
@@ -187,7 +187,7 @@ const ServerConfigSchema = z.object({
   imageRetrievalWeight: z.number(),
   batchConcurrency: z.number(),
   generatingTtlSeconds: z.number(),
-  anonResultTtlSeconds: z.number(),
+  guestJwtTtlSeconds: z.number(),
   documentListLimit: z.number(),
   conversationListLimit: z.number(),
   dbPoolSize: z.number(),
@@ -261,7 +261,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     imageRetrievalWeight: num('RAG_IMAGE_RETRIEVAL_WEIGHT', 0.3),
     batchConcurrency: num('BATCH_CONCURRENCY', DEFAULTS.batchConcurrency),
     generatingTtlSeconds: num('GENERATING_TTL_SECONDS', DEFAULTS.generatingTtlSeconds),
-    anonResultTtlSeconds: num('ANON_RESULT_TTL_SECONDS', DEFAULTS.anonResultTtlSeconds),
+    guestJwtTtlSeconds: num('GUEST_JWT_TTL_SECONDS', DEFAULTS.guestJwtTtlSeconds),
     documentListLimit: num('DOCUMENT_LIST_LIMIT', DEFAULTS.documentListLimit),
     conversationListLimit: num('CONVERSATION_LIST_LIMIT', DEFAULTS.conversationListLimit),
     dbPoolSize: num('DB_POOL_SIZE', DEFAULTS.dbPoolSize),

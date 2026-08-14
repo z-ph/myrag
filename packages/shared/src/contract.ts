@@ -19,8 +19,10 @@ export type {
   SourceReference,
   ImageUnderstandingResult,
   AskResponse,
-  QuestionRequest,
-  QuestionResult,
+  GuestSessionResponse,
+  PromptItem,
+  PromptUpdateRequest,
+  PromptVersion,
   ConversationMessage,
   ConversationDetail,
 } from './schemas';

@@ -36,13 +36,15 @@ export const userItemSchema = authUserSchema.extend({
 export const userCreateRequestSchema = z.object({
   username: z.string().regex(/^[a-zA-Z0-9_.-]{2,32}$/),
   displayName: z.string().min(1).max(100),
-  role: z.enum(ROLES).default('USER'),
+  /** GUEST 由系统签发，不可由管理员创建 */
+  role: z.enum(['SUPER_ADMIN', 'STAFF', 'USER']).default('USER'),
 });
 
 export const userUpdateRequestSchema = z
   .object({
     displayName: z.string().min(1).max(100).optional(),
-    role: z.enum(ROLES).optional(),
+    /** GUEST 由系统签发，不可由管理员创建 */
+    role: z.enum(['SUPER_ADMIN', 'STAFF', 'USER']).optional(),
     enabled: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: '至少提供一个更新字段' });
@@ -176,23 +178,28 @@ export const contextMessageSchema = z.object({
   content: z.string().max(20_000),
 });
 
-export const questionRequestSchema = z.object({
-  question: z.string().min(1).max(4000),
-  contextMessages: z.array(contextMessageSchema).max(20).default([]),
-  maxResults: z.coerce.number().int().min(1).max(20).optional(),
-  useKnowledgeBase: z.boolean().optional(),
-  stream: z.boolean().optional().describe('true 时返回 SSE 事件流，断开后服务端继续生成并暂存结果'),
+/** 访客会话响应 */
+export const guestSessionResponseSchema = z.object({ token: z.string() });
+
+/** 提示词条目 */
+export const promptItemSchema = z.object({
+  key: z.string(),
+  content: z.string(),
+  updatedAt: z.string(),
+  updatedBy: z.string(),
 });
 
-/** 匿名问答结果暂存查询（Redis TTL，非持久化） */
-export const questionResultSchema = z.object({
-  questionId: z.string(),
-  status: z.enum(['PENDING', 'COMPLETED']),
-  answer: z.string().optional(),
-  /** 思考过程（仅展示用） */
-  reasoning: z.string().optional(),
-  sources: z.array(sourceReferenceSchema).optional(),
-  imageUnderstanding: imageUnderstandingResultSchema.optional(),
+/** 提示词更新请求 */
+export const promptUpdateRequestSchema = z.object({
+  content: z.string().min(1).max(10000),
+});
+
+/** 提示词版本记录 */
+export const promptVersionSchema = z.object({
+  version: z.number().int(),
+  content: z.string(),
+  createdAt: z.string(),
+  updatedBy: z.string(),
 });
 
 export const conversationMessageSchema = z.object({
@@ -241,8 +248,10 @@ export type ChunkUploadSession = z.infer<typeof chunkUploadSessionSchema>;
 export type SourceReference = z.infer<typeof sourceReferenceSchema>;
 export type ImageUnderstandingResult = z.infer<typeof imageUnderstandingResultSchema>;
 export type AskResponse = z.infer<typeof askResponseSchema>;
-export type QuestionRequest = z.infer<typeof questionRequestSchema>;
-export type QuestionResult = z.infer<typeof questionResultSchema>;
+export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
+export type PromptItem = z.infer<typeof promptItemSchema>;
+export type PromptUpdateRequest = z.infer<typeof promptUpdateRequestSchema>;
+export type PromptVersion = z.infer<typeof promptVersionSchema>;
 export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
 export type ConversationDetail = z.infer<typeof conversationDetailSchema>;
 export type ContextMessage = z.infer<typeof contextMessageSchema>;
