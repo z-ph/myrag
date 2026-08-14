@@ -10,6 +10,7 @@ import { createDocumentsRoutes } from './modules/documents/documents.routes';
 import { createUploadRoutes } from './modules/upload/upload.routes';
 import { createConversationRoutes } from './modules/rag/rag.routes';
 import { createSettingsRoutes } from './modules/settings/settings.routes';
+import { createMaintenanceRoutes } from './modules/maintenance/maintenance.routes';
 import { createPromptRoutes } from './modules/prompts/prompts.routes';
 
 /**
@@ -36,6 +37,7 @@ export function buildApp(deps: AppDeps) {
     .route('/auth', createAuthRoutes(deps))
     .route('/admin/users', createUsersRoutes(deps))
     .route('/admin/settings', createSettingsRoutes(deps))
+    .route('/admin', createMaintenanceRoutes(deps))
     .route('/admin/prompts', createPromptRoutes(deps))
     .route('/documents', createDocumentsRoutes(deps))
     .route('/upload-sessions', createUploadRoutes(deps))

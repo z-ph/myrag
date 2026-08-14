@@ -133,6 +133,11 @@ export const rebuildAllResponseSchema = z.object({
   taskId: z.string(),
 });
 
+/** 访客会话清理触发结果 */
+export const guestCleanupResponseSchema = z.object({
+  deletedCount: z.number().int(),
+});
+
 export const chunkUploadSessionSchema = z.object({
   uploadSessionId: z.string(),
   taskId: z.string().optional(),
@@ -252,6 +257,7 @@ export type GuestSessionResponse = z.infer<typeof guestSessionResponseSchema>;
 export type PromptItem = z.infer<typeof promptItemSchema>;
 export type PromptUpdateRequest = z.infer<typeof promptUpdateRequestSchema>;
 export type PromptVersion = z.infer<typeof promptVersionSchema>;
+export type GuestCleanupResponse = z.infer<typeof guestCleanupResponseSchema>;
 export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
 export type ConversationDetail = z.infer<typeof conversationDetailSchema>;
 export type ContextMessage = z.infer<typeof contextMessageSchema>;

@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, like, lt } from 'drizzle-orm';
 import type { ConversationDetail, ConversationMessage, MessageRole, MessageStatus } from '@myrag/shared';
 import type { ServerConfig } from '@myrag/shared';
 import type { Db } from '../../db';
@@ -12,6 +12,8 @@ export interface ConversationService {
   getDetail(conversationId: string, userId: string, window: number): Promise<ConversationDetail>;
   listByUser(userId: string): Promise<{ conversationId: string; title: string | null; updatedAt: string }[]>;
   clear(conversationId: string, userId: string): Promise<void>;
+  /** 删除超过保留期的访客会话（userId 以 guest- 开头），返回删除的会话数 */
+  deleteGuestsOlderThan(retentionDays: number): Promise<number>;
 }
 
 function toMessage(row: typeof conversationMessages.$inferSelect): ConversationMessage {
@@ -128,6 +130,20 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
       if (!conv || conv.userId !== userId) return;
       await db.delete(conversationMessages).where(eq(conversationMessages.conversationId, conversationId));
       await db.delete(conversations).where(eq(conversations.conversationId, conversationId));
+    },
+
+    async deleteGuestsOlderThan(retentionDays) {
+      const cutoff = new Date(Date.now() - retentionDays * 86400_000);
+      const stale = await db
+        .select({ conversationId: conversations.conversationId })
+        .from(conversations)
+        .where(and(like(conversations.userId, 'guest-%'), lt(conversations.updatedAt, cutoff)));
+      if (stale.length === 0) return 0;
+      const ids = stale.map((r) => r.conversationId);
+      // 与 clear 同序：先删消息再删会话
+      await db.delete(conversationMessages).where(inArray(conversationMessages.conversationId, ids));
+      await db.delete(conversations).where(inArray(conversations.conversationId, ids));
+      return ids.length;
     },
   };
 }

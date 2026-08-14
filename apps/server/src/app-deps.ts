@@ -34,6 +34,8 @@ import { createRagService } from './modules/rag/rag.service';
 import { createSettingsService } from './modules/settings/settings.service';
 import type { PromptService } from './modules/prompts/prompt.service';
 import { createPromptService } from './modules/prompts/prompt.service';
+import type { CleanupService } from './modules/maintenance/cleanup.service';
+import { createCleanupService } from './modules/maintenance/cleanup.service';
 import { logger } from './lib/util';
 
 /** 应用依赖容器：所有服务实例 */
@@ -56,6 +58,7 @@ export interface AppDeps {
   ragService: RagService;
   settingsService: SettingsService;
   promptService: PromptService;
+  cleanupService: CleanupService;
   close: () => Promise<void>;
 }
 
@@ -83,6 +86,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const batchService = createBatchService(handle.db, processService, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
+  const cleanupService = createCleanupService(conversationService, settingsService, cfg);
   const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
   const imageService = createImageService(llm, promptService);
   const ragService = createRagService(llm, retriever, imageService, conversationService, redis, cfg, settingsService, promptService);
@@ -105,9 +109,11 @@ export function createApp(cfg: ServerConfig): AppContainer {
     ragService,
     settingsService,
     promptService,
+    cleanupService,
     close: async () => {
       // 先停任务 worker（等待进行中任务收尾），再关存储连接
       await batchService.close();
+      await cleanupService.close();
       settingsService.close();
       promptService.close();
       await handle.close();
@@ -128,6 +134,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
       // 无状态化：每个实例都是 BullMQ 任务消费者；崩溃任务由 stalled 检测 + 周期补偿扫描兜底
       batchService.startWorker();
       batchService.startRecoveryLoop();
+      await cleanupService.startScheduler();
       logger.info(`[init] 应用初始化完成 (instance=${cfg.instanceId})`);
     },
   };
