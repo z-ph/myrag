@@ -109,29 +109,51 @@ async function main(): Promise<void> {
   const convDetailData = convDetail.body as { exists?: boolean; recentMessages?: unknown[] };
   check('会话详情持久化', convDetailData.exists === true && (convDetailData.recentMessages?.length ?? 0) === 2);
 
-  const anon = await json('/questions', {
-    method: 'POST',
-    body: JSON.stringify({ question: '什么是差旅费？', contextMessages: [], maxResults: 5 }),
-  });
-  const anonData = anon.body as { answer?: string };
-  check('匿名问答有回答', anon.status === 200 && typeof anonData.answer === 'string' && anonData.answer.length > 0);
+  console.log('[6.5] 访客会话（guest token 统一链路）');
+  const adminToken = token;
+  token = '';
+  const guest = await json('/auth/guest-sessions', { method: 'POST' });
+  const guestToken = (guest.body as { token?: string }).token ?? '';
+  check('签发访客 token', guest.status === 201 && guestToken.length > 0);
+  token = guestToken;
 
-  console.log('[6.5] 匿名流式与暂存恢复');
-  const anonSseRes = await fetch(`${BASE}/questions`, {
+  const gConv = `guest-smoke-${Date.now().toString(36)}`;
+  const gSseForm = new FormData();
+  gSseForm.append('question', '住宿费报销标准是什么？');
+  gSseForm.append('stream', 'true');
+  const gSseRes = await fetch(`${BASE}/conversations/${gConv}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: '住宿费报销标准是什么？', contextMessages: [], maxResults: 5, stream: true }),
+    headers: { Authorization: `Bearer ${guestToken}` },
+    body: gSseForm,
   });
-  const anonSseText = await anonSseRes.text();
-  const anonEvents = [...anonSseText.matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
-  check('匿名 SSE 事件流完整', anonEvents.includes('start') && anonEvents.includes('delta') && anonEvents.includes('complete'), anonEvents.join(','));
-  const startData = [...anonSseText.matchAll(/^event: start\ndata: (.+)$/gm)].map((m) => m[1])[0];
-  const anonQid = (JSON.parse(startData ?? '{}') as { conversationId?: string }).conversationId ?? '';
-  const anonResult = await json(`/questions/${anonQid}`);
-  const anonResultData = anonResult.body as { status?: string; answer?: string };
-  check('匿名暂存结果可查询', anonResult.status === 200 && anonResultData.status === 'COMPLETED' && typeof anonResultData.answer === 'string');
-  const anonMissing = await json(`/questions/anon-does-not-exist`);
-  check('过期结果返回 404', anonMissing.status === 404);
+  const gSseText = await gSseRes.text();
+  const gEvents = [...gSseText.matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
+  check('访客 SSE 事件流完整', gEvents.includes('start') && gEvents.includes('delta') && gEvents.includes('complete'), gEvents.join(','));
+
+  const gConvs = await json('/conversations');
+  check('访客会话列表包含新会话', Array.isArray(gConvs.body) && (gConvs.body as { conversationId?: string }[]).some((c) => c.conversationId === gConv));
+  const gDetail = await json(`/conversations/${gConv}`);
+  const gDetailData = gDetail.body as { exists?: boolean; recentMessages?: unknown[] };
+  check('访客会话详情持久化', gDetailData.exists === true && (gDetailData.recentMessages?.length ?? 0) === 2);
+  const gCancel = await json(`/conversations/${gConv}/cancellation`, { method: 'POST' });
+  check('访客取消端点可达（完成态拒绝）', gCancel.status === 400);
+  const gAdmin = await json('/admin/users');
+  check('访客禁止管理端点', gAdmin.status === 403);
+  const gCurrent = await json('/auth/sessions/current');
+  check('访客不允许查询登录会话', gCurrent.status === 401);
+  token = adminToken;
+
+  console.log('[6.6] 提示词管理与访客清理');
+  const prompts = await json('/admin/prompts');
+  check('提示词列表', prompts.status === 200 && Array.isArray(prompts.body) && (prompts.body as { key?: string }[]).some((p) => p.key === 'qa.system'));
+  const putPrompt = await json('/admin/prompts/qa.system', { method: 'PUT', body: JSON.stringify({ content: '冒烟测试提示词：基于资料简洁回答。' }) });
+  check('更新提示词', putPrompt.status === 200);
+  const versions = await json('/admin/prompts/qa.system/versions');
+  check('提示词版本记录', versions.status === 200 && Array.isArray(versions.body) && (versions.body as unknown[]).length >= 1);
+  const resetPrompt = await json('/admin/prompts/qa.system', { method: 'DELETE' });
+  check('重置提示词', resetPrompt.status === 200);
+  const cleanup = await json('/admin/conversations/cleanup', { method: 'POST' });
+  check('手动触发访客清理', cleanup.status === 200 && typeof (cleanup.body as { deletedCount?: number }).deletedCount === 'number');
 
   console.log('[7] 批量上传与用户管理');
   const batchForm = new FormData();

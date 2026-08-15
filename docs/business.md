@@ -9,13 +9,14 @@
 
 ## 2. 角色模型（RBAC）
 
-角色固定三档，无动态角色表。角色定义在 `packages/shared/src/constants.ts`（`ROLES`）。
+注册用户角色固定三档，无动态角色表；另有 `GUEST`（访客）仅由系统经 `/auth/guest-sessions` 签发 JWT，不落 users 表、不可由管理员分配。角色定义在 `packages/shared/src/constants.ts`（`ROLES`）。
 
 | 角色 | 名称 | 能力 |
 |---|---|---|
-| `SUPER_ADMIN` | 超级管理员 | 全部权限：RBAC 用户管理、文档管理、系统级操作（恢复任务、全量重建） |
+| `SUPER_ADMIN` | 超级管理员 | 全部权限：RBAC 用户管理、文档管理、系统级操作（恢复任务、全量重建）、运行时设置、提示词管理、访客清理 |
 | `STAFF` | 文档管理员 | 文档管理：上传（单/批量/分片）、删除、向量详情 |
 | `USER` | 普通用户 | 登录后会话问答（历史会话持久化），无管理权限 |
+| `GUEST` | 访客（非注册用户） | 会话问答（落库但按保留天数定时清理），无管理权限，不可查询登录会话信息 |
 
 ### RBAC 管理规则
 
@@ -31,37 +32,40 @@
 
 | 能力 | 接口 |
 |---|---|
-| 问答（匿名，无会话持久化，前端传完整上下文） | `POST /questions`（`stream=true` 时 SSE 流式） |
-| 匿名问答结果恢复（暂存 24h） | `GET /questions/{questionId}` |
+| 签发访客 token（未登录问答的入场券） | `POST /auth/guest-sessions` |
 | 文档列表（含文件名模糊搜索） | `GET /documents` |
 | 文档原始文件下载 | `GET /documents/{documentId}/file` |
 | API 文档 | `GET /api/docs`（Scalar UI）、`GET /api/openapi.json` |
 
-**问答两种模式的口径**：问答能力本身公开（匿名模式满足"不问会话也能用"）；会话模式（流式 SSE + 历史列表/详情/清空，`POST /conversations/{conversationId}/messages`、`GET /conversations/**`）属个人数据，需登录。前端未登录走匿名接口，登录后自动切换会话模式。
+**问答统一落库口径**：问答只有一条链路（`POST /conversations/{conversationId}/messages`，`stream=true` 时 SSE 流式），登录用户与访客共用。未登录时前端静默调用 `/auth/guest-sessions` 签发访客 token（JWT，角色 GUEST，默认有效期 30 天），会话与消息同样落库、可恢复、可取消。
 
-**匿名 vs 登录的本质差异是状态性**（非身份）：匿名 = 无状态问答，生成结果暂存 Redis（TTL 24h，易失非持久化），客户端断开后服务端继续生成，可经 `GET /questions/{questionId}` 恢复；登录 = 有状态会话，消息落库、历史可查、可取消。
+**访客 vs 登录的差异只剩身份与保留期**（不再是两套实现）：访客会话按保留天数定时清理（默认 7 天，BullMQ 每小时调度；管理面板可开关、改保留天数、手动触发 `/admin/conversations/cleanup`）；登录用户会话持久保留。访客不能访问 `/admin/**` 与 `GET /auth/sessions/current`。
 
 ## 4. 权限矩阵
 
-| 接口 | 公开 | USER | STAFF | SUPER_ADMIN |
-|---|---|---|---|---|
-| `POST /auth/sessions`、`GET /auth/sessions/current` | — | ✅ | ✅ | ✅ |
-| `POST /questions`（匿名问答，含流式） | ✅ | ✅ | ✅ | ✅ |
-| `GET /documents`、`GET /documents/{id}/file` | ✅ | ✅ | ✅ | ✅ |
-| `GET /documents/health` | ✅ | ✅ | ✅ | ✅ |
-| `POST /conversations/{id}/messages`（同步/流式）、`GET /conversations/**`、`DELETE /conversations/{id}`、`POST /conversations/{id}/cancellation` | — | ✅ | ✅ | ✅ |
-| `POST /documents`（单文件）、`POST /documents/uploads`、`GET /documents/uploads/{taskId}` | — | ❌ | ✅ | ✅ |
-| `DELETE /documents/{id}`、`GET /documents/{id}/vectors` | — | ❌ | ✅ | ✅ |
-| `/upload-sessions/**`（分片上传） | — | ❌ | ✅ | ✅ |
-| `POST /documents/uploads/rebuild-all`（全量重建） | — | ❌ | ❌ | ✅ |
-| `POST /documents/uploads/recovery`（恢复任务） | — | ❌ | ❌ | ✅ |
-| `/admin/users/**`（RBAC 用户管理） | — | ❌ | ❌ | ✅ |
+| 接口 | 公开 | GUEST（访客） | USER | STAFF | SUPER_ADMIN |
+|---|---|---|---|---|---|
+| `POST /auth/sessions` | ✅ | — | — | — | — |
+| `POST /auth/guest-sessions`（签发访客 token） | ✅ | — | — | — | — |
+| `GET /auth/sessions/current` | — | ❌ | ✅ | ✅ | ✅ |
+| `GET /documents`、`GET /documents/{id}/file` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /documents/health` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `POST /conversations/{id}/messages`（同步/流式）、`GET /conversations/**`、`DELETE /conversations/{id}`、`POST /conversations/{id}/cancellation` | — | ✅ | ✅ | ✅ | ✅ |
+| `POST /documents`（单文件）、`POST /documents/uploads`、`GET /documents/uploads/{taskId}` | — | ❌ | ❌ | ✅ | ✅ |
+| `DELETE /documents/{id}`、`GET /documents/{id}/vectors` | — | ❌ | ❌ | ✅ | ✅ |
+| `/upload-sessions/**`（分片上传） | — | ❌ | ❌ | ✅ | ✅ |
+| `POST /documents/uploads/rebuild-all`（全量重建） | — | ❌ | ❌ | ❌ | ✅ |
+| `POST /documents/uploads/recovery`（恢复任务） | — | ❌ | ❌ | ❌ | ✅ |
+| `/admin/users/**`（RBAC 用户管理） | — | ❌ | ❌ | ❌ | ✅ |
+| `/admin/settings/**`（运行时设置） | — | ❌ | ❌ | ❌ | ✅ |
+| `/admin/prompts/**`（提示词管理，含版本历史/重置） | — | ❌ | ❌ | ❌ | ✅ |
+| `POST /admin/conversations/cleanup`（手动清理访客会话） | — | ❌ | ❌ | ❌ | ✅ |
 
-中间件实现：`apps/server/src/middleware/auth.ts`（`requireAuth` / `requireStaff` / `requireSuperAdmin`）。
+中间件实现：`apps/server/src/middleware/auth.ts`（`requireAuth` 放行 GUEST / `requireRegistered` 拒 GUEST / `requireStaff` / `requireSuperAdmin`）。
 
 ## 5. 前端可见性口径
 
-- 未登录：导航含「智能问答 / 文档库 / 我的（登录入口）」，问答走匿名接口，文档库只读（无上传/删除按钮）。
+- 未登录：导航含「智能问答 / 文档库 / 我的（登录入口）」，前端静默签发访客 token 后走与登录一致的会话链路（会话落库、可恢复），文档库只读（无上传/删除按钮）。
 - `USER`：可登录会话问答，文档库只读。
 - `STAFF`：文档库出现上传/批量上传/删除按钮；无管理面板与用户管理入口。
 - `SUPER_ADMIN`：全部导航可见（管理面板、用户管理），文档库另有「恢复任务 / 全量重建」。

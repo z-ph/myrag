@@ -58,14 +58,15 @@ RESTful 化的规则，全站统一执行：
 
 `docs/business.md` 权限矩阵中已有 `/upload-sessions/**` 口径，本次改造将代码与文档统一。
 
-### 问答与会话（顶级资源 `/conversations`、`/questions`）
+### 问答与会话（顶级资源 `/conversations`，访客经 guest token 统一接入）
 
 | 现状 | 目标 | 说明 |
 |---|---|---|
 | `POST /rag/ask` | `POST /conversations/{conversationId}/messages` | 问答 = 创建消息资源；`conversationId` 移入路径参数，会话懒创建；body 支持 `stream=true` 返回 SSE |
 | `POST /rag/ask/stream` | 合并入上一条 | 流式 = 同一端点 `stream=true`（OpenAI 先例），删除独立端点 |
-| `POST /rag/ask/anonymous` | `POST /questions`（公开） | 匿名问答 = 创建问题资源，不落库；`stream=true` 返回 SSE，断开后服务端继续生成，结果暂存 Redis（TTL 24h） |
-| — | `GET /questions/{questionId}`（公开） | 查询匿名问答暂存结果（关闭页面后恢复；不存在/过期返回 404） |
+| `POST /rag/ask/anonymous` | ~~`POST /questions`~~ 已删除 | 匿名即弃链路已废弃：未登录用户由前端静默签发访客 token（`POST /auth/guest-sessions`，JWT 角色 GUEST、默认 30 天），与登录用户共用 `/conversations/**`，会话统一落库 |
+| `GET /questions/{questionId}` | 已删除 | Redis 暂存恢复随匿名链路一并移除；访客恢复改走 `GET /conversations/**`（持久化，按保留天数定时清理） |
+| — | `POST /auth/guest-sessions`（公开） | 签发访客 token，无需凭证 |
 | `GET /rag/conversations` | `GET /conversations` | 会话提升为顶级资源，去掉 `/rag` 前缀 |
 | `GET /rag/conversations/{conversationId}` | `GET /conversations/{conversationId}` | |
 | `DELETE /rag/conversations/{conversationId}` | `DELETE /conversations/{conversationId}` | |
@@ -84,7 +85,7 @@ RESTful 化的规则，全站统一执行：
 | 登录端点 | `POST /auth/sessions` | 保留 `/auth/login` 是通行惯例，但创建会话资源更自洽 |
 | 批量任务与分片 | 任务挂 `documents/uploads`，分片独立 `/upload-sessions` | 两个概念（批量队列 vs 分片会话）不混用 |
 | 会话前缀 | 去掉 `/rag`，顶级 `/conversations` | RAG 语义下沉到 service 层，URL 只留资源 |
-| 匿名流式与恢复 | `POST /questions` 支持 `stream=true`（SSE）；断开后服务端继续生成，结果暂存 Redis TTL 24h，`GET /questions/{questionId}` 恢复 | 匿名/登录的本质差异是状态性：即弃 → 暂存（TTL）→ 持久（会话）；匿名端点不参与会话模型（无历史/取消/续问），仅补暂存恢复能力 |
+| 匿名流式与恢复 | 已废弃：`/questions` 与 Redis 暂存删除，访客经 guest token 走 `/conversations/**` 统一落库，按保留天数定时清理（`/admin/conversations/cleanup` 手动触发） | 原方案（暂存 TTL 24h）把"断线恢复"做成匿名旁路，与 AG-UI 类标准协议不兼容且维护两套链路；统一落库后匿名/登录只有身份与保留期差异，链路与代码路径唯一 |
 
 ## 4. 错误约定
 
@@ -99,6 +100,13 @@ RESTful 化的规则，全站统一执行：
 - 前端：`apps/web/src/api/rpc.ts`（unwrap 去信封、支持 204）、`api/index.ts`（路径映射全量迁移）、`DocumentsPage.tsx`（文案去 `message` 字段）
 - 验证：`scripts/smoke.ts`、`apps/e2e/tests/helpers.ts`、`docs/business.md` 权限矩阵
 - 验证结果：server 单测 26 通过、smoke 27/27、e2e 8/8、全 workspace typecheck 通过
+
+## 5.1 二次改造记录（会话统一落库 + 提示词 DB 化）
+
+- 契约层：ROLES 增 `GUEST`；schemas 删 `questionRequestSchema`/`questionResultSchema`，新增 `guestSessionResponseSchema`、`promptItemSchema`/`promptUpdateRequestSchema`/`promptVersionSchema`、`guestCleanupResponseSchema`；settings 增 `guestCleanupEnabled`/`guestRetentionDays`
+- 服务端：删 `createQuestionRoutes` 与 Redis 暂存；`auth.service` 增访客签发（`POST /auth/guest-sessions`）；`middleware/auth` 增 `requireRegistered`（`GET /auth/sessions/current` 拒访客）；`modules/prompts`（DB 模板 + 版本 + Redis 广播热生效，`/admin/prompts/**`）；`modules/maintenance`（BullMQ 定时清理访客会话，`POST /admin/conversations/cleanup`）
+- 前端：删匿名问答与 localStorage 存档；`store/auth` 静默签发访客 token；`store/chat` 会话列表服务端驱动；管理面板新增「访客会话清理」「提示词管理」
+- 验证结果：server 单测 47 通过、smoke 39/39、全 workspace typecheck 通过
 
 ## 6. 实施顺序（历史）
 

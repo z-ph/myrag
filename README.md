@@ -41,7 +41,7 @@ node scripts/mock-llm.ts                  # 无真实 LLM 时冒烟用（:9999�
 
 ```bash
 pnpm -r typecheck
-pnpm -r test          # 单元测试（server 26 + web 3）
+pnpm -r test          # 单元测试（server 47 + web 3）
 pnpm test:e2e         # Playwright（自动拉起 server + web）
 pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 ```
@@ -53,3 +53,6 @@ pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 - **统一响应**：`{ code, message, data }`，错误携带语义化 HTTP 状态。
 - **2-Step RAG（langchain.js）**：`RagRetriever`（`BaseRetriever`）混合检索 → `Document` 统一块模型 → `ChatPromptTemplate` 组装 → `ChatOpenAI` / `OpenAIEmbeddings` 生成与向量化；管线为 Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR 重排 → 上下文预算截断；图片问答图文双路融合。对齐说明见 `docs/langchain-alignment.md`。
 - **可观测（可选）**：设置 `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` 后，langchain 调用可进入 LangSmith。
+- **问答统一落库**：登录用户与访客共用 `POST /conversations/{id}/messages` 一条链路；未登录时前端静默签发访客 token（`POST /auth/guest-sessions`，JWT 角色 GUEST、默认 30 天），会话同样落库、可恢复、可取消。访客会话按保留天数定时清理（BullMQ 每小时调度，管理面板可开关/改保留天数/手动触发 `/admin/conversations/cleanup`）。
+- **提示词 DB 化**：系统提示词存 `prompt_templates` 表（版本留痕于 `prompt_template_versions`），运行时热生效并经 Redis Pub/Sub 跨实例同步；管理面板在线编辑/重置/回滚（`/admin/prompts/**`）。
+- **风险注记**：访客 token 签发（`/auth/guest-sessions`）未做限流，公网部署时该端点与问答端点理论上可被刷量（产生 LLM 调用费用与会话存储增长）；需要时在网关层加限流，或收紧 `guestRetentionDays` 控制存储。
