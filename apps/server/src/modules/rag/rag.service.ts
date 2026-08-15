@@ -1,6 +1,6 @@
 import type { ServerConfig, ContextMessage, ImageUnderstandingResult, SourceReference, SettingsService } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
-import { AppError, badRequest } from '../../lib/errors';
+import { AppError, badRequest, notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { RedisStore } from '../../store/redis';
 import { RedisKeys } from '../../store/redis';
@@ -48,8 +48,8 @@ export interface StreamHandlers {
 export interface RagService {
   ask(input: AskInput): Promise<AskOutput>;
   askStream(input: AskInput, handlers: StreamHandlers, signal: AbortSignal): Promise<void>;
-  /** 取消会话进行中的生成 */
-  cancel(conversationId: string): Promise<void>;
+  /** 取消会话进行中的生成（校验归属） */
+  cancel(conversationId: string, userId: string): Promise<void>;
   /** 注销跨实例取消订阅（关闭时调用） */
   teardown(): void;
 }
@@ -240,7 +240,10 @@ export function createRagService(
       }
     },
 
-    async cancel(conversationId) {
+    async cancel(conversationId, userId) {
+      // 归属校验：挡住越权取消他人会话的生成
+      const detail = await conversationService.getDetail(conversationId, userId, 1);
+      if (!detail.exists) throw notFound('会话不存在');
       // 生成状态在 Redis：不在本实例则由持有实例通过订阅取消
       const owner = await redis.get(RedisKeys.generating(conversationId));
       if (!owner) throw badRequest('该会话当前没有进行中的生成任务');

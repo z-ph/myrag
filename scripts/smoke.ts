@@ -137,11 +137,20 @@ async function main(): Promise<void> {
   check('访客会话详情持久化', gDetailData.exists === true && (gDetailData.recentMessages?.length ?? 0) === 2);
   const gCancel = await json(`/conversations/${gConv}/cancellation`, { method: 'POST' });
   check('访客取消端点可达（完成态拒绝）', gCancel.status === 400);
+  // 越权防护：访客对他人会话（第 5 节的管理员会话）写入/取消均应 404
+  const foreignForm = new FormData();
+  foreignForm.append('question', '越权写入尝试');
+  const foreign = await json(`/conversations/${convId}/messages`, { method: 'POST', body: foreignForm });
+  check('访客写入他人会话被拒', foreign.status === 404);
+  const foreignCancel = await json(`/conversations/${convId}/cancellation`, { method: 'POST' });
+  check('访客取消他人会话被拒', foreignCancel.status === 404);
   const gAdmin = await json('/admin/users');
   check('访客禁止管理端点', gAdmin.status === 403);
   const gCurrent = await json('/auth/sessions/current');
   check('访客不允许查询登录会话', gCurrent.status === 401);
   token = adminToken;
+  const adminConvAfter = await json(`/conversations/${convId}`);
+  check('他人会话未被污染', (adminConvAfter.body as { recentMessages?: unknown[] }).recentMessages?.length === 2);
 
   console.log('[6.6] 提示词管理与访客清理');
   const prompts = await json('/admin/prompts');

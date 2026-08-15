@@ -3,6 +3,7 @@ import type { ConversationDetail, ConversationMessage, MessageRole, MessageStatu
 import type { ServerConfig } from '@myrag/shared';
 import type { Db } from '../../db';
 import { conversationMessages, conversations } from '../../db/schema';
+import { notFound } from '../../lib/errors';
 
 export interface ConversationService {
   /** 确保会话存在（不存在则创建），返回是否新建 */
@@ -35,6 +36,8 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
         .where(eq(conversations.conversationId, conversationId))
         .limit(1);
       if (existing) {
+        // 归属校验：会话 id 可被客户端指定，必须挡住越权写入他人会话
+        if (existing.userId !== userId) throw notFound('会话不存在');
         if (titleHint && !existing.title) {
           await db
             .update(conversations)
@@ -58,6 +61,11 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
         content,
         status,
       });
+      // 刷新会话活跃时间：列表排序与访客清理保留期都以此为准
+      await db
+        .update(conversations)
+        .set({ updatedAt: new Date() })
+        .where(eq(conversations.conversationId, conversationId));
     },
 
     async markMessage(conversationId, role, status, content, reasoning) {

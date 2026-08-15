@@ -172,7 +172,7 @@ export default function UsersPage() {
             createMutation.mutate({ username: values.username, displayName: values.displayName, role: values.role });
           }}
         >
-          <Form.Item name="username" label="用户名" rules={[{ required: true, pattern: /^[a-zA-Z0-9_.-]{2,32}$/, message: '2-32 位字母、数字、下划线、点或连字符' }]}>
+          <Form.Item name="username" label="用户名" rules={[{ required: true, pattern: /^(?!guest-)[a-zA-Z0-9_.-]{2,32}$/, message: '2-32 位字母、数字、下划线、点或连字符，且不以 guest- 开头' }]}>
             <Input placeholder="登录账号，初始密码同用户名" />
           </Form.Item>
           <Form.Item name="displayName" label="显示名称" rules={[{ required: true, message: '请输入显示名称' }]}>

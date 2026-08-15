@@ -1,5 +1,5 @@
 import { ApiError } from './client';
-import { authHeaders, unwrap } from './rpc';
+import { authHeaders, dispatchAuthExpired, unwrap } from './rpc';
 import { rpc } from './rpc';
 import type {
   AskResponse,
@@ -225,6 +225,13 @@ export const ragApi = {
       },
       { headers: authHeaders(), init: { signal } },
     );
+    // 流式路径不经 unwrap，401 需同样触发 token 清理与静默重签事件
+    //（hc 类型只声明了成功态，status 需放宽为 number 再比较）
+    const status: number = res.status;
+    if (status === 401) {
+      dispatchAuthExpired();
+      throw new ApiError(401, '登录状态已失效，请重试');
+    }
     await readSseStream(res, handlers);
   },
 

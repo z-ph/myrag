@@ -27,6 +27,17 @@ type SuccessBody<B> = B extends { code: number }
     : B;
 
 /**
+ * 401 统一处理：清理 token 并派发事件（用户 token → 登出；仅 guest token → 静默重建）。
+ * 供 unwrap 与流式 askStream（不经 unwrap）共用。
+ */
+export function dispatchAuthExpired(): void {
+  const hadUserToken = Boolean(getToken());
+  setToken(null);
+  setGuestToken(null);
+  window.dispatchEvent(new CustomEvent(hadUserToken ? 'myrag:unauthorized' : 'myrag:guest-expired'));
+}
+
+/**
  * 统一解包响应（RESTful：成功直接返回资源表示，返回类型由 hc 推断）：
  * - 非 2xx：解析错误体抛 ApiError；401 触发登出事件（登录接口除外）
  * - 2xx：直接返回 body；204 No Content 返回 undefined
@@ -47,11 +58,7 @@ export async function unwrap<P extends Promise<ClientResponse<unknown>>>(
       // 非 JSON 错误体
     }
     if (res.status === 401 && !opts?.skipAuthEvent) {
-      // 用户 token 失效 → 登出事件；仅 guest token 失效 → 静默重建事件（auth store 处理）
-      const hadUserToken = Boolean(getToken());
-      setToken(null);
-      setGuestToken(null);
-      window.dispatchEvent(new CustomEvent(hadUserToken ? 'myrag:unauthorized' : 'myrag:guest-expired'));
+      dispatchAuthExpired();
     }
     throw new ApiError(res.status, message, details);
   }

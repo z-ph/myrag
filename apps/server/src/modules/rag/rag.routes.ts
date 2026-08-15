@@ -192,11 +192,10 @@ export function createConversationRoutes(deps: AppDeps) {
         }),
         async (c) => {
           const { conversationId } = c.req.valid('param');
-          await ragService.cancel(conversationId);
+          await ragService.cancel(conversationId, c.get('auth').username);
           return c.body(null, 204);
         },
       )
   );
 }
-
 

@@ -1,8 +1,18 @@
 import { createRoute, z } from '@hono/zod-openapi';
-import { promptItemSchema, promptUpdateRequestSchema, promptVersionSchema } from '@myrag/shared';
+import { PROMPT_KEYS, promptItemSchema, promptUpdateRequestSchema, promptVersionSchema } from '@myrag/shared';
+import type { PromptKey } from '@myrag/shared';
 import type { AppDeps } from '../../app-deps';
 import { createOpenApiApp, errorResponses, bearerSecurity } from '../../openapi';
 import { requireAuth, requireSuperAdmin } from '../../middleware/auth';
+
+/** 提示词 key 路径参数（限定为已知 key，推导类型即 PromptKey） */
+const promptKeyParam = z.object({
+  key: z
+    .string()
+    .min(1)
+    .max(64)
+    .refine((k): k is PromptKey => (PROMPT_KEYS as readonly string[]).includes(k), { message: '未知提示词 key' }),
+});
 
 /**
  * 提示词模板管理（增删改查）。
@@ -39,7 +49,7 @@ export function createPromptRoutes(deps: AppDeps) {
           security: bearerSecurity,
           middleware: [requireAuth, requireSuperAdmin],
           request: {
-            params: z.object({ key: z.string().min(1).max(64) }),
+            params: promptKeyParam,
           },
           responses: {
             200: { description: '版本历史列表', content: { 'application/json': { schema: z.array(promptVersionSchema) } } },
@@ -48,7 +58,7 @@ export function createPromptRoutes(deps: AppDeps) {
         }),
         async (c) => {
           const { key } = c.req.valid('param');
-          const versions = await promptService.listVersions(key as any);
+          const versions = await promptService.listVersions(key);
           return c.json(versions);
         },
       )
@@ -61,7 +71,7 @@ export function createPromptRoutes(deps: AppDeps) {
           security: bearerSecurity,
           middleware: [requireAuth, requireSuperAdmin],
           request: {
-            params: z.object({ key: z.string().min(1).max(64) }),
+            params: promptKeyParam,
             body: { content: { 'application/json': { schema: promptUpdateRequestSchema } } },
           },
           responses: {
@@ -72,7 +82,7 @@ export function createPromptRoutes(deps: AppDeps) {
         async (c) => {
           const { key } = c.req.valid('param');
           const body = c.req.valid('json');
-          const item = await promptService.update(key as any, body.content, c.get('auth').username);
+          const item = await promptService.update(key, body.content, c.get('auth').username);
           return c.json(item);
         },
       )
@@ -85,7 +95,7 @@ export function createPromptRoutes(deps: AppDeps) {
           security: bearerSecurity,
           middleware: [requireAuth, requireSuperAdmin],
           request: {
-            params: z.object({ key: z.string().min(1).max(64) }),
+            params: promptKeyParam,
           },
           responses: {
             200: { description: '重置后的提示词', content: { 'application/json': { schema: promptItemSchema } } },
@@ -94,7 +104,7 @@ export function createPromptRoutes(deps: AppDeps) {
         }),
         async (c) => {
           const { key } = c.req.valid('param');
-          const item = await promptService.reset(key as any, c.get('auth').username);
+          const item = await promptService.reset(key, c.get('auth').username);
           return c.json(item);
         },
       )

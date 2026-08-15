@@ -34,7 +34,8 @@ export const userItemSchema = authUserSchema.extend({
 });
 
 export const userCreateRequestSchema = z.object({
-  username: z.string().regex(/^[a-zA-Z0-9_.-]{2,32}$/),
+  // guest- 前缀保留给系统签发的访客身份，防止访客清理逻辑误删同名注册用户会话
+  username: z.string().regex(/^(?!guest-)[a-zA-Z0-9_.-]{2,32}$/),
   displayName: z.string().min(1).max(100),
   /** GUEST 由系统签发，不可由管理员创建 */
   role: z.enum(['SUPER_ADMIN', 'STAFF', 'USER']).default('USER'),

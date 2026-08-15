@@ -70,7 +70,7 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
 
       // 跨实例同步：其他实例更新后本实例重载
       unsubscribe = await redis.subscribe(RedisKeys.promptsChannel, () => {
-        void reload();
+        void reload().catch((err) => logger.error('[prompts] 重载失败:', err));
       });
       logger.info('[prompts] 提示词已加载（含 Redis 同步订阅）');
     },
