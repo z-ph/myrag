@@ -1,25 +1,24 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { Client } from 'minio';
 import type { ServerConfig } from '@myrag/shared';
 import { logger } from '../lib/util';
 
 /**
- * 文档对象存储（MinIO / S3 兼容；未配置时回退本地 uploadDir）。
+ * 文档对象存储（MinIO / S3 兼容）。
+ * 未配置 MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY 时直接抛错，服务拒绝启动（不允许回退本地磁盘）。
  * 兼容旧数据：对象存储 miss 时回退读取本地遗留路径（迁移期平滑）。
  */
 export interface ObjectStorage {
-  /** 是否使用对象存储（false = 本地回退） */
-  readonly configured: boolean;
   put(key: string, buffer: Buffer, contentType?: string): Promise<void>;
   /** 按 key 读取完整内容，不存在返回 null */
   getBuffer(key: string): Promise<Buffer | null>;
   /** 按 key 读取流，不存在返回 null */
   getStream(key: string): Promise<ReadableStream<Uint8Array> | null>;
   remove(key: string): Promise<void>;
-  /** 启动时确保 bucket / 目录就绪 */
+  /** 启动时确保 bucket 就绪 */
   ensureReady(): Promise<void>;
 }
 
@@ -36,14 +35,9 @@ export function createObjectStorage(cfg: ServerConfig): ObjectStorage {
   const localRoot = cfg.uploadDir;
   const bucket = cfg.objectStorageBucket;
 
-  /** 本地回退：新版 key 相对 uploadDir；旧版 filePath 已含 uploadDir 前缀，两者都尝试 */
+  /** 本地遗留数据读取：新版 key 相对 uploadDir；旧版 filePath 已含 uploadDir 前缀，两者都尝试 */
   const candidates = (key: string): string[] => [join(localRoot, key), key];
   const local = {
-    async path(key: string) {
-      const p = join(localRoot, key);
-      await mkdir(dirname(p), { recursive: true });
-      return p;
-    },
     async getBuffer(key: string): Promise<Buffer | null> {
       for (const p of candidates(key)) {
         try {
@@ -70,20 +64,8 @@ export function createObjectStorage(cfg: ServerConfig): ObjectStorage {
   };
 
   if (!cfg.objectStorageEndpoint || !cfg.objectStorageAccessKey || !cfg.objectStorageSecretKey) {
-    logger.warn('[object-storage] 未配置 MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY，文档存储回退本地 uploadDir（生产必须配置对象存储）');
-    return {
-      configured: false,
-      put: async (key, buffer, contentType) => {
-        const p = await local.path(key);
-        await writeFile(p, buffer);
-      },
-      getBuffer: local.getBuffer,
-      getStream: local.getStream,
-      remove: local.remove,
-      ensureReady: async () => {
-        await mkdir(localRoot, { recursive: true });
-      },
-    };
+    // 不做本地磁盘回退：缺对象存储配置属于部署错误，直接拒绝启动
+    throw new Error('[object-storage] 缺少 MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY 配置，服务拒绝启动');
   }
 
   const [endPoint, port] = parseEndpoint(cfg.objectStorageEndpoint);
@@ -96,7 +78,6 @@ export function createObjectStorage(cfg: ServerConfig): ObjectStorage {
   });
 
   return {
-    configured: true,
     async put(key, buffer, contentType) {
       await client.putObject(bucket, key, buffer, buffer.byteLength, contentType ? { 'Content-Type': contentType } : undefined);
     },

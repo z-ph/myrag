@@ -32,7 +32,7 @@ docker compose up -d --build
 ### 本地开发
 
 ```bash
-docker compose up -d postgres qdrant redis   # 基础设施（redis 映射 6380，避开宿主 6379）
+docker compose up -d postgres qdrant redis minio   # 基础设施（redis 映射 6380 避开宿主 6379；minio 为必需，缺对象存储配置 server 拒绝启动）
 pnpm dev                                  # server :8080 + web :5174
 node scripts/mock-llm.ts                  # 无真实 LLM 时冒烟用（:9999）
 ```

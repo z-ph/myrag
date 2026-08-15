@@ -42,7 +42,7 @@ export interface ServerConfig {
   /** 本实例标识（多实例部署时自动生成） */
   instanceId: string;
 
-  // 对象存储（MinIO / S3 兼容；未配置时回退本地 uploadDir，生产必须配置）
+  // 对象存储（MinIO / S3 兼容；缺配置时服务拒绝启动，不回退本地磁盘）
   objectStorageEndpoint: string;
   objectStorageAccessKey: string;
   objectStorageSecretKey: string;
