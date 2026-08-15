@@ -1,7 +1,24 @@
 import { create } from 'zustand';
 import type { AuthUser } from '@myrag/shared';
 import { api } from '../api';
-import { getToken, setToken } from '../api/client';
+import { getGuestToken, getToken, setGuestToken, setToken } from '../api/client';
+import { useChatStore } from './chat';
+
+/** 确保访客 token 存在：未登录用户进入时静默签发，失败不阻塞界面。 */
+let guestEnsuring: Promise<void> | null = null;
+function ensureGuestToken(): Promise<void> {
+  if (getToken() || getGuestToken()) return Promise.resolve();
+  if (!guestEnsuring) {
+    guestEnsuring = api
+      .guestSession()
+      .then((token) => setGuestToken(token))
+      .catch(() => undefined)
+      .finally(() => {
+        guestEnsuring = null;
+      });
+  }
+  return guestEnsuring;
+}
 
 interface AuthState {
   user: AuthUser | null;
@@ -9,7 +26,7 @@ interface AuthState {
   loading: boolean;
   login(username: string, password: string): Promise<void>;
   logout(): void;
-  /** 启动时校验 token 并恢复用户信息 */
+  /** 启动时校验 token 并恢复用户信息；无登录态时确保访客 token */
   restore(): Promise<void>;
   /** STAFF / SUPER_ADMIN：可执行文档管理操作 */
   isManager: boolean;
@@ -17,7 +34,7 @@ interface AuthState {
   isSuperAdmin: boolean;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   loading: true,
   isManager: false,
@@ -32,15 +49,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       isManager: result.user.role !== 'USER',
       isSuperAdmin: result.user.role === 'SUPER_ADMIN',
     });
+    useChatStore.getState().onIdentityChanged();
   },
 
   logout() {
     setToken(null);
     set({ user: null, loading: false, isManager: false, isSuperAdmin: false });
+    void ensureGuestToken().then(() => useChatStore.getState().onIdentityChanged());
   },
 
   async restore() {
     if (!getToken()) {
+      await ensureGuestToken();
       set({ loading: false });
       return;
     }
@@ -55,13 +75,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
       setToken(null);
       set({ user: null, loading: false, isManager: false, isSuperAdmin: false });
+      void ensureGuestToken();
     }
   },
 }));
 
-/** 监听 401 事件自动登出 */
+/** 监听 401 事件自动登出；访客 token 失效时静默重签 */
 export function setupAuthEvents(): void {
   window.addEventListener('myrag:unauthorized', () => {
     useAuthStore.getState().logout();
+  });
+  window.addEventListener('myrag:guest-expired', () => {
+    void ensureGuestToken();
   });
 }

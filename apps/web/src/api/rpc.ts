@@ -1,7 +1,7 @@
 import { hc } from 'hono/client';
 import type { ClientResponse } from 'hono/client';
 import type { AppType } from '@myrag/server';
-import { ApiError, getToken, setToken } from './client';
+import { ApiError, getGuestToken, getToken, setGuestToken, setToken } from './client';
 
 /**
  * 类型安全客户端：路由 schema 唯一真源 = 后端 AppType（zod-openapi 路由注册），
@@ -11,9 +11,9 @@ import { ApiError, getToken, setToken } from './client';
  */
 export const rpc = hc<AppType>(import.meta.env.VITE_API_PREFIX as string);
 
-/** 请求头注入当前登录 token（登录态存在 localStorage） */
+/** 请求头注入当前身份 token（优先用户 token，其次访客 token） */
 export function authHeaders(): Record<string, string> {
-  const token = getToken();
+  const token = getToken() ?? getGuestToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -47,8 +47,11 @@ export async function unwrap<P extends Promise<ClientResponse<unknown>>>(
       // 非 JSON 错误体
     }
     if (res.status === 401 && !opts?.skipAuthEvent) {
+      // 用户 token 失效 → 登出事件；仅 guest token 失效 → 静默重建事件（auth store 处理）
+      const hadUserToken = Boolean(getToken());
       setToken(null);
-      window.dispatchEvent(new CustomEvent('myrag:unauthorized'));
+      setGuestToken(null);
+      window.dispatchEvent(new CustomEvent(hadUserToken ? 'myrag:unauthorized' : 'myrag:guest-expired'));
     }
     throw new ApiError(res.status, message, details);
   }

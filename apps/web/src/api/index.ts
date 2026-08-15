@@ -13,8 +13,8 @@ import type {
   LoginRequest,
   LoginResponse,
   ProcessedFile,
-  QuestionResult,
   RecoveryTriggerResponse,
+  RuntimeSettings,
   UserCreateRequest,
   UserItem,
   UserUpdateRequest,
@@ -28,6 +28,33 @@ export const api = {
   me(): Promise<AuthUser> {
     return unwrap(rpc.auth.sessions.current.$get({}, { headers: authHeaders() }));
   },
+  /** 静默签发访客 token（无凭证），供未登录问答落库 */
+  async guestSession(): Promise<string> {
+    const { token } = await unwrap(rpc.auth['guest-sessions'].$post({}), { skipAuthEvent: true });
+    return token;
+  },
+};
+
+// ---------- Settings / Prompts / Maintenance（系统管理） ----------
+export const settingsApi = {
+  get: () => unwrap(rpc.admin.settings.$get({}, { headers: authHeaders() })),
+  update: (body: Partial<RuntimeSettings>) =>
+    unwrap(rpc.admin.settings.$put({ json: body }, { headers: authHeaders() })),
+};
+
+export const promptsApi = {
+  list: () => unwrap(rpc.admin.prompts.$get({}, { headers: authHeaders() })),
+  versions: (key: string) =>
+    unwrap(rpc.admin.prompts[':key'].versions.$get({ param: { key } }, { headers: authHeaders() })),
+  update: (key: string, content: string) =>
+    unwrap(rpc.admin.prompts[':key'].$put({ param: { key }, json: { content } }, { headers: authHeaders() })),
+  reset: (key: string) =>
+    unwrap(rpc.admin.prompts[':key'].$delete({ param: { key } }, { headers: authHeaders() })),
+};
+
+export const maintenanceApi = {
+  /** 手动触发访客会话清理，返回删除数 */
+  cleanupGuests: () => unwrap(rpc.admin.conversations.cleanup.$post({}, { headers: authHeaders() })),
 };
 
 // ---------- Users（RBAC 管理） ----------
@@ -101,7 +128,7 @@ export const documentsApi = {
     ),
 };
 
-// ---------- RAG（会话消息资源 + 匿名问题资源） ----------
+// ---------- RAG（会话消息资源；登录与访客统一走 /conversations） ----------
 export interface AskStreamHandlers {
   onStart(conversationId: string): void;
   onDelta(content: string): void;
@@ -112,7 +139,7 @@ export interface AskStreamHandlers {
   onError(message: string): void;
 }
 
-/** 读取 SSE 响应流并分发事件（登录会话与匿名问答共用） */
+/** 读取 SSE 响应流并分发事件 */
 async function readSseStream(res: Response, handlers: AskStreamHandlers): Promise<void> {
   if (!res.ok) throw new Error(`请求失败 (${res.status})`);
   const stream = res.body;
@@ -185,7 +212,7 @@ function buildMessageForm(params: {
 }
 
 export const ragApi = {
-  /** 登录用户流式问答（SSE，stream=true） */
+  /** 流式问答（SSE，stream=true；登录与访客统一入口） */
   async askStream(
     params: { question: string; conversationId: string; maxResults?: number; image?: File },
     handlers: AskStreamHandlers,
@@ -201,7 +228,7 @@ export const ragApi = {
     await readSseStream(res, handlers);
   },
 
-  /** 登录用户同步问答（JSON） */
+  /** 同步问答（JSON） */
   ask: (body: { question: string; conversationId: string; maxResults?: number; image?: File }) => {
     const { conversationId, ...rest } = body;
     return unwrap(
@@ -210,30 +237,6 @@ export const ragApi = {
         { headers: authHeaders() },
       ),
     );
-  },
-
-  /** 匿名问答（同步，带完整上下文） */
-  askAnonymous: (body: { question: string; contextMessages: { role: 'USER' | 'ASSISTANT'; content: string }[]; maxResults?: number }) =>
-    unwrap(rpc.questions.$post({ json: body })),
-
-  /** 匿名流式问答（SSE；断开后服务端继续生成，结果可经 questionResult 恢复） */
-  async askAnonymousStream(
-    body: { question: string; contextMessages: { role: 'USER' | 'ASSISTANT'; content: string }[]; maxResults?: number },
-    handlers: AskStreamHandlers,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const res = await rpc.questions.$post(
-      { json: { ...body, stream: true } },
-      { init: { signal } },
-    );
-    await readSseStream(res, handlers);
-  },
-
-  /** 查询匿名问答暂存结果（关闭页面后恢复；不存在或已过期返回 null） */
-  questionResult: async (questionId: string): Promise<QuestionResult | null> => {
-    const res = await rpc.questions[':questionId'].$get({ param: { questionId } });
-    if (!res.ok) return null;
-    return (await res.json()) as QuestionResult;
   },
 
   listConversations: () => unwrap(rpc.conversations.$get({}, { headers: authHeaders() })),

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, Button, Collapse, Empty, Input, List, Popconfirm, Spin, Tooltip } from 'antd';
 import {
   DeleteOutlined,
@@ -11,6 +11,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useChatStore, type ChatMessage } from '../store/chat';
+import { useAuthStore } from '../store/auth';
 import type { SourceReference } from '@myrag/shared';
 import './chat.css';
 
@@ -87,6 +88,7 @@ export default function ChatPage() {
     isLoadingHistory,
     conversationId,
     loadConversation,
+    refreshConversations,
     startNewConversation,
     deleteConversation,
     sendMessage,
@@ -95,6 +97,15 @@ export default function ChatPage() {
   } = useChatStore();
 
   const [input, setInput] = useState('');
+  const authLoading = useAuthStore((s) => s.loading);
+
+  // 待身份恢复（登录态校验或访客 token 签发）后再拉会话列表与当前会话
+  useEffect(() => {
+    if (authLoading) return;
+    void refreshConversations();
+    if (conversationId) void loadConversation(conversationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading]);
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -184,7 +195,7 @@ export default function ChatPage() {
               style={{ display: 'none' }}
               onChange={(e) => handlePickImage(e.target.files?.[0])}
             />
-            <Tooltip title="发送图片（登录用户）">
+            <Tooltip title="发送图片">
               <Button icon={<FileImageOutlined />} onClick={() => fileRef.current?.click()} disabled={isGenerating} />
             </Tooltip>
             <Input.TextArea

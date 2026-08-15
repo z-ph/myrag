@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type { SourceReference } from '@myrag/shared';
 import { ragApi } from '../api';
-import { useAuthStore } from './auth';
 import { message } from 'antd';
 
 export interface ChatMessage {
@@ -21,76 +20,15 @@ export interface ConversationMeta {
   updatedAt: number;
 }
 
-const INDEX_KEY = 'myrag-conv-index';
-const ANON_PREFIX = 'myrag-anon-';
-const ANON_QID_PREFIX = 'myrag-anon-qid-';
 const CURRENT_KEY = 'myrag-current-conv';
 
 function genId(): string {
   return `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function deriveTitle(question: string): string {
-  const t = question.trim();
-  if (!t) return '新会话';
-  return t.length > 18 ? `${t.slice(0, 18)}…` : t;
-}
-
-function readIndex(): ConversationMeta[] {
-  try {
-    const raw = localStorage.getItem(INDEX_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(parsed) ? (parsed as ConversationMeta[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function readAnonMessages(id: string): ChatMessage[] {
-  try {
-    const raw = localStorage.getItem(`${ANON_PREFIX}${id}`);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * 恢复中断的匿名生成：最后一条 AI 消息未完成且本地存有 questionId 时，
- * 查询服务端暂存结果（Redis TTL 24h）补全；PENDING 时轮询等待后台生成完成。
- */
-async function tryRecoverAnon(id: string, msgs: ChatMessage[]): Promise<void> {
-  const last = msgs[msgs.length - 1];
-  if (!last || last.role !== 'assistant' || last.status === 'COMPLETED' || last.content) return;
-  const qid = localStorage.getItem(`${ANON_QID_PREFIX}${id}`);
-  if (!qid) return;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const result = await ragApi.questionResult(qid);
-    if (!result) return; // 不存在或已过期：放弃恢复
-    if (result.status === 'COMPLETED' && result.answer) {
-      useChatStore.setState((s) => ({
-        messages: s.messages.map((m, i) =>
-          i === s.messages.length - 1
-            ? {
-                ...m,
-                content: result.answer as string,
-                reasoning: result.reasoning || m.reasoning,
-                status: 'COMPLETED' as const,
-                sources: result.sources,
-              }
-            : m,
-        ),
-      }));
-      localStorage.setItem(`${ANON_PREFIX}${id}`, JSON.stringify(useChatStore.getState().messages));
-      return;
-    }
-    if (result.status === 'PENDING') {
-      await new Promise((r) => setTimeout(r, 2000));
-      continue;
-    }
-    return;
-  }
+function saveCurrent(id: string | null): void {
+  if (id) localStorage.setItem(CURRENT_KEY, id);
+  else localStorage.removeItem(CURRENT_KEY);
 }
 
 interface ChatState {
@@ -98,134 +36,93 @@ interface ChatState {
   conversationId: string | null;
   isGenerating: boolean;
   isLoadingHistory: boolean;
+  /** 会话列表（服务端驱动：登录用户与访客各自名下的会话） */
   historyMetas: ConversationMeta[];
   currentConversationId(): string;
+  /** 从服务端拉取会话列表（失败不阻塞聊天） */
+  refreshConversations(): Promise<void>;
   loadConversation(id: string): Promise<void>;
   startNewConversation(): void;
-  deleteConversation(id: string): void;
+  deleteConversation(id: string): Promise<void>;
   sendMessage(question: string, image?: File): Promise<void>;
   stopGeneration(): void;
   clearConversation(): Promise<void>;
-}
-
-function upsertIndex(list: ConversationMeta[], id: string, titleHint?: string): ConversationMeta[] {
-  const now = Date.now();
-  const idx = list.findIndex((c) => c.id === id);
-  const next = [...list];
-  if (idx >= 0) {
-    next[idx] = {
-      ...next[idx]!,
-      updatedAt: now,
-      title: next[idx]!.title === '新会话' && titleHint ? deriveTitle(titleHint) : next[idx]!.title,
-    };
-  } else {
-    next.push({ id, title: titleHint ? deriveTitle(titleHint) : '新会话', updatedAt: now });
-  }
-  localStorage.setItem(INDEX_KEY, JSON.stringify(next));
-  return next;
-}
-
-function removeIndex(list: ConversationMeta[], id: string): ConversationMeta[] {
-  const next = list.filter((c) => c.id !== id);
-  localStorage.setItem(INDEX_KEY, JSON.stringify(next));
-  return next;
+  /** 身份切换（登录/登出）后调用：重置当前会话并刷新列表 */
+  onIdentityChanged(): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
-  /** 匿名会话消息定时存档 */
-  let checkpointTimer: ReturnType<typeof setInterval> | null = null;
   /** 当前进行中生成的取消控制器 */
   let activeController: AbortController | null = null;
-
-  function startCheckpoint(): void {
-    stopCheckpoint();
-    if (useAuthStore.getState().user) return;
-    checkpointTimer = setInterval(() => {
-      const { conversationId, messages } = get();
-      if (conversationId) {
-        localStorage.setItem(`${ANON_PREFIX}${conversationId}`, JSON.stringify(messages));
-      }
-    }, 1000);
-  }
-
-  function stopCheckpoint(): void {
-    if (checkpointTimer) {
-      clearInterval(checkpointTimer);
-      checkpointTimer = null;
-    }
-  }
-
-  function saveCurrent(id: string | null): void {
-    if (id) localStorage.setItem(CURRENT_KEY, id);
-    else localStorage.removeItem(CURRENT_KEY);
-  }
 
   return {
     messages: [],
     conversationId: localStorage.getItem(CURRENT_KEY),
     isGenerating: false,
     isLoadingHistory: false,
-    historyMetas: readIndex(),
+    historyMetas: [],
 
     currentConversationId() {
       const { conversationId } = get();
       if (conversationId) return conversationId;
       const id = genId();
       saveCurrent(id);
-      set((s) => ({ conversationId: id, historyMetas: upsertIndex(s.historyMetas, id) }));
+      set({ conversationId: id });
       return id;
+    },
+
+    async refreshConversations() {
+      try {
+        const list = await ragApi.listConversations();
+        set({
+          historyMetas: list.map((c) => ({
+            id: c.conversationId,
+            title: c.title ?? '新会话',
+            updatedAt: Date.parse(c.updatedAt),
+          })),
+        });
+      } catch {
+        // 列表加载失败不阻塞聊天主流程
+      }
     },
 
     async loadConversation(id) {
       set({ isLoadingHistory: true, conversationId: id });
       saveCurrent(id);
       try {
-        if (useAuthStore.getState().user) {
-          const detail = await ragApi.conversationDetail(id);
-          if (!detail.exists) {
-            set({
-              messages: [{ id: `expired-${id}`, role: 'assistant', content: '该会话不存在或已删除。', status: 'ERROR' }],
-            });
-            return;
-          }
+        const detail = await ragApi.conversationDetail(id);
+        if (!detail.exists) {
+          // 会话可能已被清理（访客保留期）或删除
           set({
-            messages: detail.recentMessages.map((m, i) => ({
-              id: `${m.role}-${m.timestamp}-${i}`,
-              role: m.role === 'USER' ? 'user' : 'assistant',
-              content: m.content,
-              reasoning: m.reasoning,
-              status: m.status ?? 'COMPLETED',
-            })),
+            messages: [{ id: `expired-${id}`, role: 'assistant', content: '该会话不存在或已删除。', status: 'ERROR' }],
           });
-        } else {
-          const msgs = readAnonMessages(id);
-          set({ messages: msgs });
-          await tryRecoverAnon(id, msgs);
+          return;
         }
+        set({
+          messages: detail.recentMessages.map((m, i) => ({
+            id: `${m.role}-${m.timestamp}-${i}`,
+            role: m.role === 'USER' ? 'user' : 'assistant',
+            content: m.content,
+            reasoning: m.reasoning,
+            status: m.status ?? 'COMPLETED',
+          })),
+        });
       } finally {
         set({ isLoadingHistory: false });
       }
     },
 
     startNewConversation() {
-      stopCheckpoint();
       const id = genId();
       saveCurrent(id);
-      set((s) => ({
-        conversationId: id,
-        messages: [],
-        historyMetas: upsertIndex(s.historyMetas, id),
-      }));
+      set({ conversationId: id, messages: [] });
     },
 
-    deleteConversation(id) {
-      const { conversationId, historyMetas } = get();
-      localStorage.removeItem(`${ANON_PREFIX}${id}`);
-      if (useAuthStore.getState().user) {
-        void ragApi.clearConversation(id).catch(() => {});
-      }
-      set({ historyMetas: removeIndex(historyMetas, id) });
+    async deleteConversation(id) {
+      const { conversationId } = get();
+      await ragApi.clearConversation(id).catch(() => {});
       if (conversationId === id) get().startNewConversation();
+      await get().refreshConversations();
     },
 
     async sendMessage(question, image) {
@@ -247,18 +144,12 @@ export const useChatStore = create<ChatState>((set, get) => {
         reasoning: '',
         status: 'GENERATING',
       };
-      set((s) => ({
-        messages: [...s.messages, userMsg, aiMsg],
-        isGenerating: true,
-        historyMetas: upsertIndex(s.historyMetas, conversationId, text),
-      }));
-      startCheckpoint();
+      set((s) => ({ messages: [...s.messages, userMsg, aiMsg], isGenerating: true }));
 
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
       const finish = (status: ChatMessage['status'], content?: string) => {
-        stopCheckpoint();
         if (activeController === controller) activeController = null;
         set((s) => ({
           isGenerating: false,
@@ -266,86 +157,40 @@ export const useChatStore = create<ChatState>((set, get) => {
             m.id === aiMsg.id ? { ...m, status, content: content ?? m.content, reasoning: m.reasoning, sources: m.sources } : m,
           ),
         }));
-        if (!useAuthStore.getState().user) {
-          localStorage.setItem(`${ANON_PREFIX}${conversationId}`, JSON.stringify(get().messages));
-        }
       };
 
       try {
-        if (useAuthStore.getState().user) {
-          await ragApi.askStream(
-            { question: text, conversationId, maxResults: 5, image },
-            {
-              onStart() {},
-              onDelta(content) {
-                set((s) => ({
-                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
-                }));
-              },
-              onReasoningDelta(content) {
-                set((s) => ({
-                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
-                }));
-              },
-              onSources(sources) {
-                set((s) => ({
-                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, sources } : m)),
-                }));
-              },
-              onComplete(cancelled) {
-                finish(cancelled ? 'CANCELLED' : 'COMPLETED');
-              },
-              onError(msg) {
-                finish('ERROR', msg || '请求失败');
-                message.error(msg || '请求失败');
-              },
+        await ragApi.askStream(
+          { question: text, conversationId, maxResults: 5, image },
+          {
+            onStart() {},
+            onDelta(content) {
+              set((s) => ({
+                messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
+              }));
             },
-            controller.signal,
-          );
-        } else {
-          if (image) {
-            finish('ERROR', '未登录用户暂不支持图片问答，请先登录');
-            message.warning('未登录用户暂不支持图片问答，请先登录');
-            return;
-          }
-          // 已完成的完整消息作为上下文（排除刚追加的 user/assistant 两条）
-          const history = get().messages.slice(0, -2);
-          const context = history
-            .filter((m) => m.status === 'COMPLETED' && m.content.trim())
-            .map((m) => ({ role: m.role === 'user' ? ('USER' as const) : ('ASSISTANT' as const), content: m.content }));
-          // 匿名流式：断开后服务端继续生成，questionId 存档供重开恢复
-          await ragApi.askAnonymousStream(
-            { question: text, contextMessages: context, maxResults: 5 },
-            {
-              onStart(questionId) {
-                if (questionId) localStorage.setItem(`${ANON_QID_PREFIX}${conversationId}`, questionId);
-              },
-              onDelta(content) {
-                set((s) => ({
-                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
-                }));
-              },
-              onReasoningDelta(content) {
-                set((s) => ({
-                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
-                }));
-              },
-              onSources(sources) {
-                set((s) => ({
-                  messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, sources } : m)),
-                }));
-              },
-              onComplete(cancelled) {
-                finish(cancelled ? 'CANCELLED' : 'COMPLETED');
-              },
-              onError(msg) {
-                finish('ERROR', msg || '请求失败');
-                message.error(msg || '请求失败');
-              },
+            onReasoningDelta(content) {
+              set((s) => ({
+                messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
+              }));
             },
-            controller.signal,
-          );
-        }
+            onSources(sources) {
+              set((s) => ({
+                messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, sources } : m)),
+              }));
+            },
+            onComplete(cancelled) {
+              finish(cancelled ? 'CANCELLED' : 'COMPLETED');
+              // 会话已落库（懒创建/标题/排序），刷新侧栏列表
+              void get().refreshConversations();
+            },
+            onError(msg) {
+              finish('ERROR', msg || '请求失败');
+              message.error(msg || '请求失败');
+            },
+          },
+          controller.signal,
+        );
       } catch (err) {
         if (controller.signal.aborted) {
           finish('CANCELLED');
@@ -362,20 +207,23 @@ export const useChatStore = create<ChatState>((set, get) => {
       if (!isGenerating) return;
       // 本地中止流式读取；服务端生成由 cancel 接口终止
       activeController?.abort();
-      if (useAuthStore.getState().user && conversationId) {
+      if (conversationId) {
         void ragApi.cancelGeneration(conversationId).catch(() => {});
       }
     },
 
     async clearConversation() {
-      const { conversationId, historyMetas } = get();
+      const { conversationId } = get();
       if (!conversationId) return;
-      if (useAuthStore.getState().user) {
-        await ragApi.clearConversation(conversationId).catch(() => {});
-      }
-      localStorage.removeItem(`${ANON_PREFIX}${conversationId}`);
-      stopCheckpoint();
+      await ragApi.clearConversation(conversationId).catch(() => {});
       get().startNewConversation();
+      await get().refreshConversations();
+    },
+
+    onIdentityChanged() {
+      saveCurrent(null);
+      set({ conversationId: null, messages: [], historyMetas: [] });
+      void get().refreshConversations();
     },
   };
 });

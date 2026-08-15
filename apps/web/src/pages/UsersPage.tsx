@@ -6,10 +6,13 @@ import type { Role, UserCreateRequest, UserItem, UserUpdateRequest } from '@myra
 import { usersApi } from '../api';
 import { useAuthStore } from '../store/auth';
 
+/** 管理员可分配的角色（GUEST 由系统签发，不在用户表） */
+type AssignableRole = UserCreateRequest['role'];
+
 interface UserForm {
   username?: string;
   displayName: string;
-  role: Role;
+  role: AssignableRole;
 }
 
 export default function UsersPage() {
@@ -100,7 +103,7 @@ export default function UsersPage() {
             disabled={row.username === 'admin' || row.id === currentUser?.id}
             onClick={() => {
               setEditUser(row);
-              editForm.setFieldsValue({ displayName: row.displayName, role: row.role });
+              editForm.setFieldsValue({ displayName: row.displayName, role: row.role as AssignableRole });
             }}
           >
             编辑
