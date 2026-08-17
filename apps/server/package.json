@@ -23,7 +23,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.12",
     "@hono/zod-openapi": "^1.5.1",
-    "@langchain/core": "^1.2.4",
+    "@langchain/core": "^1.2.8",
     "@langchain/openai": "^1.5.5",
     "@myrag/shared": "workspace:*",
     "@qdrant/js-client-rest": "^1.18.0",
@@ -36,6 +36,7 @@
     "ioredis": "^6.0.0",
     "jose": "^6.2.7",
     "jszip": "^3.10.1",
+    "langchain": "^1.5.9",
     "mammoth": "^1.12.0",
     "minio": "^8.0.7",
     "pdf-parse": "^2.4.5",

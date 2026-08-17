@@ -5,13 +5,6 @@ import type { InteropZodType } from '@langchain/core/utils/types';
 import { AppError } from '../lib/errors';
 import { logger } from '../lib/util';
 
-export interface ChatStreamResult {
-  /** 正式回答（已剥离 content 内嵌推理残留） */
-  content: string;
-  /** 思考过程（reasoning_content 字段；仅展示用，不回灌上下文） */
-  reasoning: string;
-}
-
 export interface VisionMessageInput {
   system: string;
   prompt: string;
@@ -19,15 +12,8 @@ export interface VisionMessageInput {
 }
 
 export interface LlmClient {
-  /** 流式对话补全：content 逐段回调，reasoning_content 经 onReasoningDelta 单独回调 */
-  chatStream(
-    messages: BaseMessage[],
-    onDelta: (text: string) => void,
-    onReasoningDelta?: (text: string) => void,
-    signal?: AbortSignal,
-  ): Promise<ChatStreamResult>;
-  /** 同步对话补全（返回回答与思考过程） */
-  chat(messages: BaseMessage[]): Promise<ChatStreamResult>;
+  /** 对话模型实例（供 createAgent 使用；temperature 在调用前由业务侧设置） */
+  readonly chatModel: ChatOpenAI;
   /** 批量向量化 */
   embed(texts: string[]): Promise<number[][]>;
   /** 图片理解（视觉模型，自由文本；OCR 等场景） */
@@ -56,22 +42,12 @@ function buildVisionMessages(system: string, prompt: string, imageBase64: string
   ];
 }
 
-/** 推理块闭合标签：</think>（DeepSeek 系）/ </thinking>（GLM 系） */
-const THINK_CLOSE = /<\/(think|thinking)>/g;
-
 /**
  * 剥离模型推理残留（如 <think>…</think>、<thinking>…</thinking>），避免污染用户可见输出。
  * 兼容标签未闭合的情况（流式中途）。
  */
 export function stripThink(text: string): string {
   return text.replace(/<(think|thinking)>[\s\S]*?<\/(think|thinking)>\s*/g, '').trim();
-}
-
-/** 是否还有未闭合的推理块（流式中途，需继续缓冲不发送） */
-function hasUnclosedThink(text: string): boolean {
-  const last = text.lastIndexOf('<think');
-  if (last === -1) return false;
-  return !THINK_CLOSE.test(text.slice(last));
 }
 
 /**
@@ -137,55 +113,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
   });
 
   return {
-    async chatStream(messages, onDelta, onReasoningDelta, signal) {
-      try {
-        chatModel.temperature = settings.get().llmChatTemperature;
-        // 直接传入 langchain BaseMessage[]（由 ChatPromptTemplate 组装）
-        const stream = await chatModel.stream(messages, { signal });
-        let full = '';
-        let reasoningFull = '';
-        let sentLen = 0;
-        let reasoningSentLen = 0;
-        for await (const chunk of stream) {
-          // 思考通道：逐段透传给展示层（不回灌上下文）；langchain 将 reasoning_content 归入 additional_kwargs
-          const reasoning = typeof chunk.additional_kwargs?.reasoning_content === 'string' ? chunk.additional_kwargs.reasoning_content : '';
-          if (reasoning && onReasoningDelta) {
-            reasoningFull += reasoning;
-            const rChunk = reasoningFull.slice(reasoningSentLen);
-            if (rChunk) {
-              onReasoningDelta(rChunk);
-              reasoningSentLen = reasoningFull.length;
-            }
-          }
-          const content = typeof chunk.content === 'string' ? chunk.content : '';
-          if (!content) continue;
-          full += content;
-          // content 内嵌 think 块未闭合前不发送，闭合后一次性剥离（避免泄漏推理内容）
-          if (hasUnclosedThink(full)) continue;
-          const clean = stripThink(full);
-          const piece = clean.slice(sentLen);
-          if (piece) {
-            onDelta(piece);
-            sentLen = clean.length;
-          }
-        }
-        return { content: stripThink(full), reasoning: reasoningFull };
-      } catch (err) {
-        wrapLlmError(err, '模型服务调用失败，请稍后重试');
-      }
-    },
-
-    async chat(messages) {
-      try {
-        chatModel.temperature = settings.get().llmChatTemperature;
-        const res = await chatModel.invoke(messages);
-        const content = typeof res.content === 'string' ? res.content : '';
-        const reasoning = typeof res.additional_kwargs?.reasoning_content === 'string' ? res.additional_kwargs.reasoning_content : '';
-        return { content: stripThink(content), reasoning };
-      } catch (err) {
-        wrapLlmError(err, '模型服务调用失败，请稍后重试');
-      }
-    },
+    chatModel,
 
     async embed(texts) {
       try {

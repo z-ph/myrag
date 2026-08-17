@@ -92,6 +92,8 @@ export function createConversationRoutes(deps: AppDeps) {
                     onStart() {},
                     onDelta: (content) => enqueue(encodeSse({ event: 'delta', data: content })),
                     onReasoningDelta: (content) => enqueue(encodeSse({ event: 'reasoning', data: content })),
+                    onToolCall: (call) => enqueue(encodeSse({ event: 'tool_call', data: call })),
+                    onToolResult: (result) => enqueue(encodeSse({ event: 'tool_result', data: result })),
                     onSources: (sources) => enqueue(encodeSse({ event: 'sources', data: sources })),
                     onComplete: (cancelled) =>
                       enqueue(encodeSse({ event: 'complete', data: { conversationId, cancelled } })),

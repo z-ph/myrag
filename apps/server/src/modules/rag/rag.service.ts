@@ -1,14 +1,24 @@
-import type { ServerConfig, ContextMessage, ImageUnderstandingResult, SourceReference, SettingsService } from '@myrag/shared';
+import { createAgent, tool } from 'langchain';
+import * as z from 'zod';
+import type {
+  ServerConfig,
+  ContextMessage,
+  ImageUnderstandingResult,
+  SourceReference,
+  SettingsService,
+  ToolCallSse,
+  ToolResultSse,
+} from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
-import { AppError, badRequest, notFound } from '../../lib/errors';
+import { badRequest, notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { RedisStore } from '../../store/redis';
 import { RedisKeys } from '../../store/redis';
-import { buildMessages } from './prompts';
 import type { ConversationService } from './conversation.service';
 import type { ImageService } from './image.service';
 import type { RagRetriever } from './retrieval.service';
-import { chunkKey, packContext, type ChunkDocument } from './chunk';
+import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from './chunk';
+import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
 
 export interface AskInput {
@@ -40,6 +50,10 @@ export interface StreamHandlers {
   onDelta(content: string): void;
   /** 思考过程增量（仅展示用，不回灌上下文） */
   onReasoningDelta(content: string): void;
+  /** 模型发起一次工具调用（如知识库检索） */
+  onToolCall(call: ToolCallSse): void;
+  /** 一次工具调用执行完成 */
+  onToolResult(result: ToolResultSse): void;
   onSources(sources: SourceReference[]): void;
   onComplete(cancelled: boolean): void;
   onError(message: string): void;
@@ -53,6 +67,14 @@ export interface RagService {
   /** 注销跨实例取消订阅（关闭时调用） */
   teardown(): void;
 }
+
+/** 知识库检索工具名（模型侧 + 前端展示共用） */
+export const SEARCH_TOOL_NAME = 'search_knowledge_base';
+
+/** 工具名 → 前端展示文案 */
+export const TOOL_LABELS: Record<string, string> = {
+  [SEARCH_TOOL_NAME]: '检索知识库',
+};
 
 export function createRagService(
   llm: LlmClient,
@@ -86,80 +108,127 @@ export function createRagService(
     unsubscribe = null;
   };
 
-  /** 检索并格式化上下文（文本/图片双路），返回上下文文本与来源 */
-  async function buildContext(
-    question: string,
-    maxResults: number,
-    imageUnderstanding?: ImageUnderstandingResult,
-  ): Promise<{ contextText: string | null; sources: SourceReference[] }> {
-    let docs: ChunkDocument[];
-
-    if (imageUnderstanding) {
-      // 图片问答：文本路（问题检索）+ 图片路（理解结果向量检索）融合
-      const imageText = [imageUnderstanding.ocrText ?? '', imageUnderstanding.imageSummary ?? '', imageUnderstanding.questionFocusedSummary ?? ''].join('\n');
-      const [imageEmbedding] = await llm.embed([imageText]);
-      if (!imageEmbedding) throw new AppError(502, '向量化服务返回异常');
-      const [textRoute, imageRoute] = await Promise.all([
-        retriever.retrieveImageRoute(question, maxResults),
-        retriever.retrieveByEmbedding(imageEmbedding, maxResults),
-      ]);
-      const imageWeight = settings.get().imageRetrievalWeight;
-      const textWeight = 1 - imageWeight;
-      const merged = new Map<string, ChunkDocument>();
-      for (const c of textRoute) {
-        const item = c as ChunkDocument;
-        item.metadata.score = item.metadata.score * textWeight;
-        item.metadata.sourceType = 'TEXT';
-        merged.set(chunkKey(item.metadata), item);
-      }
-      for (const c of imageRoute) {
-        const key = chunkKey(c.metadata);
-        const existing = merged.get(key);
-        if (existing) {
-          existing.metadata.score += c.metadata.score * imageWeight;
-        } else {
-          c.metadata.score = c.metadata.score * imageWeight;
-          c.metadata.sourceType = 'IMAGE';
-          merged.set(key, c);
-        }
-      }
-      docs = [...merged.values()].sort((a, b) => b.metadata.score - a.metadata.score).slice(0, maxResults);
-    } else {
-      docs = await retriever.retrieve(question, maxResults);
-    }
-
-    const packed = packContext(docs, settings.get().contextBudget);
-    if (imageUnderstanding) {
-      const imageInfo = `【图片理解】\n摘要：${imageUnderstanding.imageSummary ?? ''}\nOCR：${imageUnderstanding.ocrText ?? ''}\n关键实体：${(imageUnderstanding.keyEntities ?? []).join('、')}\n针对问题：${imageUnderstanding.questionFocusedSummary ?? ''}`;
-      packed.contextText = packed.contextText ? `${imageInfo}\n\n${packed.contextText}` : imageInfo;
-    }
-    return packed;
+  /** 单次运行期间的检索收集（工具回写；跨多次工具调用去重） */
+  interface RetrievalCollector {
+    maxResults: number;
+    docs: ChunkDocument[];
+    seen: Set<string>;
   }
 
-  /** 生成核心：检索 → LLM，返回流式回调 */
+  let collector: RetrievalCollector = { maxResults: 5, docs: [], seen: new Set() };
+
+  /**
+   * 知识库检索工具：把 RagRetriever 暴露给 agent loop。
+   * 模型自行决定是否调用、以什么 query 调用、调用几次。
+   */
+  const searchKnowledgeBase = tool(
+    async ({ query }: { query: string }) => {
+      const docs = await retriever.retrieve(query, collector.maxResults);
+      for (const d of docs) {
+        const key = chunkKey(d.metadata);
+        if (!collector.seen.has(key)) {
+          collector.seen.add(key);
+          collector.docs.push(d);
+        }
+      }
+      const { contextText } = packContext(docs, settings.get().contextBudget);
+      return contextText ?? '知识库中没有检索到与该问题相关的资料。';
+    },
+    {
+      name: SEARCH_TOOL_NAME,
+      description:
+        '在财务处知识库中检索与用户问题相关的资料片段。输入检索关键词或完整问题，返回最相关的文档内容。检索不到时返回「无相关资料」提示。',
+      schema: z.object({
+        query: z.string().describe('用于检索的关键词或完整问题'),
+      }),
+    },
+  );
+
+  /**
+   * agent loop 生成核心：检索（作为工具由模型调用）→ 思考/工具 → 最终回答。
+   * 通过 streamEvents v3 的 messages / toolCalls 投影拿到思考、正文与工具生命周期。
+   */
   async function generate(
     input: AskInput,
     history: ContextMessage[],
-    onDelta: (text: string) => void,
-    onReasoningDelta: (text: string) => void,
+    handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<{ answer: string; reasoning: string; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
+    collector = {
+      maxResults: input.maxResults ?? settings.get().maxResults,
+      docs: [],
+      seen: new Set(),
+    };
+
     let imageUnderstanding: ImageUnderstandingResult | undefined;
     if (input.imageBase64) {
       imageUnderstanding = await imageService.understand(input.question, input.imageBase64);
     }
 
-    let contextText: string | null = null;
-    let sources: SourceReference[] = [];
-    const maxResults = input.maxResults ?? settings.get().maxResults;
-    if (input.useKnowledgeBase !== false) {
-      ({ contextText, sources } = await buildContext(input.question, maxResults, imageUnderstanding));
-    }
-
     const systemPrompt = promptService.get(input.anonymous ? 'qa.systemGuest' : 'qa.system');
-    const messages = await buildMessages(input.question, history, contextText, systemPrompt, settings.get().memoryWindow);
-    const result = await llm.chatStream(messages, onDelta, onReasoningDelta, signal);
-    return { answer: result.content, reasoning: result.reasoning, sources, imageUnderstanding };
+    llm.chatModel.temperature = settings.get().llmChatTemperature;
+
+    // 关闭知识库时不给工具：agent 直接回答
+    const tools = input.useKnowledgeBase === false ? [] : [searchKnowledgeBase];
+    const agent = createAgent({
+      model: llm.chatModel,
+      tools,
+      systemPrompt,
+    });
+
+    // 组装用户消息：历史回顾 + 图片理解（如有）+ 当前问题
+    const recap = foldHistoryRecap(history, settings.get().memoryWindow);
+    let question = input.question;
+    if (imageUnderstanding) {
+      const img = `【图片理解】\n摘要：${imageUnderstanding.imageSummary ?? ''}\nOCR：${imageUnderstanding.ocrText ?? ''}\n关键实体：${(imageUnderstanding.keyEntities ?? []).join('、')}\n针对问题：${imageUnderstanding.questionFocusedSummary ?? ''}`;
+      question = `${question}\n\n${img}`;
+    }
+    const userContent = recap ? `历史对话回顾：\n${recap}\n\n问题：${question}` : question;
+
+    const stream = await agent.streamEvents(
+      { messages: [{ role: 'user', content: userContent }] },
+      { version: 'v3', signal },
+    );
+
+    let reasoning = '';
+    let answer = '';
+
+    await Promise.all([
+      (async () => {
+        for await (const m of stream.messages) {
+          for await (const d of m.reasoning) {
+            reasoning += d;
+            handlers.onReasoningDelta(d);
+          }
+          for await (const d of m.text) {
+            if (d) {
+              answer += d;
+              handlers.onDelta(d);
+            }
+          }
+        }
+      })(),
+      (async () => {
+        for await (const c of stream.toolCalls) {
+          const id = c.callId;
+          const name = c.name;
+          handlers.onToolCall({ id, name, args: (c.input ?? {}) as Record<string, unknown> });
+          const out = await c.output;
+          handlers.onToolResult({
+            id,
+            name,
+            output: typeof out === 'string' ? out : JSON.stringify(out),
+          });
+        }
+      })(),
+    ]);
+
+    return {
+      answer: answer.trim(),
+      reasoning,
+      sources: toSourceReferences(collector.docs),
+      imageUnderstanding,
+    };
   }
 
   /** 登录用户：持久化消息并执行生成 */
@@ -175,7 +244,7 @@ export function createRagService(
     await conversationService.appendMessage(input.conversationId, 'USER', input.question);
     await conversationService.appendMessage(input.conversationId, 'ASSISTANT', '', 'GENERATING');
     try {
-      const result = await generate(input, history, handlers.onDelta, handlers.onReasoningDelta, signal);
+      const result = await generate(input, history, handlers as StreamHandlers, signal);
       // 持久化 AI 回答与思考过程：content 供多轮历史回灌，reasoning 仅展示
       await conversationService.markMessage(input.conversationId, 'ASSISTANT', 'COMPLETED', result.answer, result.reasoning);
       const msgs = await conversationService.getDetail(input.conversationId, input.userId, 1);
@@ -225,7 +294,6 @@ export function createRagService(
       try {
         const result = await generatePersisted(input, handlers, controller.signal);
         handlers.onSources(result.sources);
-        if (result.reasoning) handlers.onReasoningDelta(result.reasoning);
         handlers.onComplete(false);
       } catch (err) {
         if (controller.signal.aborted) {

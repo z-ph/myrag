@@ -15,6 +15,8 @@ import type {
   ProcessedFile,
   RecoveryTriggerResponse,
   RuntimeSettings,
+  ToolCallSse,
+  ToolResultSse,
   UserCreateRequest,
   UserItem,
   UserUpdateRequest,
@@ -134,6 +136,10 @@ export interface AskStreamHandlers {
   onDelta(content: string): void;
   /** 思考过程增量（仅展示） */
   onReasoningDelta(content: string): void;
+  /** 模型发起一次工具调用 */
+  onToolCall(call: ToolCallSse): void;
+  /** 工具调用执行完成 */
+  onToolResult(result: ToolResultSse): void;
   onSources(sources: AskResponse['sources']): void;
   onComplete(cancelled: boolean): void;
   onError(message: string): void;
@@ -174,6 +180,12 @@ async function readSseStream(res: Response, handlers: AskStreamHandlers): Promis
               break;
             case 'reasoning':
               handlers.onReasoningDelta(typeof data === 'string' ? data : String((data as Record<string, unknown>).content ?? ''));
+              break;
+            case 'tool_call':
+              handlers.onToolCall(data as unknown as ToolCallSse);
+              break;
+            case 'tool_result':
+              handlers.onToolResult(data as unknown as ToolResultSse);
               break;
             case 'sources':
               handlers.onSources(Array.isArray(data) ? (data as AskResponse['sources']) : []);

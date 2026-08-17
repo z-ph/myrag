@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Avatar, Button, Collapse, Empty, Input, List, Popconfirm, Spin, Tooltip } from 'antd';
+import { Avatar, Button, Empty, Input, List, Popconfirm, Spin, Tooltip } from 'antd';
 import {
   DeleteOutlined,
-  DownloadOutlined,
   FileImageOutlined,
   PlusOutlined,
   RobotOutlined,
@@ -10,55 +9,75 @@ import {
   StopOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { useChatStore, type ChatMessage } from '../store/chat';
+import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import type { SourceReference } from '@myrag/shared';
 import './chat.css';
 
 function SourceList({ sources }: { sources: SourceReference[] }) {
-  const items = sources.map((s, i) => ({
-    key: i,
-    label: `${s.sourceType === 'IMAGE' ? '🖼' : '📄'} ${s.filename}${s.relevanceScore != null ? `（相关度 ${(s.relevanceScore * 100).toFixed(0)}%）` : ''}`,
-    children: (
-      <div className="source-excerpt">
-        {s.excerpt}
-        {s.documentId && (
-          <div style={{ marginTop: 8 }}>
-            <Button type="link" size="small" icon={<DownloadOutlined />} href={`/api/documents/${s.documentId}/file`} target="_blank">
-              下载文档
-            </Button>
-          </div>
-        )}
-      </div>
-    ),
-  }));
+  if (sources.length === 0) return null;
   return (
-    <Collapse
-      size="small"
-      items={items}
-      className="source-collapse"
-      style={{ marginTop: 8, maxWidth: 640 }}
-    />
+    <div className="source-row">
+      <span className="source-label">来源</span>
+      {sources.map((s, i) => (
+        <a
+          key={i}
+          className="source-chip"
+          href={s.documentId ? `/api/documents/${s.documentId}/file` : undefined}
+          target="_blank"
+          rel="noreferrer"
+          title={s.excerpt}
+        >
+          {s.sourceType === 'IMAGE' ? '🖼' : '📄'} {s.filename}
+          {s.relevanceScore != null && <em>{Math.round(s.relevanceScore * 100)}%</em>}
+        </a>
+      ))}
+    </div>
   );
 }
 
 function ReasoningBlock({ reasoning, generating }: { reasoning: string; generating: boolean }) {
+  const [open, setOpen] = useState(false);
   if (!reasoning.trim()) return null;
   return (
-    <Collapse
-      size="small"
-      className="reasoning-collapse"
-      style={{ marginTop: 8, maxWidth: 640 }}
-      // 默认展开:思考过程流式可见,避免用户只看到“思考中…”标题干等
-      defaultActiveKey={['reasoning']}
-      items={[
-        {
-          key: 'reasoning',
-          label: generating ? '思考中…' : '思考过程',
-          children: <div className="reasoning-text">{reasoning}</div>,
-        },
-      ]}
-    />
+    <div className="thinking">
+      <button type="button" className="thinking-toggle" onClick={() => setOpen((v) => !v)}>
+        <span className={`thinking-dot ${generating ? 'busy' : ''}`} />
+        <span className="thinking-label">思考过程</span>
+        {!open && <span className="thinking-preview">{reasoning.replace(/\s+/g, ' ').slice(0, 80)}…</span>}
+        <span className={`thinking-arrow ${open ? 'open' : ''}`}>▾</span>
+      </button>
+      {open && <div className="thinking-text">{reasoning}</div>}
+    </div>
+  );
+}
+
+function ToolSteps({ steps }: { steps: ToolStep[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  if (steps.length === 0) return null;
+  return (
+    <div className="tool-trail">
+      {steps.map((tc) => {
+        const running = tc.status === 'running';
+        const hasResult = tc.status === 'done' && tc.output != null;
+        const open = openId === tc.id;
+        return (
+          <div key={tc.id} className="tool-line">
+            <div className="tool-line-main">
+              <span className={`tool-glyph ${running ? 'running' : 'done'}`}>{running ? '⟳' : '✓'}</span>
+              <span className="tool-name">{tc.label}</span>
+              {typeof tc.args?.query === 'string' && <span className="tool-query">「{tc.args.query}」</span>}
+              {hasResult && (
+                <button type="button" className="tool-expand" onClick={() => setOpenId(open ? null : tc.id)}>
+                  {open ? '收起' : '查看结果'}
+                </button>
+              )}
+            </div>
+            {open && hasResult && <div className="tool-output">{tc.output}</div>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -70,6 +89,7 @@ function MessageItem({ msg }: { msg: ChatMessage }) {
       <div className="msg-body">
         {msg.imageUrl && <img src={msg.imageUrl} alt="用户图片" className="msg-image" />}
         <ReasoningBlock reasoning={msg.reasoning ?? ''} generating={msg.status === 'GENERATING'} />
+        <ToolSteps steps={msg.toolCalls ?? []} />
         <div className={`msg-bubble ${msg.status === 'ERROR' ? 'msg-error' : ''} ${msg.status === 'CANCELLED' ? 'msg-cancelled' : ''}`}>
           {msg.content || (msg.status === 'GENERATING' ? '…' : '')}
           {msg.status === 'GENERATING' && <Spin size="small" style={{ marginLeft: 8 }} />}

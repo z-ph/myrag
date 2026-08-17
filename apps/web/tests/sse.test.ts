@@ -46,6 +46,8 @@ describe('ragApi.askStream', () => {
         onReasoningDelta(content) {
           calls.push(`reasoning:${content}`);
         },
+        onToolCall() {},
+        onToolResult() {},
         onSources(s) {
           sources = s;
           calls.push('sources');
@@ -78,6 +80,8 @@ describe('ragApi.askStream', () => {
         onStart: () => {},
         onDelta: (c) => deltas.push(c),
         onReasoningDelta: () => {},
+        onToolCall: () => {},
+        onToolResult: () => {},
         onSources: () => {},
         onComplete: () => {},
         onError: () => {},
@@ -99,6 +103,8 @@ describe('ragApi.askStream', () => {
         onStart: () => {},
         onDelta: () => {},
         onReasoningDelta: () => {},
+        onToolCall: () => {},
+        onToolResult: () => {},
         onSources: () => {},
         onComplete: () => {},
         onError: (m) => {
@@ -107,6 +113,38 @@ describe('ragApi.askStream', () => {
       },
     );
     expect(errorMsg).toBe('模型超时');
+    vi.unstubAllGlobals();
+  });
+
+  it('分发 tool_call / tool_result 事件', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        sseResponse([
+          'event: tool_call\ndata: {"id":"call-1","name":"search_knowledge_base","args":{"query":"差旅费"}}\n\n',
+          'event: tool_result\ndata: {"id":"call-1","name":"search_knowledge_base","output":"检索结果片段"}\n\n',
+        ]),
+      ),
+    );
+
+    const toolCalls: unknown[] = [];
+    const toolResults: unknown[] = [];
+    await ragApi.askStream(
+      { question: 'q', conversationId: 'c' },
+      {
+        onStart: () => {},
+        onDelta: () => {},
+        onReasoningDelta: () => {},
+        onToolCall: (c) => toolCalls.push(c),
+        onToolResult: (r) => toolResults.push(r),
+        onSources: () => {},
+        onComplete: () => {},
+        onError: () => {},
+      },
+    );
+
+    expect(toolCalls).toEqual([{ id: 'call-1', name: 'search_knowledge_base', args: { query: '差旅费' } }]);
+    expect(toolResults).toEqual([{ id: 'call-1', name: 'search_knowledge_base', output: '检索结果片段' }]);
     vi.unstubAllGlobals();
   });
 });

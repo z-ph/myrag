@@ -11,7 +11,28 @@ export interface ChatMessage {
   reasoning?: string;
   status: 'GENERATING' | 'COMPLETED' | 'CANCELLED' | 'ERROR';
   sources?: SourceReference[];
+  /** agent 工具调用轨迹（按发生顺序） */
+  toolCalls?: ToolStep[];
   imageUrl?: string;
+}
+
+/** 一次工具调用（含执行结果） */
+export interface ToolStep {
+  id: string;
+  name: string;
+  label: string;
+  args: Record<string, unknown>;
+  output?: string;
+  status: 'running' | 'done';
+}
+
+/** 工具名 → 展示文案 */
+const TOOL_LABELS: Record<string, string> = {
+  search_knowledge_base: '检索知识库',
+};
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name;
 }
 
 export interface ConversationMeta {
@@ -172,6 +193,35 @@ export const useChatStore = create<ChatState>((set, get) => {
             onReasoningDelta(content) {
               set((s) => ({
                 messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
+              }));
+            },
+            onToolCall(call) {
+              set((s) => ({
+                messages: s.messages.map((m) =>
+                  m.id === aiMsg.id
+                    ? {
+                        ...m,
+                        toolCalls: [
+                          ...(m.toolCalls ?? []),
+                          { id: call.id, name: call.name, label: toolLabel(call.name), args: call.args, status: 'running' as const },
+                        ],
+                      }
+                    : m,
+                ),
+              }));
+            },
+            onToolResult(result) {
+              set((s) => ({
+                messages: s.messages.map((m) =>
+                  m.id === aiMsg.id
+                    ? {
+                        ...m,
+                        toolCalls: (m.toolCalls ?? []).map((tc) =>
+                          tc.id === result.id ? { ...tc, output: result.output, status: 'done' as const } : tc,
+                        ),
+                      }
+                    : m,
+                ),
               }));
             },
             onSources(sources) {

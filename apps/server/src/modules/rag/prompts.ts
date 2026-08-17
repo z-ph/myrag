@@ -23,7 +23,7 @@ const QA_PROMPT_PLAIN = ChatPromptTemplate.fromMessages([
 ]);
 
 /** 多轮历史折叠为「问/答」对文本（空则无回顾） */
-function foldHistoryRecap(history: ContextMessage[], memoryWindow: number): string {
+export function foldHistoryRecap(history: ContextMessage[], memoryWindow: number): string {
   const pairs: string[] = [];
   for (const m of history.slice(-memoryWindow)) {
     const content = m.role === 'ASSISTANT' ? stripReasoning(m.content) : m.content;
