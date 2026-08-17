@@ -125,6 +125,15 @@ export const useChatStore = create<ChatState>((set, get) => {
             role: m.role === 'USER' ? 'user' : 'assistant',
             content: m.content,
             reasoning: m.reasoning,
+            sources: m.sources,
+            toolCalls: m.toolCalls?.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              label: toolLabel(tc.name),
+              args: tc.args,
+              output: tc.output,
+              status: 'done' as const,
+            })),
             status: m.status ?? 'COMPLETED',
           })),
         });
@@ -170,8 +179,33 @@ export const useChatStore = create<ChatState>((set, get) => {
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
+
+      // 节流：把高频 delta 合并到每帧刷新，避免 React 批量渲染导致「一次性出现」
+      let contentBuf = '';
+      let reasoningBuf = '';
+      let rafId: number | null = null;
+      const flushDeltas = () => {
+        rafId = null;
+        const c = contentBuf;
+        const r = reasoningBuf;
+        contentBuf = '';
+        reasoningBuf = '';
+        if (!c && !r) return;
+        set((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === aiMsg.id
+              ? { ...m, content: m.content + c, reasoning: (m.reasoning ?? '') + r }
+              : m,
+          ),
+        }));
+      };
+
       const finish = (status: ChatMessage['status'], content?: string) => {
         if (activeController === controller) activeController = null;
+        if (rafId != null) {
+          cancelAnimationFrame(rafId);
+          flushDeltas();
+        }
         set((s) => ({
           isGenerating: false,
           messages: s.messages.map((m) =>
@@ -186,14 +220,12 @@ export const useChatStore = create<ChatState>((set, get) => {
           {
             onStart() {},
             onDelta(content) {
-              set((s) => ({
-                messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, content: m.content + content } : m)),
-              }));
+              contentBuf += content;
+              if (rafId == null) rafId = requestAnimationFrame(flushDeltas);
             },
             onReasoningDelta(content) {
-              set((s) => ({
-                messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + content } : m)),
-              }));
+              reasoningBuf += content;
+              if (rafId == null) rafId = requestAnimationFrame(flushDeltas);
             },
             onToolCall(call) {
               set((s) => ({

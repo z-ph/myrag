@@ -133,9 +133,12 @@ export default function UsersPage() {
   });
 
   return (
-    <div>
+    <div className="page">
+      <div className="page-header">
+        <h1>用户管理</h1>
+        <p>管理系统账号与角色权限。</p>
+      </div>
       <div className="page-card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>用户管理</h2>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={invalidate} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>

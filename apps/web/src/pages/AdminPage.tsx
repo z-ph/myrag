@@ -148,7 +148,7 @@ function PromptsCard() {
                   style={{
                     cursor: 'pointer',
                     padding: '8px 12px',
-                    background: p.key === selectedKey ? '#e6f4ff' : undefined,
+                    background: p.key === selectedKey ? '#eef0f4' : undefined,
                     borderRadius: 6,
                   }}
                 >
@@ -260,8 +260,11 @@ export default function AdminPage() {
   const { data: users } = useQuery({ queryKey: ['users'], queryFn: () => usersApi.list() });
 
   return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>管理面板</h2>
+    <div className="page">
+      <div className="page-header">
+        <h1>管理面板</h1>
+        <p>系统运行概览、提示词管理与访客会话清理。</p>
+      </div>
       <Row gutter={16}>
         <Col span={8}>
           <Card>

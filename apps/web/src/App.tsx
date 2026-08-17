@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { Layout, Menu } from 'antd';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   CommentOutlined,
   FileTextOutlined,
@@ -8,15 +7,12 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from './store/auth';
 import ChatPage from './pages/ChatPage';
 import DocumentsPage from './pages/DocumentsPage';
 import AdminPage from './pages/AdminPage';
 import UsersPage from './pages/UsersPage';
 import MyPage from './pages/MyPage';
-
-const { Sider, Content } = Layout;
 
 const NAV_ITEMS = [
   { key: '/chat', icon: <CommentOutlined />, label: '智能问答' },
@@ -39,32 +35,43 @@ function AppShell() {
   const visibleItems = NAV_ITEMS.filter((n) => !n.adminOnly || user?.role === 'SUPER_ADMIN');
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider theme="light" width={200} breakpoint="lg" collapsedWidth={0}>
-        <div className="app-logo">财务处知识库</div>
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={visibleItems.map((n) => ({ key: n.key, icon: n.icon, label: n.label }))}
-          onClick={({ key }) => navigate(key)}
-        />
-      </Sider>
-      <Layout>
-        <Content style={{ padding: 16, overflow: 'auto' }}>
-          {loading ? null : (
-            <Routes>
-              <Route path="/" element={<Navigate to="/chat" replace />} />
-              <Route path="/chat" element={<ChatPage />} />
-              <Route path="/documents" element={<DocumentsPage />} />
-              <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat" replace />} />
-              <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat" replace />} />
-              <Route path="/my" element={<MyPage />} />
-              <Route path="*" element={<Navigate to="/chat" replace />} />
-            </Routes>
-          )}
-        </Content>
-      </Layout>
-    </Layout>
+    <div className="app-shell">
+      <header className="topbar">
+        <button type="button" className="topbar-brand" onClick={() => navigate('/chat')}>
+          <span className="seal">财</span>
+          <span className="topbar-title">财务处知识库</span>
+        </button>
+        <nav className="topbar-nav">
+          {visibleItems.map((n) => (
+            <button
+              key={n.key}
+              type="button"
+              className={`topbar-nav-item${selectedKey === n.key ? ' active' : ''}`}
+              onClick={() => navigate(n.key)}
+            >
+              <span className="topbar-nav-icon">{n.icon}</span>
+              <span>{n.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="topbar-right">
+          {user ? <span className="topbar-user">{user.displayName}</span> : <span className="topbar-user">访客</span>}
+        </div>
+      </header>
+      <main className="app-main">
+        {loading ? null : (
+          <Routes>
+            <Route path="/" element={<Navigate to="/chat" replace />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/documents" element={<DocumentsPage />} />
+            <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/my" element={<MyPage />} />
+            <Route path="*" element={<Navigate to="/chat" replace />} />
+          </Routes>
+        )}
+      </main>
+    </div>
   );
 }
 

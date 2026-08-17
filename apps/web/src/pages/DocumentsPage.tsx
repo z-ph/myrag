@@ -145,7 +145,11 @@ export default function DocumentsPage() {
   ];
 
   return (
-    <div>
+    <div className="page">
+      <div className="page-header">
+        <h1>文档库</h1>
+        <p>上传制度、流程等文档，入库后即可在智能问答中检索。</p>
+      </div>
       <div className="page-card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Space size={12}>
           <Input.Search

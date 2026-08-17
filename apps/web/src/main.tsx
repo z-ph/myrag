@@ -24,7 +24,17 @@ setupAuthEvents();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#2f54eb' } }}>
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          colorPrimary: '#1a2138',
+          colorLink: '#1a2138',
+          colorLinkHover: '#b4382f',
+          borderRadius: 8,
+        },
+      }}
+    >
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <BrowserRouter basename={routerBasename}>

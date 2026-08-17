@@ -30,7 +30,7 @@ export default function MyPage() {
     return (
       <Card style={{ maxWidth: 480, margin: '40px auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <UserOutlined style={{ fontSize: 48, color: '#2f54eb' }} />
+          <UserOutlined style={{ fontSize: 48, color: '#1a2138' }} />
           <h2 style={{ margin: '12px 0 4px' }}>{user.displayName}</h2>
           <Typography.Text type="secondary">@{user.username}</Typography.Text>
           <div style={{ marginTop: 8 }}>
