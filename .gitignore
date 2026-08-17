@@ -12,3 +12,6 @@ uploads/
 data/
 *.tsbuildinfo
 deploy/deploy.log
+
+# 独立子项目（自有 git 仓库，不纳入本仓库）
+copilot/
