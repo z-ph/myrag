@@ -6,6 +6,7 @@ import type {
   ImageUnderstandingResult,
   SourceReference,
   SettingsService,
+  ToolCallRecord,
   ToolCallSse,
   ToolResultSse,
 } from '@myrag/shared';
@@ -58,6 +59,9 @@ export interface StreamHandlers {
   onComplete(cancelled: boolean): void;
   onError(message: string): void;
 }
+
+/** generate() 实际消费的流式回调（StreamHandlers 的子集） */
+type GenerateHandlers = Pick<StreamHandlers, 'onDelta' | 'onReasoningDelta' | 'onToolCall' | 'onToolResult'>;
 
 export interface RagService {
   ask(input: AskInput): Promise<AskOutput>;
@@ -151,9 +155,9 @@ export function createRagService(
   async function generate(
     input: AskInput,
     history: ContextMessage[],
-    handlers: StreamHandlers,
+    handlers: GenerateHandlers,
     signal?: AbortSignal,
-  ): Promise<{ answer: string; reasoning: string; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
+  ): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[]; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
     collector = {
       maxResults: input.maxResults ?? settings.get().maxResults,
       docs: [],
@@ -192,6 +196,7 @@ export function createRagService(
 
     let reasoning = '';
     let answer = '';
+    const toolCalls: ToolCallRecord[] = [];
 
     await Promise.all([
       (async () => {
@@ -212,13 +217,12 @@ export function createRagService(
         for await (const c of stream.toolCalls) {
           const id = c.callId;
           const name = c.name;
-          handlers.onToolCall({ id, name, args: (c.input ?? {}) as Record<string, unknown> });
+          const args = (c.input ?? {}) as Record<string, unknown>;
+          handlers.onToolCall({ id, name, args });
           const out = await c.output;
-          handlers.onToolResult({
-            id,
-            name,
-            output: typeof out === 'string' ? out : JSON.stringify(out),
-          });
+          const output = typeof out === 'string' ? out : JSON.stringify(out);
+          handlers.onToolResult({ id, name, output });
+          toolCalls.push({ id, name, args, output });
         }
       })(),
     ]);
@@ -226,6 +230,7 @@ export function createRagService(
     return {
       answer: answer.trim(),
       reasoning,
+      toolCalls,
       sources: toSourceReferences(collector.docs),
       imageUnderstanding,
     };
@@ -234,7 +239,7 @@ export function createRagService(
   /** 登录用户：持久化消息并执行生成 */
   async function generatePersisted(
     input: AskInput,
-    handlers: Pick<StreamHandlers, 'onDelta' | 'onReasoningDelta'>,
+    handlers: GenerateHandlers,
     signal?: AbortSignal,
   ) {
     if (!input.userId) throw badRequest('缺少用户身份');
@@ -244,9 +249,17 @@ export function createRagService(
     await conversationService.appendMessage(input.conversationId, 'USER', input.question);
     await conversationService.appendMessage(input.conversationId, 'ASSISTANT', '', 'GENERATING');
     try {
-      const result = await generate(input, history, handlers as StreamHandlers, signal);
-      // 持久化 AI 回答与思考过程：content 供多轮历史回灌，reasoning 仅展示
-      await conversationService.markMessage(input.conversationId, 'ASSISTANT', 'COMPLETED', result.answer, result.reasoning);
+      const result = await generate(input, history, handlers, signal);
+      // 持久化 AI 回答、思考、工具轨迹与来源：content 供多轮历史回灌，其余仅展示
+      await conversationService.markMessage(
+        input.conversationId,
+        'ASSISTANT',
+        'COMPLETED',
+        result.answer,
+        result.reasoning,
+        result.toolCalls,
+        result.sources,
+      );
       const msgs = await conversationService.getDetail(input.conversationId, input.userId, 1);
       return { ...result, detail: msgs };
     } catch (err) {
@@ -258,7 +271,12 @@ export function createRagService(
   return {
     async ask(input) {
       if (!input.question.trim()) throw badRequest('问题不能为空');
-      const result = await generatePersisted(input, { onDelta: () => {}, onReasoningDelta: () => {} });
+      const result = await generatePersisted(input, {
+        onDelta: () => {},
+        onReasoningDelta: () => {},
+        onToolCall: () => {},
+        onToolResult: () => {},
+      });
       return {
         answer: result.answer,
         reasoning: result.reasoning || undefined,

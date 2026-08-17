@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, like, lt } from 'drizzle-orm';
-import type { ConversationDetail, ConversationMessage, MessageRole, MessageStatus } from '@myrag/shared';
+import type { ConversationDetail, ConversationMessage, MessageRole, MessageStatus, SourceReference, ToolCallRecord } from '@myrag/shared';
 import type { ServerConfig } from '@myrag/shared';
 import type { Db } from '../../db';
 import { conversationMessages, conversations } from '../../db/schema';
@@ -9,7 +9,15 @@ export interface ConversationService {
   /** 确保会话存在（不存在则创建），返回是否新建 */
   ensure(conversationId: string, userId: string, titleHint?: string): Promise<boolean>;
   appendMessage(conversationId: string, role: MessageRole, content: string, status?: MessageStatus): Promise<void>;
-  markMessage(conversationId: string, role: MessageRole, status: MessageStatus, content?: string, reasoning?: string): Promise<void>;
+  markMessage(
+    conversationId: string,
+    role: MessageRole,
+    status: MessageStatus,
+    content?: string,
+    reasoning?: string,
+    toolCalls?: ToolCallRecord[],
+    sources?: SourceReference[],
+  ): Promise<void>;
   getDetail(conversationId: string, userId: string, window: number): Promise<ConversationDetail>;
   listByUser(userId: string): Promise<{ conversationId: string; title: string | null; updatedAt: string }[]>;
   clear(conversationId: string, userId: string): Promise<void>;
@@ -22,6 +30,8 @@ function toMessage(row: typeof conversationMessages.$inferSelect): ConversationM
     role: row.role as MessageRole,
     content: row.content ?? '',
     reasoning: row.reasoning ?? undefined,
+    toolCalls: row.toolCalls ?? undefined,
+    sources: row.sources ?? undefined,
     timestamp: row.createdAt.toISOString(),
     status: row.status as MessageStatus,
   };
@@ -68,8 +78,8 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
         .where(eq(conversations.conversationId, conversationId));
     },
 
-    async markMessage(conversationId, role, status, content, reasoning) {
-      // 将指定角色最近一条消息更新为终态（流式结束时更新 AI 消息；content/reasoning 可选，用于补充回答与思考内容）
+    async markMessage(conversationId, role, status, content, reasoning, toolCalls, sources) {
+      // 将指定角色最近一条消息更新为终态（流式结束时更新 AI 消息；content/reasoning/toolCalls/sources 可选，用于补充回答、思考、工具轨迹与来源）
       const [latest] = await db
         .select()
         .from(conversationMessages)
@@ -79,16 +89,14 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
       if (latest) {
         await db
           .update(conversationMessages)
-          .set(
-            content === undefined && reasoning === undefined
-              ? { status, updatedAt: new Date() }
-              : {
-                  status,
-                  updatedAt: new Date(),
-                  ...(content !== undefined ? { content } : {}),
-                  ...(reasoning !== undefined ? { reasoning } : {}),
-                },
-          )
+          .set({
+            status,
+            updatedAt: new Date(),
+            ...(content !== undefined ? { content } : {}),
+            ...(reasoning !== undefined ? { reasoning } : {}),
+            ...(toolCalls !== undefined ? { toolCalls } : {}),
+            ...(sources !== undefined ? { sources } : {}),
+          })
           .where(eq(conversationMessages.id, latest.id));
       }
     },

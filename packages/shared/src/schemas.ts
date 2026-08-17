@@ -162,6 +162,15 @@ export const sourceReferenceSchema = z.object({
   relevanceScore: z.number().optional(),
 });
 
+/** 一次工具调用记录（持久化到会话消息，仅展示用） */
+export const toolCallRecordSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  args: z.record(z.string(), z.unknown()),
+  output: z.string(),
+});
+export type ToolCallRecord = z.infer<typeof toolCallRecordSchema>;
+
 export const imageUnderstandingResultSchema = z.object({
   rawAnalysis: z.string(),
   ocrText: z.string().optional(),
@@ -213,6 +222,10 @@ export const conversationMessageSchema = z.object({
   content: z.string(),
   /** 思考过程（仅展示用，不回灌多轮上下文） */
   reasoning: z.string().optional(),
+  /** 工具调用轨迹（持久化，仅展示） */
+  toolCalls: z.array(toolCallRecordSchema).optional(),
+  /** 来源引用（持久化，仅展示） */
+  sources: z.array(sourceReferenceSchema).optional(),
   timestamp: z.string(),
   status: z.enum(MESSAGE_STATUSES).optional(),
 });

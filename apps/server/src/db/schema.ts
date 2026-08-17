@@ -3,12 +3,14 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
+import type { SourceReference, ToolCallRecord } from '@myrag/shared';
 
 // ---------- 用户 ----------
 export const users = pgTable(
@@ -200,6 +202,10 @@ export const conversationMessages = pgTable(
     content: text('content'),
     /** 思考过程（仅展示用，不回灌多轮上下文） */
     reasoning: text('reasoning'),
+    /** 工具调用轨迹（仅展示） */
+    toolCalls: jsonb('tool_calls').$type<ToolCallRecord[]>(),
+    /** 来源引用（仅展示） */
+    sources: jsonb('sources').$type<SourceReference[]>(),
     status: varchar('status', { length: 16 }).notNull().default('COMPLETED'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
