@@ -1,5 +1,6 @@
 import { and, count, desc, eq, like } from 'drizzle-orm';
 import type {
+  DocumentContent,
   DocumentDeleteResponse,
   DocumentListItem,
   DocumentListResponse,
@@ -28,6 +29,8 @@ export interface DocumentService {
   download(documentId: string): Promise<Downloadable | null>;
   remove(documentId: string, operator: string): Promise<DocumentDeleteResponse>;
   vectorDetail(documentId: string): Promise<DocumentVectorDetail>;
+  /** 文档原文（按块），供预览与高亮命中块 */
+  content(documentId: string): Promise<DocumentContent>;
 }
 
 function toListItem(row: typeof documents.$inferSelect): DocumentListItem {
@@ -144,6 +147,25 @@ export function createDocumentService(
           textPreview: c.chunkTextPreview ?? c.chunkText?.slice(0, 300) ?? '',
           ingestedAt: c.ingestedAt ?? undefined,
         })),
+      };
+    },
+
+    async content(documentId) {
+      const [doc] = await db
+        .select()
+        .from(documents)
+        .where(and(eq(documents.documentId, documentId), eq(documents.deleted, false)))
+        .limit(1);
+      if (!doc) throw notFound('文档不存在');
+      const chunks = await db
+        .select({ chunkIndex: documentChunks.chunkIndex, text: documentChunks.chunkText })
+        .from(documentChunks)
+        .where(eq(documentChunks.documentId, documentId))
+        .orderBy(documentChunks.chunkIndex);
+      return {
+        documentId,
+        filename: doc.originalFilename,
+        chunks: chunks.map((c) => ({ chunkIndex: c.chunkIndex, text: c.text ?? '' })),
       };
     },
   };

@@ -158,9 +158,19 @@ export const sourceReferenceSchema = z.object({
   sourceType: z.enum(SOURCE_TYPES),
   filename: z.string(),
   documentId: z.string().optional(),
+  /** 命中的块序号（用于在原文中高亮定位） */
+  chunkIndex: z.number().optional(),
   excerpt: z.string(),
   relevanceScore: z.number().optional(),
 });
+
+/** 文档原文（按块返回，供预览 + 高亮命中块） */
+export const documentContentSchema = z.object({
+  documentId: z.string(),
+  filename: z.string(),
+  chunks: z.array(z.object({ chunkIndex: z.number(), text: z.string() })),
+});
+export type DocumentContent = z.infer<typeof documentContentSchema>;
 
 /** 一次工具调用记录（持久化到会话消息，仅展示用） */
 export const toolCallRecordSchema = z.object({

@@ -1,6 +1,7 @@
 import { createRoute, z } from '@hono/zod-openapi';
 import {
   batchTaskSchema,
+  documentContentSchema,
   documentDeleteResponseSchema,
   documentListResponseSchema,
   documentVectorDetailSchema,
@@ -256,6 +257,28 @@ export function createDocumentsRoutes(deps: AppDeps) {
           const { documentId } = c.req.valid('param');
           const detail = await documentService.vectorDetail(documentId);
           return c.json(detail);
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'get',
+          path: '/{documentId}/content',
+          description: '文档原文（按块返回，公开）',
+          security: [],
+          request: { params: documentIdParam },
+          responses: {
+            200: {
+              description: '文档原文',
+              content: { 'application/json': { schema: documentContentSchema } },
+            },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          const { documentId } = c.req.valid('param');
+          const content = await documentService.content(documentId);
+          return c.json(content);
         },
       )
   );

@@ -38,6 +38,7 @@ export function toSourceReferences(docs: ChunkDocument[]): SourceReference[] {
     sourceType: d.metadata.sourceType,
     filename: d.metadata.filename,
     documentId: d.metadata.documentId,
+    chunkIndex: d.metadata.chunkIndex,
     excerpt: d.pageContent.slice(0, 500),
     relevanceScore: Number(d.metadata.score.toFixed(4)),
   }));
