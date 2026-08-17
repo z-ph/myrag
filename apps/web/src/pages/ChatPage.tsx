@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Avatar, Button, Drawer, Empty, Input, List, Popconfirm, Spin, Tooltip } from 'antd';
+import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Tooltip } from 'antd';
 import {
   DeleteOutlined,
+  DownloadOutlined,
   FileImageOutlined,
   HistoryOutlined,
   PlusOutlined,
@@ -12,7 +13,8 @@ import {
 } from '@ant-design/icons';
 import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
-import type { SourceReference } from '@myrag/shared';
+import { documentsApi } from '../api';
+import type { DocumentContent, SourceReference } from '@myrag/shared';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './chat.css';
@@ -42,6 +44,24 @@ function normalizeMarkdown(text: string): string {
     .join('\n');
 }
 
+/** 提取回答里的「反问」问题（引号包裹、带疑问语义），供点击追问 */
+function extractCounterQuestions(text: string): string[] {
+  const out: string[] = [];
+  const re = /[「“"]([^」”"\n]{4,60})[」”"]/g;
+  const qWords = /什么|多少|如何|是否|哪些|怎么|哪|吗|呢|为什么/;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    let q = (m[1] ?? '').trim();
+    if (!q) continue;
+    if (!q.endsWith('？') && !q.endsWith('?')) {
+      if (!qWords.test(q)) continue;
+      q = `${q}？`;
+    }
+    if (!out.includes(q)) out.push(q);
+  }
+  return out.slice(0, 4);
+}
+
 const SUGGESTIONS = [
   '差旅费报销标准是什么？',
   '报销需要准备哪些附件？',
@@ -66,25 +86,79 @@ function Hero({ onPick }: { onPick: (q: string) => void }) {
   );
 }
 
-function SourceList({ sources }: { sources: SourceReference[] }) {
+function SourceList({ sources, onPreview }: { sources: SourceReference[]; onPreview: (s: SourceReference) => void }) {
   if (sources.length === 0) return null;
   return (
     <div className="source-row">
       <span className="source-label">来源</span>
       {sources.map((s, i) => (
-        <a
-          key={i}
-          className="source-chip"
-          href={s.documentId ? `/api/documents/${s.documentId}/file` : undefined}
-          target="_blank"
-          rel="noreferrer"
-          title={s.excerpt}
-        >
+        <button key={i} type="button" className="source-chip" onClick={() => onPreview(s)} title={s.excerpt}>
           {s.sourceType === 'IMAGE' ? '🖼' : '📄'} {s.filename}
           {s.relevanceScore != null && <em>{Math.round(s.relevanceScore * 100)}%</em>}
-        </a>
+        </button>
       ))}
     </div>
+  );
+}
+
+function FollowUpChips({ questions, onAsk }: { questions: string[]; onAsk: (q: string) => void }) {
+  if (questions.length === 0) return null;
+  return (
+    <div className="followup-row">
+      <span className="followup-label">追问</span>
+      {questions.map((q) => (
+        <button key={q} type="button" className="followup-chip" onClick={() => onAsk(q)}>
+          {q}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 来源预览：拉取文档原文，按块渲染并高亮命中块 */
+function SourcePreviewModal({ source, onClose }: { source: SourceReference | null; onClose: () => void }) {
+  const [content, setContent] = useState<DocumentContent | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setContent(null);
+    if (source?.documentId) {
+      setLoading(true);
+      documentsApi
+        .content(source.documentId)
+        .then(setContent)
+        .catch(() => setContent(null))
+        .finally(() => setLoading(false));
+    }
+  }, [source]);
+
+  return (
+    <Modal open={source != null} title={source?.filename} footer={null} onCancel={onClose} width={720} className="source-preview">
+      {source && (
+        <>
+          <div className="source-preview-meta">
+            {source.sourceType === 'IMAGE' ? '🖼 图片来源' : '📄 文档来源'}
+            {source.relevanceScore != null && ` · 相关度 ${Math.round(source.relevanceScore * 100)}%`}
+          </div>
+          {loading || !content ? (
+            <Spin style={{ display: 'block', margin: '24px auto' }} />
+          ) : (
+            <div className="source-preview-doc">
+              {content.chunks.map((c) => (
+                <div key={c.chunkIndex} className={`doc-chunk ${c.chunkIndex === source.chunkIndex ? 'doc-chunk-hit' : ''}`}>
+                  {c.text}
+                </div>
+              ))}
+            </div>
+          )}
+          {source.documentId && (
+            <Button type="primary" icon={<DownloadOutlined />} href={`/api/documents/${source.documentId}/file`}>
+              下载文档
+            </Button>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -150,7 +224,7 @@ function StreamingMarkdown({ content }: { content: string }) {
   );
 }
 
-function MessageItem({ msg }: { msg: ChatMessage }) {
+function MessageItem({ msg, onAsk, onPreview }: { msg: ChatMessage; onAsk: (q: string) => void; onPreview: (s: SourceReference) => void }) {
   const isUser = msg.role === 'user';
   if (isUser) {
     return (
@@ -162,6 +236,7 @@ function MessageItem({ msg }: { msg: ChatMessage }) {
       </div>
     );
   }
+  const followUps = msg.status === 'COMPLETED' ? extractCounterQuestions(msg.content) : [];
   return (
     <div className="msg-row msg-assistant">
       <Avatar icon={<RobotOutlined />} className="msg-avatar" />
@@ -179,7 +254,8 @@ function MessageItem({ msg }: { msg: ChatMessage }) {
             msg.status === 'GENERATING' && <span className="answer-typing">正在思考…</span>
           )}
         </div>
-        {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} />}
+        <FollowUpChips questions={followUps} onAsk={onAsk} />
+        {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} onPreview={onPreview} />}
       </div>
     </div>
   );
@@ -202,6 +278,7 @@ export default function ChatPage() {
 
   const [input, setInput] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [previewSource, setPreviewSource] = useState<SourceReference | null>(null);
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -234,6 +311,14 @@ export default function ChatPage() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
+  const handleNewConversation = () => {
+    startNewConversation();
+    setDrawerOpen(false);
+    setInput('');
+    setImage(null);
+    setImagePreview(null);
+  };
+
   const handlePickImage = (file: File | undefined) => {
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/bmp'].includes(file.type)) return;
@@ -248,7 +333,7 @@ export default function ChatPage() {
           <div className="drawer-head">
             <span>历史会话</span>
             <Tooltip title="新会话">
-              <Button type="text" shape="circle" icon={<PlusOutlined />} onClick={startNewConversation} />
+              <Button type="text" shape="circle" icon={<PlusOutlined />} onClick={handleNewConversation} />
             </Tooltip>
           </div>
         }
@@ -294,7 +379,7 @@ export default function ChatPage() {
         ) : (
           <div className="chat-messages">
             {messages.map((m) => (
-              <MessageItem key={m.id} msg={m} />
+              <MessageItem key={m.id} msg={m} onAsk={handleSend} onPreview={setPreviewSource} />
             ))}
             <div ref={endRef} />
           </div>
@@ -311,6 +396,9 @@ export default function ChatPage() {
           </div>
         )}
         <div className="composer-box">
+          <Tooltip title="新会话">
+            <Button type="text" className="composer-icon" icon={<PlusOutlined />} onClick={handleNewConversation} disabled={isGenerating} />
+          </Tooltip>
           <Tooltip title="历史会话">
             <Button type="text" className="composer-icon" icon={<HistoryOutlined />} onClick={() => setDrawerOpen(true)} />
           </Tooltip>
@@ -350,6 +438,8 @@ export default function ChatPage() {
         </div>
         <div className="composer-tip">回答基于知识库检索，可点击来源查看引用片段</div>
       </div>
+
+      <SourcePreviewModal source={previewSource} onClose={() => setPreviewSource(null)} />
     </div>
   );
 }

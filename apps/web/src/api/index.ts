@@ -89,6 +89,8 @@ export const documentsApi = {
     unwrap(rpc.documents[':documentId'].$delete({ param: { documentId } }, { headers: authHeaders() })),
   vectorDetail: (documentId: string) =>
     unwrap(rpc.documents[':documentId'].vectors.$get({ param: { documentId } }, { headers: authHeaders() })),
+  content: (documentId: string) =>
+    unwrap(rpc.documents[':documentId'].content.$get({ param: { documentId } }, { headers: authHeaders() })),
   download: async (documentId: string, filename: string): Promise<void> => {
     const res = await rpc.documents[':documentId'].file.$get({ param: { documentId } });
     if (!res.ok) throw new ApiError(res.status, '下载失败');

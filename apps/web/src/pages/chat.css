@@ -432,11 +432,13 @@
   align-items: center;
   gap: 4px;
   font-size: 12px;
+  font-family: var(--font-body);
   color: var(--seal);
   background: var(--seal-soft);
+  border: none;
   border-radius: 999px;
   padding: 3px 11px;
-  text-decoration: none;
+  cursor: pointer;
   transition: background 0.15s;
 }
 
@@ -448,6 +450,73 @@
   font-style: normal;
   color: #c98c87;
   font-size: 11px;
+}
+
+/* 追问（反问）快捷提问 */
+.followup-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.followup-label {
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-right: 2px;
+}
+
+.followup-chip {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 3px 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.followup-chip:hover {
+  border-color: var(--seal);
+  color: var(--seal);
+  background: var(--seal-soft);
+}
+
+/* 来源预览弹窗 */
+.source-preview-meta {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-bottom: 12px;
+}
+
+/* 来源预览：原文分块，命中块高亮 */
+.source-preview-doc {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ink);
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+
+.doc-chunk {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 10px 14px;
+  border-radius: 6px;
+}
+
+.doc-chunk + .doc-chunk {
+  margin-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.doc-chunk-hit {
+  background: #fff7e0;
+  box-shadow: inset 3px 0 0 0 var(--seal);
 }
 
 /* ── 底部输入 ─────────────────────────────────────────── */
