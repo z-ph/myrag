@@ -176,10 +176,10 @@ async function readSseStream(res: Response, handlers: AskStreamHandlers): Promis
               handlers.onStart(String((data as Record<string, unknown>).conversationId ?? ''));
               break;
             case 'delta':
-              handlers.onDelta(typeof data === 'string' ? data : String((data as Record<string, unknown>).content ?? ''));
+              handlers.onDelta(String(data));
               break;
             case 'reasoning':
-              handlers.onReasoningDelta(typeof data === 'string' ? data : String((data as Record<string, unknown>).content ?? ''));
+              handlers.onReasoningDelta(String(data));
               break;
             case 'tool_call':
               handlers.onToolCall(data as unknown as ToolCallSse);
@@ -200,9 +200,7 @@ async function readSseStream(res: Response, handlers: AskStreamHandlers): Promis
               break;
           }
         } catch {
-          // 字符串 data 未经 JSON 序列化（裸文本），直接按事件类型分发
-          if (currentEvent === 'delta') handlers.onDelta(raw);
-          else if (currentEvent === 'reasoning') handlers.onReasoningDelta(raw);
+          // 解析失败忽略该帧（data 已统一 JSON 编码，正常不会走到这里）
         }
       }
     }

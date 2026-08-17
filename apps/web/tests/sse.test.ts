@@ -21,9 +21,9 @@ describe('ragApi.askStream', () => {
       vi.fn().mockResolvedValue(
         sseResponse([
           'event: start\ndata: {"conversationId":"conv-1"}\n\n',
-          'event: reasoning\ndata: {"content":"思考"}\n\n',
-          'event: delta\ndata: {"content":"你"}\n\n',
-          'event: delta\ndata: {"content":"好"}\n\n',
+          'event: reasoning\ndata: "思考"\n\n',
+          'event: delta\ndata: "你"\n\n',
+          'event: delta\ndata: "好"\n\n',
           'event: sources\ndata: [{"sourceType":"TEXT","filename":"a.pdf","excerpt":"内容","relevanceScore":0.8}]\n\n',
           'event: complete\ndata: {"conversationId":"conv-1","cancelled":false}\n\n',
         ]),
@@ -69,8 +69,8 @@ describe('ragApi.askStream', () => {
   });
 
   it('跨帧的 SSE 数据正确拼接（分块边界）', async () => {
-    const half1 = 'event: delta\ndata: {"con';
-    const half2 = 'tent":"跨帧"}\n\n';
+    const half1 = 'event: delta\ndata: "跨';
+    const half2 = '帧"\n\n';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([half1, half2])));
 
     const deltas: string[] = [];

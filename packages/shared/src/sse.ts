@@ -28,8 +28,7 @@ export type SseEvent =
   | { event: 'cancelled'; data: { conversationId: string; reason?: string } }
   | { event: 'error'; data: { message: string } };
 
-/** 将事件序列化为 SSE 文本帧 */
+/** 将事件序列化为 SSE 文本帧（data 一律 JSON 编码，避免换行/数字串被 SSE 分行或 JSON.parse 破坏） */
 export function encodeSse(event: SseEvent): string {
-  const payload = typeof event.data === 'string' ? event.data : JSON.stringify(event.data);
-  return `event: ${event.event}\ndata: ${payload}\n\n`;
+  return `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
 }
