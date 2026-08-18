@@ -24,7 +24,6 @@ export const RUNTIME_SETTING_KEYS = [
   'mmrLambda',
   'contextBudget',
   'memoryWindow',
-  'imageRetrievalWeight',
   'llmChatTemperature',
   'llmVisionTemperature',
   'guestCleanupEnabled',
@@ -53,7 +52,6 @@ export const RUNTIME_SETTING_DEFAULTS: RuntimeSettings = {
   mmrLambda: DEFAULTS.mmrLambda,
   contextBudget: DEFAULTS.contextBudget,
   memoryWindow: DEFAULTS.memoryWindow,
-  imageRetrievalWeight: 0.3,
   llmChatTemperature: DEFAULTS.llmChatTemperature,
   llmVisionTemperature: DEFAULTS.llmVisionTemperature,
   guestCleanupEnabled: DEFAULTS.guestCleanupEnabled,
@@ -77,7 +75,6 @@ export const runtimeSettingsPartialSchema = z.object({
   mmrLambda: z.number().min(0).max(1).optional(),
   contextBudget: z.number().int().min(100).max(100_000).optional(),
   memoryWindow: z.number().int().min(0).max(100).optional(),
-  imageRetrievalWeight: z.number().min(0).max(1).optional(),
   llmChatTemperature: z.number().min(0).max(2).optional(),
   llmVisionTemperature: z.number().min(0).max(2).optional(),
   /** 0=关 1=开 */

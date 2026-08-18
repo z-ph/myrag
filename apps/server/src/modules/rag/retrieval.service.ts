@@ -64,7 +64,7 @@ export interface RagRetrieverFields {
 /**
  * 检索器（langchain BaseRetriever）：文本问答的混合检索管线。
  * `retrieve` / `_getRelevantDocuments` = 向量召回 → BM25 混合重排 → 相关度过滤 → Jaccard 去重 → MMR。
- * 由 `search_knowledge_base` 工具调用；`retrieveImageRoute` / `retrieveByEmbedding` 无调用方。
+ * 由 `search_knowledge_base` 工具调用。
  */
 export class RagRetriever extends BaseRetriever<ChunkMetadata> {
   /** Serializable 命名空间（langchain Runnable 契约） */
@@ -133,21 +133,6 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
       contextBudget: s.contextBudget,
     };
     return selected;
-  }
-
-  /** 旧图文双路残留：按已有向量召回。当前无调用方。 */
-  async retrieveByEmbedding(embedding: number[], maxResults: number): Promise<ChunkDocument[]> {
-    const hits = (await this.qdrant.search(embedding, maxResults)).filter((h) => h.score >= this.settings.get().minScore);
-    return this.hydrate(hits);
-  }
-
-  /** 旧图文双路残留：问题文本侧候选。当前无调用方。 */
-  async retrieveImageRoute(question: string, maxResults: number): Promise<ChunkDocument[]> {
-    const s = this.settings.get();
-    const [vector] = await this.llm.embed([question]);
-    if (!vector) throw new AppError(502, '向量化服务返回异常');
-    const hits = (await this.qdrant.search(vector, maxResults * s.candidateMultiplier)).filter((h) => h.score >= s.minScore);
-    return this.hydrate(hits);
   }
 
   /** 从快照表批量补齐 hits 的文本与元数据，组装为 langchain Document */

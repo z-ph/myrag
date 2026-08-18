@@ -100,7 +100,6 @@ export interface ServerConfig {
   mmrLambda: number;
   contextBudget: number;
   memoryWindow: number;
-  imageRetrievalWeight: number;
   /** 批量任务 worker 文件级并发数 */
   batchConcurrency: number;
   /** 生成中状态 TTL（秒） */
@@ -184,7 +183,6 @@ const ServerConfigSchema = z.object({
   mmrLambda: z.number(),
   contextBudget: z.number(),
   memoryWindow: z.number(),
-  imageRetrievalWeight: z.number(),
   batchConcurrency: z.number(),
   generatingTtlSeconds: z.number(),
   guestJwtTtlSeconds: z.number(),
@@ -258,7 +256,6 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     mmrLambda: num('RAG_MMR_LAMBDA', DEFAULTS.mmrLambda),
     contextBudget: num('RAG_CONTEXT_BUDGET', DEFAULTS.contextBudget),
     memoryWindow: num('RAG_MEMORY_WINDOW', DEFAULTS.memoryWindow),
-    imageRetrievalWeight: num('RAG_IMAGE_RETRIEVAL_WEIGHT', 0.3),
     batchConcurrency: num('BATCH_CONCURRENCY', DEFAULTS.batchConcurrency),
     generatingTtlSeconds: num('GENERATING_TTL_SECONDS', DEFAULTS.generatingTtlSeconds),
     guestJwtTtlSeconds: num('GUEST_JWT_TTL_SECONDS', DEFAULTS.guestJwtTtlSeconds),

@@ -44,11 +44,6 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 - **主站 LangGraph / 独立图服务**：编排在进程内 `createAgent`。`copilot/` 是另一套 CopilotKit + LangGraph 演示，不接本知识库。
 - **通用 `RecursiveCharacterTextSplitter`**：中文制度分块已有域定制实现。
 
-## 代码残留（无调用方，不要当现役能力）
-
-- `buildMessages` 与 `ChatPromptTemplate`（`prompts.ts`）：旧 2-Step 拼装，仅单测引用。线上只用 `foldHistoryRecap`。
-- `RagRetriever.retrieveImageRoute` / `retrieveByEmbedding`：旧图文检索双路，当前无调用方。
-
 ## 可观测
 
 可选环境变量（见根目录 `.env.example`）：
