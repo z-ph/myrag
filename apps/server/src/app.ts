@@ -10,6 +10,7 @@ import { createDocumentsRoutes } from './modules/documents/documents.routes';
 import { createUploadRoutes } from './modules/upload/upload.routes';
 import { createConversationRoutes } from './modules/rag/rag.routes';
 import { createSettingsRoutes } from './modules/settings/settings.routes';
+import { createSuggestionsRoutes } from './modules/settings/suggestions.routes';
 import { createMaintenanceRoutes } from './modules/maintenance/maintenance.routes';
 import { createPromptRoutes } from './modules/prompts/prompts.routes';
 
@@ -35,6 +36,7 @@ export function buildApp(deps: AppDeps) {
     .use('*', cors())
     .use('*', honoLogger())
     .route('/auth', createAuthRoutes(deps))
+    .route('/suggestions', createSuggestionsRoutes(deps))
     .route('/admin/users', createUsersRoutes(deps))
     .route('/admin/settings', createSettingsRoutes(deps))
     .route('/admin', createMaintenanceRoutes(deps))

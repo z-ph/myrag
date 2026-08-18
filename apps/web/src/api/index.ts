@@ -42,6 +42,9 @@ export const settingsApi = {
   get: () => unwrap(rpc.admin.settings.$get({}, { headers: authHeaders() })),
   update: (body: Partial<RuntimeSettings>) =>
     unwrap(rpc.admin.settings.$put({ json: body }, { headers: authHeaders() })),
+  getSuggestions: () => unwrap(rpc.suggestions.$get({})),
+  updateSuggestions: (questions: string[]) =>
+    unwrap(rpc.admin.settings.suggestions.$put({ json: { questions } }, { headers: authHeaders() })),
 };
 
 export const promptsApi = {

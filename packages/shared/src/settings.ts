@@ -98,6 +98,10 @@ export interface SettingsService {
   update(partial: Partial<RuntimeSettings>): Promise<RuntimeSettings>;
   /** 删除单项（恢复默认值） */
   reset(key: string): Promise<RuntimeSettings>;
+  /** 对话页建议问题（字符串数组，独立于数值型设置，同样存 DB + 广播） */
+  getSuggestions(): string[];
+  /** 整体替换对话页建议问题 */
+  updateSuggestions(questions: string[]): Promise<string[]>;
   /** 启动加载：DB 缺失项用默认值补齐 */
   init(): Promise<void>;
   close(): void;

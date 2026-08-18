@@ -181,6 +181,12 @@ export const toolCallRecordSchema = z.object({
 });
 export type ToolCallRecord = z.infer<typeof toolCallRecordSchema>;
 
+/** 对话页建议问题（管理端可配置） */
+export const suggestionQuestionsSchema = z.object({
+  questions: z.array(z.string().min(1).max(200)).max(20),
+});
+export type SuggestionQuestions = z.infer<typeof suggestionQuestionsSchema>;
+
 export const imageUnderstandingResultSchema = z.object({
   rawAnalysis: z.string(),
   ocrText: z.string().optional(),

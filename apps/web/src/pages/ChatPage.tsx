@@ -11,9 +11,10 @@ import {
   StopOutlined,
   UserOutlined,
 } from '@ant-design/icons';
+import { useQuery } from '@tanstack/react-query';
 import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
-import { documentsApi } from '../api';
+import { documentsApi, settingsApi } from '../api';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -62,21 +63,21 @@ function extractCounterQuestions(text: string): string[] {
   return out.slice(0, 4);
 }
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   '差旅费报销标准是什么？',
   '报销需要准备哪些附件？',
   '如何申请设备采购经费？',
   '差旅住宿费限额是多少？',
 ];
 
-function Hero({ onPick }: { onPick: (q: string) => void }) {
+function Hero({ onPick, suggestions }: { onPick: (q: string) => void; suggestions: string[] }) {
   return (
     <div className="hero">
       <span className="seal seal-lg">财</span>
       <h1 className="hero-title">问制度，找依据</h1>
       <p className="hero-sub">从财务处知识库检索制度、流程与标准，回答附来源依据。</p>
       <div className="hero-chips">
-        {SUGGESTIONS.map((s) => (
+        {suggestions.map((s) => (
           <button key={s} type="button" className="hero-chip" onClick={() => onPick(s)}>
             {s}
           </button>
@@ -284,6 +285,8 @@ export default function ChatPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const authLoading = useAuthStore((s) => s.loading);
+  const { data: suggestionData } = useQuery({ queryKey: ['suggestions'], queryFn: () => settingsApi.getSuggestions() });
+  const suggestions = suggestionData?.questions?.length ? suggestionData.questions : DEFAULT_SUGGESTIONS;
 
   useEffect(() => {
     if (authLoading) return;
@@ -375,7 +378,7 @@ export default function ChatPage() {
         {isLoadingHistory ? (
           <Spin style={{ display: 'block', margin: '80px auto' }} />
         ) : messages.length === 0 ? (
-          <Hero onPick={(q) => handleSend(q)} />
+          <Hero onPick={(q) => handleSend(q)} suggestions={suggestions} />
         ) : (
           <div className="chat-messages">
             {messages.map((m) => (

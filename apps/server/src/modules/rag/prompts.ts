@@ -4,11 +4,12 @@ import type { ContextMessage } from '@myrag/shared';
 import { stripReasoning } from '../../llm/client';
 
 /**
- * RAG 问答提示模板（langchain ChatPromptTemplate）：system + 可选历史回顾占位 + 提问。
- * 历史折叠为单条 user 回顾消息（问答对文本），原因：
- * 1. 历史中的 assistant 内容先剥离推理，避免思维链回灌；
- * 2. 实测网关在 stream=true 且 messages 含 assistant 角色时会吞掉 reasoning_content（多轮思考丢失），
- *    折叠进 user 消息后流式思考正常输出且多轮记忆保留。
+ * 线上问答只用 `foldHistoryRecap`（见 rag.service `generate`）。
+ * 下面两个 ChatPromptTemplate 与 `buildMessages` 是旧 2-Step 拼装，仅单测引用。
+ *
+ * 历史折成单条 user 回顾的原因：
+ * 1. assistant 内容先剥离推理，避免思维链回灌；
+ * 2. 网关在 stream=true 且 messages 含 assistant 角色时会吞掉 reasoning_content。
  */
 const QA_PROMPT_WITH_CONTEXT = ChatPromptTemplate.fromMessages([
   ['system', '{system}'],
@@ -32,7 +33,7 @@ export function foldHistoryRecap(history: ContextMessage[], memoryWindow: number
   return pairs.join('\n');
 }
 
-/** 组装 LLM 消息（langchain BaseMessage[]）：系统（由调用方传入成品文本）+ 历史折叠回顾 + 检索上下文 + 当前问题。 */
+/** 旧 2-Step 拼装。线上无调用方，仅 `reasoning.test.ts` 使用。 */
 export async function buildMessages(
   question: string,
   history: ContextMessage[],

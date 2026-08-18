@@ -85,6 +85,45 @@ function GuestCleanupCard() {
   );
 }
 
+function SuggestionsCard() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ['suggestions'], queryFn: () => settingsApi.getSuggestions() });
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    if (data) setText(data.questions.join('\n'));
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => settingsApi.updateSuggestions(text.split('\n').map((s) => s.trim()).filter(Boolean)),
+    onSuccess: () => {
+      message.success('已保存');
+      void queryClient.invalidateQueries({ queryKey: ['suggestions'] });
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  return (
+    <Card title="对话建议问题" style={{ marginTop: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 0 }}>
+        对话页空状态展示的快捷提问，每行一条，最多 20 条；留空则使用内置默认。
+      </Typography.Paragraph>
+      <Input.TextArea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={'差旅费报销标准是什么？\n报销需要准备哪些附件？'}
+        autoSize={{ minRows: 3, maxRows: 10 }}
+      />
+      <div style={{ marginTop: 12 }}>
+        <Button type="primary" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+          保存
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function PromptsCard() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
@@ -287,6 +326,7 @@ export default function AdminPage() {
         </Col>
       </Row>
       <PromptsCard />
+      <SuggestionsCard />
       <Card title="运维说明" style={{ marginTop: 16 }}>
         <ul style={{ lineHeight: 2 }}>
           <li>文档上传后异步处理：解析 → 分块 → 向量化 → 入库，可在文档库查看状态。</li>

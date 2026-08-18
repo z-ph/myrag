@@ -1,5 +1,5 @@
 import { createRoute, z } from '@hono/zod-openapi';
-import { runtimeSettingsSchema, runtimeSettingsPartialSchema } from '@myrag/shared';
+import { runtimeSettingsSchema, runtimeSettingsPartialSchema, suggestionQuestionsSchema } from '@myrag/shared';
 import type { AppDeps } from '../../app-deps';
 import { createOpenApiApp, errorResponses, bearerSecurity } from '../../openapi';
 import { requireAuth, requireSuperAdmin } from '../../middleware/auth';
@@ -69,6 +69,28 @@ export function createSettingsRoutes(deps: AppDeps) {
           const { key } = c.req.valid('param');
           const settings = await settingsService.reset(key);
           return c.json(settings);
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'put',
+          path: '/suggestions',
+          description: '整体替换对话页建议问题（即时生效）',
+          security: bearerSecurity,
+          middleware: [requireAuth, requireSuperAdmin],
+          request: {
+            body: { content: { 'application/json': { schema: suggestionQuestionsSchema } } },
+          },
+          responses: {
+            200: { description: '更新后的建议问题', content: { 'application/json': { schema: suggestionQuestionsSchema } } },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          const { questions } = c.req.valid('json');
+          const result = await settingsService.updateSuggestions(questions);
+          return c.json({ questions: result });
         },
       )
   );

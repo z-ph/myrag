@@ -63,8 +63,8 @@ export interface RagRetrieverFields {
 
 /**
  * 检索器（langchain BaseRetriever）：文本问答的混合检索管线。
- * `invoke(question)` = 向量召回 → BM25 混合重排 → 相关度过滤 → Jaccard 去重 → MMR 重排，返回 Document[]。
- * 图片问答的两条候选路（`retrieveImageRoute` / `retrieveByEmbedding`）不属于「query → 文档」语义，保留为显式方法。
+ * `retrieve` / `_getRelevantDocuments` = 向量召回 → BM25 混合重排 → 相关度过滤 → Jaccard 去重 → MMR。
+ * 由 `search_knowledge_base` 工具调用；`retrieveImageRoute` / `retrieveByEmbedding` 无调用方。
  */
 export class RagRetriever extends BaseRetriever<ChunkMetadata> {
   /** Serializable 命名空间（langchain Runnable 契约） */
@@ -135,13 +135,13 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     return selected;
   }
 
-  /** 图片理解结果检索（仅向量召回，融合到文本结果） */
+  /** 旧图文双路残留：按已有向量召回。当前无调用方。 */
   async retrieveByEmbedding(embedding: number[], maxResults: number): Promise<ChunkDocument[]> {
     const hits = (await this.qdrant.search(embedding, maxResults)).filter((h) => h.score >= this.settings.get().minScore);
     return this.hydrate(hits);
   }
 
-  /** 供图片问答做图文融合的文本侧候选 */
+  /** 旧图文双路残留：问题文本侧候选。当前无调用方。 */
   async retrieveImageRoute(question: string, maxResults: number): Promise<ChunkDocument[]> {
     const s = this.settings.get();
     const [vector] = await this.llm.embed([question]);

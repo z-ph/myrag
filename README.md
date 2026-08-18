@@ -5,7 +5,8 @@
 ## 文档导航
 
 - **业务口径（单一真源）**：`docs/business.md` —— 角色模型、权限矩阵、公开接口、RBAC 规则。改权限先改这里。
-- **接口文档**：启动后访问 `http://localhost:8080/docs`（Scalar UI，由 zod schema 自动生成）。
+- **问答实现（以代码为准）**：`docs/langchain-alignment.md` —— `createAgent` + 检索工具、SSE、图片预处理、残留死路径。
+- **接口文档**：后端直连 `http://localhost:8080/docs`；经前端 Nginx 反代则为 `/api/docs`（Scalar UI，由 zod schema 生成）。
 
 ## 目录结构
 
@@ -50,8 +51,8 @@ pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 
 - **无状态化后端**：批量任务队列用 BullMQ（`jobId=taskId` 幂等入队、stalled 任务自动重跑、周期补偿扫描兜底未入队任务）、生成取消 Redis key + Pub/Sub 跨实例；状态在 PostgreSQL/Redis，服务可水平扩容。
 - **契约即文档，RPC 端到端类型安全**：全部路由 `@hono/zod-openapi`，请求/响应 schema 即运行时校验，OpenAPI 自动生成（`/docs`）；后端导出 `AppType`，前端用 `hc<AppType>`（hono/client）生成类型安全客户端，接口层零手写请求/响应类型（见 `apps/web/src/api/`）。
-- **统一响应**：`{ code, message, data }`，错误携带语义化 HTTP 状态。
-- **2-Step RAG（langchain.js）**：`RagRetriever`（`BaseRetriever`）混合检索 → `Document` 统一块模型 → `ChatPromptTemplate` 组装 → `ChatOpenAI` / `OpenAIEmbeddings` 生成与向量化；管线为 Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR 重排 → 上下文预算截断；图片问答图文双路融合。对齐说明见 `docs/langchain-alignment.md`。
+- **统一响应**：成功直接返回资源表示；错误由 HTTP 状态码 + `{ code, message, details }` 表达。
+- **问答 Agent（langchain.js）**：每轮 `createAgent`，混合检索封装为 `search_knowledge_base`（模型决定是否检索、改写 query）；工具内仍是 Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR。图片先视觉结构化理解再拼进 user 消息，不是图文检索双路。`streamEvents` 推思考 / 工具 / 正文，SSE `data` 一律 JSON。说明见 `docs/langchain-alignment.md`。
 - **可观测（可选）**：设置 `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` 后，langchain 调用可进入 LangSmith。
 - **问答统一落库**：登录用户与访客共用 `POST /conversations/{id}/messages` 一条链路；未登录时前端静默签发访客 token（`POST /auth/guest-sessions`，JWT 角色 GUEST、默认 30 天），会话同样落库、可恢复、可取消。访客会话按保留天数定时清理（BullMQ 每小时调度，管理面板可开关/改保留天数/手动触发 `/admin/conversations/cleanup`）。
 - **提示词 DB 化**：系统提示词存 `prompt_templates` 表（版本留痕于 `prompt_template_versions`），运行时热生效并经 Redis Pub/Sub 跨实例同步；管理面板在线编辑/重置/回滚（`/admin/prompts/**`）。

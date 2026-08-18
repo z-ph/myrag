@@ -5,7 +5,7 @@
 
 ## 1. 系统定位
 
-财务处知识库系统：文档管理 + RAG 智能问答。文档（含图片 OCR）上传入库后切片建向量索引，问答基于向量 + BM25 混合检索回答，附引用来源。
+财务处知识库系统：文档管理 + RAG 智能问答。文档（含图片 OCR）上传入库后切片建向量索引。问答由模型按需调用检索工具（底层为向量 + BM25 混合检索），回答附引用来源。实现见 `docs/langchain-alignment.md`。
 
 ## 2. 角色模型（RBAC）
 
@@ -35,7 +35,7 @@
 | 签发访客 token（未登录问答的入场券） | `POST /auth/guest-sessions` |
 | 文档列表（含文件名模糊搜索） | `GET /documents` |
 | 文档原始文件下载 | `GET /documents/{documentId}/file` |
-| API 文档 | `GET /api/docs`（Scalar UI）、`GET /api/openapi.json` |
+| API 文档 | 后端 `GET /docs`、`GET /openapi.json`；经 Nginx 反代为 `/api/docs`、`/api/openapi.json` |
 
 **问答统一落库口径**：问答只有一条链路（`POST /conversations/{conversationId}/messages`，`stream=true` 时 SSE 流式），登录用户与访客共用。未登录时前端静默调用 `/auth/guest-sessions` 签发访客 token（JWT，角色 GUEST，默认有效期 30 天），会话与消息同样落库、可恢复、可取消。
 

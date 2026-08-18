@@ -1,6 +1,6 @@
 # API 风格改造方案（RESTful）
 
-> 本文档是 API 风格改造提案。**已实施完成（2026-08-02）**：全站已 RESTful 化，以下为契约定义与历史决策记录。业务口径以 `docs/business.md` 为准，接口级细节以 `/api/openapi.json` 为准。
+> 本文档是 API 风格改造提案。**已实施完成（2026-08-02）**：全站已 RESTful 化，以下为契约定义与历史决策记录。业务口径以 `docs/business.md` 为准；问答实现以 `docs/langchain-alignment.md` 与当前代码为准（已不是固定 2-Step RAG）；接口级细节以 `/openapi.json`（反代下为 `/api/openapi.json`）为准。
 
 ## 1. 设计原则
 

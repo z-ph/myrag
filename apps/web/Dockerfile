@@ -1,5 +1,8 @@
 # ---------- 构建阶段 ----------
 FROM node:24-alpine AS build
+# 依赖与 corepack（pnpm 本体）均走国内镜像，不访问 registry.npmjs.org
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
+    COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable
 WORKDIR /app
 
@@ -13,7 +16,8 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/web/package.json apps/web/
 # web 的 RPC 类型来自 @myrag/server（AppType），需要其源码参与声明生成
 COPY apps/server/package.json apps/server/
-RUN pnpm install --frozen-lockfile
+RUN printf 'registry=https://registry.npmmirror.com\n' > .npmrc \
+ && pnpm install --frozen-lockfile
 
 COPY packages/shared packages/shared
 COPY apps/server apps/server
