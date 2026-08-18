@@ -119,35 +119,6 @@ export function createRagService(
     seen: Set<string>;
   }
 
-  let collector: RetrievalCollector = { maxResults: 5, docs: [], seen: new Set() };
-
-  /**
-   * 知识库检索工具：把 RagRetriever 暴露给 agent loop。
-   * 模型自行决定是否调用、以什么 query 调用、调用几次。
-   */
-  const searchKnowledgeBase = tool(
-    async ({ query }: { query: string }) => {
-      const docs = await retriever.retrieve(query, collector.maxResults);
-      for (const d of docs) {
-        const key = chunkKey(d.metadata);
-        if (!collector.seen.has(key)) {
-          collector.seen.add(key);
-          collector.docs.push(d);
-        }
-      }
-      const { contextText } = packContext(docs, settings.get().contextBudget);
-      return contextText ?? '知识库中没有检索到与该问题相关的资料。';
-    },
-    {
-      name: SEARCH_TOOL_NAME,
-      description:
-        '在财务处知识库中检索与用户问题相关的资料片段。输入检索关键词或完整问题，返回最相关的文档内容。检索不到时返回「无相关资料」提示。',
-      schema: z.object({
-        query: z.string().describe('用于检索的关键词或完整问题'),
-      }),
-    },
-  );
-
   /**
    * agent loop 生成核心：检索（作为工具由模型调用）→ 思考/工具 → 最终回答。
    * 通过 streamEvents v3 的 messages / toolCalls 投影拿到思考、正文与工具生命周期。
@@ -158,11 +129,39 @@ export function createRagService(
     handlers: GenerateHandlers,
     signal?: AbortSignal,
   ): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[]; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
-    collector = {
+    const collector: RetrievalCollector = {
       maxResults: input.maxResults ?? settings.get().maxResults,
       docs: [],
       seen: new Set(),
     };
+
+    /**
+     * 知识库检索工具：把 RagRetriever 暴露给 agent loop。
+     * 模型自行决定是否调用、以什么 query 调用、调用几次。
+     * 闭包捕获本次请求的局部 collector，与并发生成隔离。
+     */
+    const searchKnowledgeBase = tool(
+      async ({ query }: { query: string }) => {
+        const docs = await retriever.retrieve(query, collector.maxResults);
+        for (const d of docs) {
+          const key = chunkKey(d.metadata);
+          if (!collector.seen.has(key)) {
+            collector.seen.add(key);
+            collector.docs.push(d);
+          }
+        }
+        const { contextText } = packContext(docs, settings.get().contextBudget);
+        return contextText ?? '知识库中没有检索到与该问题相关的资料。';
+      },
+      {
+        name: SEARCH_TOOL_NAME,
+        description:
+          '在财务处知识库中检索与用户问题相关的资料片段。输入检索关键词或完整问题，返回最相关的文档内容。检索不到时返回「无相关资料」提示。',
+        schema: z.object({
+          query: z.string().describe('用于检索的关键词或完整问题'),
+        }),
+      },
+    );
 
     let imageUnderstanding: ImageUnderstandingResult | undefined;
     if (input.imageBase64) {
