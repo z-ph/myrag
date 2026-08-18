@@ -27,6 +27,8 @@ export interface LlmClient {
     input: VisionMessageInput,
     options?: { name?: string },
   ): Promise<T>;
+  /** LLM 相关性重排：对每个候选打 0-10 分，返回与 candidates 同序的分数数组 */
+  rerank(query: string, candidates: string[]): Promise<number[]>;
 }
 
 /** 组装视觉模型多模态消息 */
@@ -59,6 +61,34 @@ export function stripReasoning(text: string): string {
   const open = clean.lastIndexOf('<think');
   if (open !== -1) clean = clean.slice(0, open);
   return clean.trim();
+}
+
+const RERANK_SYSTEM =
+  '你是一个相关性评分器。给定用户问题和若干文档片段，为每个片段打 0-10 的相关性分数（10=完全相关，0=无关）。只返回 JSON 数组，不要其他内容。';
+
+/** 从模型输出提取 JSON 数组（兼容 markdown 代码块包裹、前后杂文） */
+function extractJsonArray(raw: string): unknown[] {
+  const cleaned = raw.replace(/```(?:json)?\s*([\s\S]*?)```/gi, '$1').trim();
+  const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error('rerank 输出不含 JSON 数组');
+  const parsed: unknown = JSON.parse(jsonMatch[0]);
+  if (!Array.isArray(parsed)) throw new Error('rerank 输出不是 JSON 数组');
+  return parsed;
+}
+
+/** 将模型打分结果对齐到 candidates 顺序；缺项为 undefined，由调用方回退原分 */
+function scoresFromRerankItems(items: unknown[], candidateCount: number): number[] {
+  const scores = new Array<number>(candidateCount);
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as { index?: unknown; score?: unknown };
+    const index = typeof rec.index === 'number' ? rec.index : Number(rec.index);
+    const score = typeof rec.score === 'number' ? rec.score : Number(rec.score);
+    if (!Number.isInteger(index) || index < 0 || index >= candidateCount) continue;
+    if (!Number.isFinite(score)) continue;
+    scores[index] = Math.min(10, Math.max(0, score));
+  }
+  return scores;
 }
 
 /**
@@ -147,6 +177,26 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
         // 不在此处归一化为 AppError：调用方需区分「网关不支持」以便 fallback
         if (err instanceof AppError) throw err;
         if (err instanceof Error && err.name === 'AbortError') throw err;
+        throw err;
+      }
+    },
+
+    async rerank(query, candidates) {
+      if (candidates.length === 0) return [];
+      chatModel.temperature = 0;
+      const userPrompt =
+        `用户问题：${query}\n\n文档片段：\n` +
+        `${candidates.map((c, i) => `[${i}] ${c.slice(0, 500)}`).join('\n\n')}\n\n` +
+        '请为每个片段打分，返回 JSON：[{"index":0,"score":8},...]';
+      try {
+        const res = await chatModel.invoke([new SystemMessage(RERANK_SYSTEM), new HumanMessage(userPrompt)]);
+        const content = typeof res.content === 'string' ? res.content : '';
+        return scoresFromRerankItems(extractJsonArray(stripThink(content)), candidates.length);
+      } catch (err) {
+        // 不在此处降级：由 retrieval.service 的调用方 catch 后保持原 BM25 排序
+        if (err instanceof AppError) throw err;
+        if (err instanceof Error && err.name === 'AbortError') throw err;
+        logger.error(`[llm] rerank 失败：${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
         throw err;
       }
     },

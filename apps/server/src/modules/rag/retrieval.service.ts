@@ -7,6 +7,7 @@ import { documentChunks } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore, VectorSearchHit } from '../../vector/qdrant';
 import { AppError } from '../../lib/errors';
+import { logger } from '../../lib/util';
 import { createBm25Scorer, jaccard } from './bm25';
 import type { ChunkDocument, ChunkMetadata } from './chunk';
 
@@ -17,6 +18,7 @@ export interface RetrievalDebug {
   afterSelection: number;
   totalContextChars: number;
   contextBudget: number;
+  afterRerank?: number;
 }
 
 function minMaxNormalize(scores: number[]): number[] {
@@ -63,7 +65,7 @@ export interface RagRetrieverFields {
 
 /**
  * 检索器（langchain BaseRetriever）：文本问答的混合检索管线。
- * `retrieve` / `_getRelevantDocuments` = 向量召回 → BM25 混合重排 → 相关度过滤 → Jaccard 去重 → MMR。
+ * `retrieve` / `_getRelevantDocuments` = 向量召回 → BM25 混合重排 → 相关度过滤 →（可选 LLM rerank）→ Jaccard 去重 → MMR。
  * 由 `search_knowledge_base` 工具调用。
  */
 export class RagRetriever extends BaseRetriever<ChunkMetadata> {
@@ -95,7 +97,7 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     return this.runPipeline(question, maxResults ?? this.settings.get().maxResults);
   }
 
-  /** 混合管线：向量召回 → BM25 重排 → 相关度过滤 → 去重 → MMR */
+  /** 混合管线：向量召回 → BM25 重排 → 相关度过滤 →（可选 LLM rerank）→ 去重 → MMR */
   private async runPipeline(question: string, limit: number): Promise<ChunkDocument[]> {
     const s = this.settings.get();
     const [vector] = await this.llm.embed([question]);
@@ -116,9 +118,24 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     candidates.sort((a, b) => b.metadata.score - a.metadata.score);
     const afterRelevance = candidates.filter((c) => c.metadata.score >= s.relevanceThreshold);
 
+    let reranked = afterRelevance;
+    if (s.rerankerEnabled && afterRelevance.length > 1) {
+      try {
+        const scores = await this.llm.rerank(question, afterRelevance.map((c) => c.pageContent));
+        afterRelevance.forEach((c, i) => {
+          c.metadata.score = scores[i] ?? c.metadata.score; // LLM 分覆盖混合分
+        });
+        reranked = [...afterRelevance].sort((a, b) => b.metadata.score - a.metadata.score);
+        reranked = reranked.slice(0, s.rerankerTopN);
+      } catch (err) {
+        logger.warn('[rag] reranker 失败，降级为 BM25 混合排序:', err);
+        reranked = afterRelevance; // 降级：保持原排序
+      }
+    }
+
     // Jaccard 去重（保留分高者）
     const deduped: ChunkDocument[] = [];
-    for (const c of afterRelevance) {
+    for (const c of reranked) {
       const dup = deduped.some((d) => jaccard(d.pageContent, c.pageContent) >= s.jaccardThreshold);
       if (!dup) deduped.push(c);
     }
@@ -131,6 +148,7 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
       afterSelection: selected.length,
       totalContextChars: selected.reduce((sum, c) => sum + c.pageContent.length, 0),
       contextBudget: s.contextBudget,
+      ...(s.rerankerEnabled ? { afterRerank: reranked.length } : {}),
     };
     return selected;
   }

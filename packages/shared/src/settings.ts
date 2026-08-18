@@ -28,6 +28,8 @@ export const RUNTIME_SETTING_KEYS = [
   'llmVisionTemperature',
   'guestCleanupEnabled',
   'guestRetentionDays',
+  'rerankerEnabled',
+  'rerankerTopN',
 ] as const;
 
 export type RuntimeSettingKey = (typeof RUNTIME_SETTING_KEYS)[number];
@@ -56,6 +58,10 @@ export const RUNTIME_SETTING_DEFAULTS: RuntimeSettings = {
   llmVisionTemperature: DEFAULTS.llmVisionTemperature,
   guestCleanupEnabled: DEFAULTS.guestCleanupEnabled,
   guestRetentionDays: DEFAULTS.guestRetentionDays,
+  /** 0=关 1=开，默认关闭，渐进式启用 */
+  rerankerEnabled: 0,
+  /** 重排后取前 N 条进入去重/MMR */
+  rerankerTopN: 10,
 };
 
 /** 部分更新校验（PUT /admin/settings 请求体） */
@@ -80,6 +86,9 @@ export const runtimeSettingsPartialSchema = z.object({
   /** 0=关 1=开 */
   guestCleanupEnabled: z.number().int().min(0).max(1).optional(),
   guestRetentionDays: z.number().int().min(1).max(365).optional(),
+  /** 0=关 1=开 */
+  rerankerEnabled: z.number().int().min(0).max(1).optional(),
+  rerankerTopN: z.number().int().min(1).max(50).optional(),
 });
 
 /** 完整设置响应 schema（GET /admin/settings） */
