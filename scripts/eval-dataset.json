@@ -1,0 +1,32 @@
+[
+  {
+    "question": "差旅费报销标准是什么？",
+    "expectedDocumentIds": [],
+    "expectedKeywords": ["差旅", "报销", "标准"],
+    "notes": "期望检索到差旅费相关制度文档；expectedDocumentIds 待填充"
+  },
+  {
+    "question": "采购审批流程是怎样的？",
+    "expectedDocumentIds": [],
+    "expectedKeywords": ["采购", "审批", "流程"],
+    "notes": "期望检索到采购管理办法或审批流程；expectedDocumentIds 待填充"
+  },
+  {
+    "question": "发票粘贴有什么规范？",
+    "expectedDocumentIds": [],
+    "expectedKeywords": ["发票", "粘贴", "规范"],
+    "notes": "期望检索到票据粘贴或报销附件规范；expectedDocumentIds 待填充"
+  },
+  {
+    "question": "住宿费限额如何规定？",
+    "expectedDocumentIds": [],
+    "expectedKeywords": ["住宿", "限额", "标准"],
+    "notes": "期望检索到差旅住宿费限额相关条款；expectedDocumentIds 待填充"
+  },
+  {
+    "question": "公务接待费用标准是什么？",
+    "expectedDocumentIds": [],
+    "expectedKeywords": ["公务接待", "费用", "标准"],
+    "notes": "期望检索到公务接待管理办法；expectedDocumentIds 待填充"
+  }
+]

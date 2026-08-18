@@ -1,0 +1,10 @@
+{
+  "extends": "../apps/server/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": "..",
+    "typeRoots": ["../apps/server/node_modules/@types"]
+  },
+  "include": ["./eval.ts"]
+}
