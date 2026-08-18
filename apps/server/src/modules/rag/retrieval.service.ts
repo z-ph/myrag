@@ -122,8 +122,14 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     if (s.rerankerEnabled && afterRelevance.length > 1) {
       try {
         const scores = await this.llm.rerank(question, afterRelevance.map((c) => c.pageContent));
+        // 只对有限 LLM 分做 min-max，缺项仍回退 0-1 混合分，避免量纲混排
+        const present = scores.map((s) => (Number.isFinite(s) ? s : undefined));
+        const normalized = minMaxNormalize(present.filter((s): s is number => s !== undefined));
+        let n = 0;
         afterRelevance.forEach((c, i) => {
-          c.metadata.score = scores[i] ?? c.metadata.score; // LLM 分覆盖混合分
+          if (present[i] !== undefined) {
+            c.metadata.score = normalized[n++] ?? c.metadata.score;
+          }
         });
         reranked = [...afterRelevance].sort((a, b) => b.metadata.score - a.metadata.score);
         reranked = reranked.slice(0, s.rerankerTopN);

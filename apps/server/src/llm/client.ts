@@ -114,13 +114,16 @@ function baseUrlOf(url: string): string | undefined {
  * 业务逻辑，在消费端保留自研（reasoning 仅展示、不回灌上下文）。
  */
 export function createLlmClient(cfg: ServerConfig, settings: SettingsService): LlmClient {
-  const chatModel = new ChatOpenAI({
+  const chatFields = {
     model: cfg.llmChatModel,
     apiKey: cfg.llmChatApiKey,
     configuration: { baseURL: baseUrlOf(cfg.llmChatBaseUrl) },
     timeout: cfg.llmTimeoutMs,
     maxRetries: 2,
-  });
+  };
+  const chatModel = new ChatOpenAI(chatFields);
+  // 独立实例：langchain 1.x 无 bind，且 invocationParams 读 this.temperature
+  const rerankModel = new ChatOpenAI({ ...chatFields, temperature: 0 });
   const visionModel = new ChatOpenAI({
     model: cfg.llmVisionModel,
     apiKey: cfg.llmVisionApiKey,
@@ -183,13 +186,12 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
 
     async rerank(query, candidates) {
       if (candidates.length === 0) return [];
-      chatModel.temperature = 0;
       const userPrompt =
         `用户问题：${query}\n\n文档片段：\n` +
         `${candidates.map((c, i) => `[${i}] ${c.slice(0, 500)}`).join('\n\n')}\n\n` +
         '请为每个片段打分，返回 JSON：[{"index":0,"score":8},...]';
       try {
-        const res = await chatModel.invoke([new SystemMessage(RERANK_SYSTEM), new HumanMessage(userPrompt)]);
+        const res = await rerankModel.invoke([new SystemMessage(RERANK_SYSTEM), new HumanMessage(userPrompt)]);
         const content = typeof res.content === 'string' ? res.content : '';
         return scoresFromRerankItems(extractJsonArray(stripThink(content)), candidates.length);
       } catch (err) {
