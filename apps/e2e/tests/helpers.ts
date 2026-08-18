@@ -17,17 +17,18 @@ export async function apiLogin(username: string, password: string): Promise<stri
 
 /** 等待聊天页出现非空 AI 回复（流式完成） */
 export async function waitForAnswer(page: Page, timeout = 30_000): Promise<void> {
-  const bubble = page.locator('.msg-assistant .msg-bubble').last();
-  await expect(bubble).not.toHaveText('…', { timeout: 5_000 });
-  // 等待生成结束（发送按钮恢复）
+  const answer = page.locator('.msg-assistant .answer').last();
+  // 生成结束后「停止」换回「发送」
   await expect(page.getByRole('button', { name: '发送' })).toBeVisible({ timeout });
-  const text = (await bubble.textContent()) ?? '';
+  await expect(page.locator('.answer-typing')).toHaveCount(0);
+  const text = (await answer.textContent()) ?? '';
   expect(text.trim().length).toBeGreaterThan(0);
+  expect(text.trim()).not.toBe('正在思考…');
 }
 
 /** 在聊天输入框提问并发送 */
 export async function askQuestion(page: Page, question: string): Promise<void> {
-  const textarea = page.locator('.chat-input-row textarea');
+  const textarea = page.getByPlaceholder('输入问题').or(page.locator('.composer-input'));
   await textarea.fill(question);
   await page.getByRole('button', { name: '发送' }).click();
 }

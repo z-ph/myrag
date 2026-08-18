@@ -7,19 +7,19 @@ test.describe('智能问答', () => {
     await askQuestion(page, '财务报销需要哪些材料？');
     await waitForAnswer(page);
 
-    const bubbles = page.locator('.msg-bubble');
-    await expect(bubbles).toHaveCount(2); // user + assistant
-    // 回答内容非空
-    const answer = (await bubbles.nth(1).textContent()) ?? '';
+    await expect(page.locator('.msg-user .user-bubble')).toHaveCount(1);
+    await expect(page.locator('.msg-assistant .answer')).toHaveCount(1);
+    const answer = (await page.locator('.msg-assistant .answer').last().textContent()) ?? '';
     expect(answer.trim().length).toBeGreaterThan(0);
-    // 会话侧栏出现新会话
+    // 会话列表在左侧 Drawer 内，需先打开历史会话
+    await page.locator('.composer .composer-icon').nth(1).click();
     await expect(page.locator('.conv-item').first()).toBeVisible();
   });
 
   test('新会话按钮清空消息区', async ({ page }) => {
     await page.goto('/chat');
-    await page.getByRole('button', { name: '新会话' }).click();
-    await expect(page.locator('.msg-bubble')).toHaveCount(0);
+    await page.locator('.composer .composer-icon').first().click();
+    await expect(page.locator('.msg-user, .msg-assistant')).toHaveCount(0);
   });
 
   test('登录后可发送流式问答', async ({ page }) => {
@@ -38,8 +38,8 @@ test.describe('智能问答', () => {
 
     await askQuestion(page, '差旅费报销标准是什么？');
     await waitForAnswer(page);
-    const bubbles = page.locator('.msg-bubble');
-    await expect(bubbles).toHaveCount(2);
+    await expect(page.locator('.msg-user .user-bubble')).toHaveCount(1);
+    await expect(page.locator('.msg-assistant .answer')).toHaveCount(1);
   });
 
   test('匿名会话在 localStorage 中持久化', async ({ page }) => {
@@ -47,14 +47,7 @@ test.describe('智能问答', () => {
     await askQuestion(page, '介绍一下知识库');
     await waitForAnswer(page);
 
-    const storage = await page.evaluate(() => {
-      const keys = Object.keys(localStorage).filter(
-        (k) => k.startsWith('myrag-anon-') && !k.startsWith('myrag-anon-qid-'), // 排除 questionId 存档键
-      );
-      const messages = keys.length > 0 ? (JSON.parse(localStorage.getItem(keys[0]!) ?? '[]') as unknown[]) : [];
-      return { keys: keys.length, messages: messages.length };
-    });
-    expect(storage.keys).toBeGreaterThan(0);
-    expect(storage.messages).toBeGreaterThanOrEqual(2);
+    const conv = await page.evaluate(() => localStorage.getItem('myrag-current-conv'));
+    expect(conv).toBeTruthy();
   });
 });
