@@ -27,10 +27,11 @@ test.describe('文档库', () => {
 
   test('关键字搜索过滤列表', async ({ page }) => {
     await page.goto('/documents');
-    const search = page.getByPlaceholder('按文件名搜索');
+    const search = page.getByPlaceholder('按文件名或文号搜索');
     await search.fill('不存在的文档xyz');
-    await page.keyboard.press('Enter');
+    await expect(page.getByText('没找到「不存在的文档xyz」')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('.ant-table-row')).toHaveCount(0);
+    await expect(page).toHaveURL(/q=/);
   });
 
   test('未登录不显示上传按钮', async ({ page }) => {

@@ -16,7 +16,7 @@ import {
 import { CloseOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem } from '@myrag/shared';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { ALLOWED_EXTENSIONS } from '../constants';
@@ -161,9 +161,28 @@ export default function DocumentsPage() {
     message.error(err.message);
   };
   const isMobile = useIsMobile();
-  const [keyword, setKeyword] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [keyword, setKeyword] = useState(() => searchParams.get('q')?.trim() ?? '');
+  const [draft, setDraft] = useState(keyword);
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
+
+  const commitSearch = (raw: string) => {
+    const next = raw.trim();
+    setDraft(raw);
+    setKeyword(next);
+    setSearchParams(next ? { q: next } : {}, { replace: true });
+  };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const next = draft.trim();
+      if (next === keyword) return;
+      setKeyword(next);
+      setSearchParams(next ? { q: next } : {}, { replace: true });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [draft, keyword, setSearchParams]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['documents', keyword],
@@ -296,10 +315,13 @@ export default function DocumentsPage() {
       <div className="page-card docs-toolbar">
         <Space size={12} wrap>
           <Input.Search
-            placeholder="按文件名搜索"
+            value={draft}
             allowClear
-            style={{ width: isMobile ? '100%' : 260 }}
-            onSearch={(v) => setKeyword(v.trim())}
+            placeholder="按文件名或文号搜索"
+            aria-label="按文件名或文号搜索"
+            style={{ width: isMobile ? '100%' : 280 }}
+            onChange={(e) => setDraft(e.target.value)}
+            onSearch={commitSearch}
           />
           {isManager && (
             <Upload
@@ -345,6 +367,7 @@ export default function DocumentsPage() {
           dataSource={data?.documents ?? []}
           columns={columns}
           pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
+          locale={{ emptyText: keyword ? `没找到「${keyword}」` : '暂无文档' }}
           size={isMobile ? 'small' : 'middle'}
         />
       </div>
