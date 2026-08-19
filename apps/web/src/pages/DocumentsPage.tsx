@@ -13,12 +13,13 @@ import {
   Upload,
   type TableProps,
 } from 'antd';
-import { CloseOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CloseOutlined, CloudUploadOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem } from '@myrag/shared';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
+import { useChatStore } from '../store/chat';
 import { ALLOWED_EXTENSIONS } from '../constants';
 
 type PreviewTarget = { documentId: string; filename: string; status: string };
@@ -231,7 +232,7 @@ export default function DocumentsPage() {
 
   const actionColumn: NonNullable<TableProps<DocumentListItem>['columns']>[number] = {
     title: '操作',
-    width: isMobile ? 108 : 200,
+    width: isMobile ? 136 : 228,
     render: (_, row) => (
       <Space size={4}>
         <Tooltip title="下载">
@@ -248,6 +249,17 @@ export default function DocumentsPage() {
             icon={<EyeOutlined />}
             aria-label={`预览「${row.filename}」`}
             onClick={() => setPreview({ documentId: row.documentId, filename: row.filename, status: row.status })}
+          />
+        </Tooltip>
+        <Tooltip title="问这篇">
+          <Button
+            type="text"
+            icon={<CommentOutlined />}
+            aria-label={`问「${row.filename}」`}
+            onClick={() => {
+              useChatStore.getState().askAboutDocument(row.filename);
+              navigate('/chat');
+            }}
           />
         </Tooltip>
         {isManager && (

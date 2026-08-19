@@ -290,8 +290,13 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (authLoading) return;
-    void refreshConversations();
-    if (conversationId) void loadConversation(conversationId);
+    const boot = async () => {
+      await refreshConversations();
+      const pending = useChatStore.getState().takePendingAsk();
+      if (conversationId && !pending) await loadConversation(conversationId);
+      if (pending) await sendMessage(pending);
+    };
+    void boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading]);
 
