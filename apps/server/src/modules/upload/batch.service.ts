@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt } from 'drizzle-orm';
 import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import type { ServerConfig } from '@myrag/shared';
 import type { BatchTask, TaskStatus } from '@myrag/shared';
@@ -274,7 +274,26 @@ export function createBatchService(
       for (const task of staleTasks) {
         await enqueue(task.taskId);
       }
-      return staleTasks.length;
+
+      // 单文件 process-single 不写 batchTasks。入队前崩溃或 removeOnFail 后会永久卡 PENDING。
+      // documents 无 updatedAt，用 createdAt 衡量 PENDING 时长；只扫 batchTaskId IS NULL，避免与批量补偿重复。
+      // processedAt IS NULL 排除 rebuildAll 把旧文档拨回 PENDING 的窗口；deleted 文档不再入队。
+      const staleDocs = await db
+        .select({ documentId: documents.documentId })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.status, 'PENDING'),
+            eq(documents.deleted, false),
+            isNull(documents.batchTaskId),
+            isNull(documents.processedAt),
+            lt(documents.createdAt, stale),
+          ),
+        );
+      for (const doc of staleDocs) {
+        await enqueueSingle(doc.documentId);
+      }
+      return staleTasks.length + staleDocs.length;
     },
 
     startRecoveryLoop() {
