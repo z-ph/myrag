@@ -239,30 +239,21 @@ export default function DocumentsPage() {
             onSearch={(v) => setKeyword(v.trim())}
           />
           <Upload
-            multiple={false}
+            multiple
+            fileList={[]}
             showUploadList={false}
             accept={ALLOWED_EXTENSIONS.join(',')}
-            beforeUpload={(file) => {
-              void uploadMutation.mutateAsync(file).catch(() => {});
+            beforeUpload={(file, fileList) => {
+              if (file.uid === fileList.at(-1)?.uid) {
+                const files = fileList.filter((f): f is File => f instanceof File);
+                if (files.length === 1) void uploadMutation.mutateAsync(files[0]).catch(() => {});
+                else if (files.length > 1) batchMutation.mutate(files);
+              }
               return false;
             }}
           >
-            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending}>
+            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending || batchMutation.isPending}>
               上传文档
-            </Button>
-          </Upload>
-          <Upload
-            multiple
-            showUploadList={false}
-            accept={ALLOWED_EXTENSIONS.join(',')}
-            beforeUpload={() => false}
-            onChange={({ fileList }) => {
-              const files = fileList.flatMap((f) => (f.originFileObj ? [f.originFileObj] : []));
-              if (files.length > 0) batchMutation.mutate(files);
-            }}
-          >
-            <Button icon={<CloudUploadOutlined />} loading={batchMutation.isPending}>
-              批量上传
             </Button>
           </Upload>
         </Space>

@@ -38,6 +38,8 @@ test.describe('文档库', () => {
     test.skip(token === null, '后端未就绪');
 
     await page.goto('/documents');
+    await expect(page.getByRole('button', { name: '上传文档' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '批量上传' })).toHaveCount(0);
     await page.locator('input[type="file"]').first().setInputFiles({
       name: 'test.txt',
       mimeType: 'text/plain',
