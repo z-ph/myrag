@@ -201,67 +201,74 @@ export default function DocumentsPage() {
     onError: (err: Error) => reportError(err),
   });
 
-  const columns: TableProps<DocumentListItem>['columns'] = [
-    { title: '文件名', dataIndex: 'filename', ellipsis: true },
-    {
-      title: '类型',
-      dataIndex: 'fileType',
-      width: 100,
-      render: (v: string) => <Tag>{v}</Tag>,
-    },
-    {
-      title: '大小',
-      dataIndex: 'fileSize',
-      width: 100,
-      render: (v: number) => formatFileSize(v),
-    },
-    { title: '分块', dataIndex: 'segmentCount', width: 70 },
-    { title: '向量', dataIndex: 'vectorCount', width: 70 },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (v: string) => {
-        const s = STATUS_TAG[v] ?? { color: 'default', text: v };
-        return <Tag color={s.color}>{s.text}</Tag>;
-      },
-    },
-    {
-      title: '上传时间',
-      dataIndex: 'uploadTime',
-      width: 160,
-      render: (v: string) => new Date(v).toLocaleString('zh-CN'),
-    },
-    {
-      title: '操作',
-      width: 200,
-      render: (_, row) => (
-        <Space size={4}>
-          <Tooltip title="下载">
-            <Button
-              type="text"
-              icon={<DownloadOutlined />}
-              aria-label={`下载「${row.filename}」`}
-              onClick={() => void documentsApi.download(row.documentId, row.filename)}
-            />
-          </Tooltip>
-          <Tooltip title="预览">
-            <Button
-              type="text"
-              icon={<EyeOutlined />}
-              aria-label={`预览「${row.filename}」`}
-              onClick={() => setPreview({ documentId: row.documentId, filename: row.filename, status: row.status })}
-            />
-          </Tooltip>
-          {isManager && (
-            <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
-              <Button type="text" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          )}
-        </Space>
-      ),
-    },
-  ];
+  const actionColumn: NonNullable<TableProps<DocumentListItem>['columns']>[number] = {
+    title: '操作',
+    width: isMobile ? 108 : 200,
+    render: (_, row) => (
+      <Space size={4}>
+        <Tooltip title="下载">
+          <Button
+            type="text"
+            icon={<DownloadOutlined />}
+            aria-label={`下载「${row.filename}」`}
+            onClick={() => void documentsApi.download(row.documentId, row.filename)}
+          />
+        </Tooltip>
+        <Tooltip title="预览">
+          <Button
+            type="text"
+            icon={<EyeOutlined />}
+            aria-label={`预览「${row.filename}」`}
+            onClick={() => setPreview({ documentId: row.documentId, filename: row.filename, status: row.status })}
+          />
+        </Tooltip>
+        {isManager && (
+          <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
+            <Button type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        )}
+      </Space>
+    ),
+  };
+
+  const columns: TableProps<DocumentListItem>['columns'] = isMobile
+    ? [
+        { title: '文件名', dataIndex: 'filename', className: 'doc-name-cell' },
+        actionColumn,
+      ]
+    : [
+        { title: '文件名', dataIndex: 'filename', ellipsis: true },
+        {
+          title: '类型',
+          dataIndex: 'fileType',
+          width: 100,
+          render: (v: string) => <Tag>{v}</Tag>,
+        },
+        {
+          title: '大小',
+          dataIndex: 'fileSize',
+          width: 100,
+          render: (v: number) => formatFileSize(v),
+        },
+        { title: '分块', dataIndex: 'segmentCount', width: 70 },
+        { title: '向量', dataIndex: 'vectorCount', width: 70 },
+        {
+          title: '状态',
+          dataIndex: 'status',
+          width: 90,
+          render: (v: string) => {
+            const s = STATUS_TAG[v] ?? { color: 'default', text: v };
+            return <Tag color={s.color}>{s.text}</Tag>;
+          },
+        },
+        {
+          title: '上传时间',
+          dataIndex: 'uploadTime',
+          width: 160,
+          render: (v: string) => new Date(v).toLocaleString('zh-CN'),
+        },
+        actionColumn,
+      ];
 
   return (
     <div className="page">
@@ -318,61 +325,16 @@ export default function DocumentsPage() {
         )}
       </div>
 
-      {isMobile ? (
-        <div className="docs-card-list">
-          {isLoading ? (
-            <div className="page-card">
-              <Spin style={{ display: 'block', margin: '24px auto' }} />
-            </div>
-          ) : (data?.documents ?? []).length === 0 ? (
-            <div className="page-card doc-preview-empty">暂无数据</div>
-          ) : (
-            (data?.documents ?? []).map((row) => {
-              const status = STATUS_TAG[row.status] ?? { color: 'default', text: row.status };
-              return (
-                <article key={row.documentId} className="doc-card">
-                  <div className="doc-card-name">{row.filename}</div>
-                  <div className="doc-card-meta">
-                    {row.fileType} · {formatFileSize(row.fileSize)} · {status.text}
-                  </div>
-                  <div className="doc-card-actions">
-                    <Button
-                      icon={<EyeOutlined />}
-                      onClick={() => setPreview({ documentId: row.documentId, filename: row.filename, status: row.status })}
-                    >
-                      预览
-                    </Button>
-                    <Button
-                      icon={<DownloadOutlined />}
-                      onClick={() => void documentsApi.download(row.documentId, row.filename)}
-                    >
-                      下载
-                    </Button>
-                    {isManager && (
-                      <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
-                        <Button danger icon={<DeleteOutlined />}>
-                          删除
-                        </Button>
-                      </Popconfirm>
-                    )}
-                  </div>
-                </article>
-              );
-            })
-          )}
-        </div>
-      ) : (
-        <div className="page-card">
-          <Table<DocumentListItem>
-            rowKey="documentId"
-            loading={isLoading}
-            dataSource={data?.documents ?? []}
-            columns={columns}
-            pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
-            size="middle"
-          />
-        </div>
-      )}
+      <div className="page-card">
+        <Table<DocumentListItem>
+          rowKey="documentId"
+          loading={isLoading}
+          dataSource={data?.documents ?? []}
+          columns={columns}
+          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
+          size={isMobile ? 'small' : 'middle'}
+        />
+      </div>
 
       <DocumentPreviewModal target={preview} onClose={() => setPreview(null)} />
     </div>

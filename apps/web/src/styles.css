@@ -264,42 +264,9 @@ body {
   flex-wrap: wrap;
 }
 
-.docs-card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.doc-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px 16px;
-}
-
-.doc-card-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ink);
-  line-height: 1.45;
+.doc-name-cell {
+  white-space: normal;
   word-break: break-word;
-}
-
-.doc-card-meta {
-  margin-top: 6px;
-  font-size: 13px;
-  color: var(--ink-2);
-}
-
-.doc-card-actions {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.doc-card-actions .ant-btn {
-  min-height: 44px;
 }
 
 .topbar-drawer-nav {
