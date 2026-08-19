@@ -279,8 +279,9 @@ body {
   flex-wrap: wrap;
 }
 
-.docs-toolbar .docs-search {
-  width: min(100%, 26rem);
+.docs-toolbar .docs-search.ant-input-search {
+  width: 26rem;
+  max-width: 100%;
 }
 
 .doc-name-cell {
