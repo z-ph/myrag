@@ -58,7 +58,14 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
   }, [target]);
 
   return (
-    <Modal open={target != null} title={target?.filename} footer={null} onCancel={onClose} width={720} destroyOnHidden>
+    <Modal
+      open={target != null}
+      title={target?.filename}
+      footer={null}
+      onCancel={onClose}
+      width="min(720px, calc(100vw - 24px))"
+      destroyOnHidden
+    >
       {target && (
         <>
           {loading ? (
@@ -100,6 +107,21 @@ const STATUS_TAG: Record<string, { color: string; text: string }> = {
   FAILED: { color: 'error', text: '失败' },
 };
 
+function formatFileSize(bytes: number): string {
+  return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function useIsMobile(query = '(max-width: 800px)'): boolean {
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const onChange = () => setMobile(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return mobile;
+}
+
 export default function DocumentsPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
@@ -122,6 +144,7 @@ export default function DocumentsPage() {
     }
     message.error(err.message);
   };
+  const isMobile = useIsMobile();
   const [keyword, setKeyword] = useState('');
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
@@ -183,7 +206,7 @@ export default function DocumentsPage() {
       title: '大小',
       dataIndex: 'fileSize',
       width: 100,
-      render: (v: number) => (v > 1024 * 1024 ? `${(v / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(v / 1024))} KB`),
+      render: (v: number) => formatFileSize(v),
     },
     { title: '分块', dataIndex: 'segmentCount', width: 70 },
     { title: '向量', dataIndex: 'vectorCount', width: 70 },
@@ -243,12 +266,12 @@ export default function DocumentsPage() {
             : '浏览制度与流程文件，预览或下载后可在智能问答中检索。'}
         </p>
       </div>
-      <div className="page-card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Space size={12}>
+      <div className="page-card docs-toolbar">
+        <Space size={12} wrap>
           <Input.Search
             placeholder="按文件名搜索"
             allowClear
-            style={{ width: 260 }}
+            style={{ width: isMobile ? '100%' : 260 }}
             onSearch={(v) => setKeyword(v.trim())}
           />
           {isManager && (
@@ -288,16 +311,61 @@ export default function DocumentsPage() {
         )}
       </div>
 
-      <div className="page-card">
-        <Table<DocumentListItem>
-          rowKey="documentId"
-          loading={isLoading}
-          dataSource={data?.documents ?? []}
-          columns={columns}
-          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
-          size="middle"
-        />
-      </div>
+      {isMobile ? (
+        <div className="docs-card-list">
+          {isLoading ? (
+            <div className="page-card">
+              <Spin style={{ display: 'block', margin: '24px auto' }} />
+            </div>
+          ) : (data?.documents ?? []).length === 0 ? (
+            <div className="page-card doc-preview-empty">暂无数据</div>
+          ) : (
+            (data?.documents ?? []).map((row) => {
+              const status = STATUS_TAG[row.status] ?? { color: 'default', text: row.status };
+              return (
+                <article key={row.documentId} className="doc-card">
+                  <div className="doc-card-name">{row.filename}</div>
+                  <div className="doc-card-meta">
+                    {row.fileType} · {formatFileSize(row.fileSize)} · {status.text}
+                  </div>
+                  <div className="doc-card-actions">
+                    <Button
+                      icon={<EyeOutlined />}
+                      onClick={() => setPreview({ documentId: row.documentId, filename: row.filename, status: row.status })}
+                    >
+                      预览
+                    </Button>
+                    <Button
+                      icon={<DownloadOutlined />}
+                      onClick={() => void documentsApi.download(row.documentId, row.filename)}
+                    >
+                      下载
+                    </Button>
+                    {isManager && (
+                      <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
+                        <Button danger icon={<DeleteOutlined />}>
+                          删除
+                        </Button>
+                      </Popconfirm>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      ) : (
+        <div className="page-card">
+          <Table<DocumentListItem>
+            rowKey="documentId"
+            loading={isLoading}
+            dataSource={data?.documents ?? []}
+            columns={columns}
+            pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
+            size="middle"
+          />
+        </div>
+      )}
 
       <DocumentPreviewModal target={preview} onClose={() => setPreview(null)} />
     </div>

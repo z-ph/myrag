@@ -50,6 +50,25 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
+.topbar-menu {
+  display: none;
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbar-menu:hover {
+  background: #f0f1f4;
+}
+
 .topbar-brand {
   display: flex;
   align-items: center;
@@ -84,6 +103,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.5px;
   color: var(--ink);
+  white-space: nowrap;
 }
 
 .topbar-nav {
@@ -105,6 +125,7 @@ body {
   color: var(--ink-2);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 
 .topbar-nav-item:hover {
@@ -214,4 +235,102 @@ body {
   text-align: center;
   color: var(--ink-2);
   font-size: 14px;
+}
+
+.docs-toolbar {
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.docs-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.doc-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.doc-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.doc-card-meta {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.doc-card-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.doc-card-actions .ant-btn {
+  min-height: 44px;
+}
+
+.topbar-drawer-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.topbar-drawer-nav .topbar-nav-item {
+  width: 100%;
+  min-height: 44px;
+  justify-content: flex-start;
+}
+
+@media (max-width: 800px) {
+  .topbar {
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .topbar-menu {
+    display: inline-flex;
+  }
+
+  .topbar-nav {
+    display: none;
+  }
+
+  .topbar-user {
+    max-width: 88px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .page {
+    padding: 16px 12px 32px;
+  }
+
+  .page-card {
+    padding: 16px;
+  }
+
+  .docs-toolbar .ant-input-search,
+  .docs-toolbar .ant-space {
+    width: 100%;
+  }
+
+  .docs-toolbar .ant-input-search {
+    max-width: none;
+  }
 }
