@@ -237,6 +237,22 @@ body {
   font-size: 14px;
 }
 
+.doc-preview-modal .ant-modal-header {
+  padding-right: 48px;
+}
+
+.doc-preview-modal .ant-modal-title {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+  padding-right: 8px;
+}
+
+.doc-preview-modal .ant-modal-close {
+  inset-inline-end: 12px;
+  top: 12px;
+}
+
 .docs-toolbar {
   margin-bottom: 12px;
   display: flex;

@@ -59,6 +59,7 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
 
   return (
     <Modal
+      className="doc-preview-modal"
       open={target != null}
       title={target?.filename}
       footer={null}
