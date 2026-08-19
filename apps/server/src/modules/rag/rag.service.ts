@@ -153,7 +153,7 @@ export function createRagService(
      */
     const listDocuments = tool(
       async ({ filterByFileName }: { filterByFileName?: string }) => {
-        const { documents } = await documentService.list(filterByFileName?.trim() || undefined);
+        const { documents } = await documentService.list(filterByFileName?.trim() || undefined, 'filename');
         if (documents.length === 0) return '没有匹配的文档。';
         return JSON.stringify(documents.map((d) => ({ documentId: d.documentId, filename: d.filename })));
       },

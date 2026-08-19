@@ -32,7 +32,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'get',
           path: '/',
-          description: '文档列表（公开，支持按文件名模糊搜索）',
+          description: '文档列表（公开，支持按文件名、文号、主题、正文搜索）',
           security: [],
           request: {
             query: z.object({ keyword: z.string().max(100).optional() }),
@@ -43,7 +43,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         }),
         async (c) => {
           const { keyword } = c.req.valid('query');
-          const list = await documentService.list(keyword?.trim() || undefined);
+          const list = await documentService.list(keyword?.trim() || undefined, 'library');
           return c.json(list);
         },
       )

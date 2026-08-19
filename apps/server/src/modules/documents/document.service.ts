@@ -1,4 +1,4 @@
-import { and, count, desc, eq, like } from 'drizzle-orm';
+import { and, count, desc, eq, exists, or, sql, type SQLWrapper } from 'drizzle-orm';
 import type {
   DocumentContent,
   DocumentDeleteResponse,
@@ -23,8 +23,11 @@ export interface Downloadable {
   size: number;
 }
 
+/** filename = 仅文件名（agent 目录）；library = 文件名 + 文号/主题/正文 */
+export type DocumentListMatch = 'filename' | 'library';
+
 export interface DocumentService {
-  list(keyword?: string): Promise<DocumentListResponse>;
+  list(keyword?: string, match?: DocumentListMatch): Promise<DocumentListResponse>;
   /** 文档卡片：身份信息，不含正文 */
   get(documentId: string): Promise<DocumentListItem>;
   /** 公开下载：返回文件流信息，文档不存在返回 null */
@@ -33,6 +36,12 @@ export interface DocumentService {
   vectorDetail(documentId: string): Promise<DocumentVectorDetail>;
   /** 文档原文（按块），供预览与高亮命中块 */
   content(documentId: string): Promise<DocumentContent>;
+}
+
+/** 子串匹配；转义 LIKE 通配符，避免输入 %/_ 扫全表 */
+function likeContains(column: SQLWrapper, keyword: string) {
+  const pattern = `%${keyword.replace(/[\\%_]/g, '\\$&')}%`;
+  return sql`${column} ilike ${pattern} escape '\\'`;
 }
 
 function toListItem(row: typeof documents.$inferSelect): DocumentListItem {
@@ -55,11 +64,33 @@ export function createDocumentService(
   cfg: ServerConfig,
 ): DocumentService {
   return {
-    async list(keyword) {
-      const cond = and(
-        eq(documents.deleted, false),
-        keyword ? like(documents.originalFilename, `%${keyword}%`) : undefined,
-      );
+    async list(keyword, match = 'filename') {
+      const term = keyword?.trim();
+      const textMatch = term
+        ? match === 'library'
+          ? or(
+              likeContains(documents.originalFilename, term),
+              likeContains(documents.previewText, term),
+              exists(
+                db
+                  .select({ one: sql`1` })
+                  .from(documentChunks)
+                  .where(
+                    and(
+                      eq(documentChunks.documentId, documents.documentId),
+                      or(
+                        likeContains(documentChunks.title, term),
+                        likeContains(documentChunks.keywords, term),
+                        likeContains(documentChunks.documentKeywords, term),
+                        likeContains(documentChunks.chunkText, term),
+                      ),
+                    ),
+                  ),
+              ),
+            )
+          : likeContains(documents.originalFilename, term)
+        : undefined;
+      const cond = and(eq(documents.deleted, false), textMatch);
       const rows = await db.select().from(documents).where(cond).orderBy(desc(documents.createdAt)).limit(cfg.documentListLimit);
       const [totalRow] = await db.select({ total: count() }).from(documents).where(cond);
       return { documents: rows.map(toListItem), total: totalRow?.total ?? 0 };

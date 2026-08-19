@@ -33,7 +33,7 @@
 | 能力 | 接口 |
 |---|---|
 | 签发访客 token（未登录问答的入场券） | `POST /auth/guest-sessions` |
-| 文档列表（含文件名模糊搜索） | `GET /documents` |
+| 文档列表（含文件名、文号、主题、正文搜索） | `GET /documents` |
 | 文档原始文件下载 | `GET /documents/{documentId}/file` |
 | API 文档 | 后端 `GET /docs`、`GET /openapi.json`；经 Nginx 反代为 `/api/docs`、`/api/openapi.json` |
 
