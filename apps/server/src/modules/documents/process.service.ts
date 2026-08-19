@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import type { DocumentStatus, ServerConfig, FileType, SettingsService } from '@myrag/shared';
 import { DEFAULTS } from '@myrag/shared';
 import type { Db } from '../../db';
-import { documents, documentChunks } from '../../db/schema';
+import { documents, documentChunks, type DocumentRow } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
@@ -33,6 +33,10 @@ export interface ProcessResult {
 export interface ProcessService {
   /** 处理单文件（上传/批量/重建共用），写库并返回结果 */
   processBuffer(input: ProcessInput): Promise<ProcessResult>;
+  /** 单文件异步入口：校验、落盘并创建 PENDING 记录，不执行解析/向量化 */
+  processSingleAsync(input: ProcessInput): Promise<{ documentId: string; status: 'PENDING' }>;
+  /** 单个已入库文档的解析→分块→向量化（worker / 重建共用） */
+  processDocumentRow(doc: DocumentRow): Promise<ProcessResult>;
   /** 依据 documents 行重处理（全量重建用） */
   reprocessStored(documentId: string, operator: string): Promise<ProcessResult>;
   /** 全量重建：重建集合 + 重处理全部 FULL_INDEX 文档，返回任务 ID */
@@ -152,7 +156,7 @@ export function createProcessService(
     return { segmentCount: chunks.length, vectorCount: points.length };
   }
 
-  async function processDocumentRow(doc: typeof documents.$inferSelect): Promise<ProcessResult> {
+  async function processDocumentRow(doc: DocumentRow): Promise<ProcessResult> {
     try {
       const buffer = await objectStorage.getBuffer(doc.filePath);
       if (!buffer) throw new Error('文档文件不存在（对象存储或本地均未找到）');
@@ -201,47 +205,61 @@ export function createProcessService(
     }
   }
 
+  /** 校验格式 + 重复检查 + 存对象存储 + 创建 PENDING 记录，不执行解析/向量化 */
+  async function createPendingDocument(input: ProcessInput): Promise<DocumentRow> {
+    const fileType = assertSupportedFile(input.originalFilename, input.buffer);
+    const fileHash = await sha256(input.buffer);
+
+    // 重复文件检查（同内容且已成功入库的文档；失败的允许重传）
+    const [dup] = await db
+      .select({ documentId: documents.documentId, originalFilename: documents.originalFilename })
+      .from(documents)
+      .where(and(eq(documents.fileHash, fileHash), eq(documents.deleted, false), eq(documents.status, 'SUCCESS')))
+      .limit(1);
+    if (dup) {
+      throw conflict(`文件内容与已上传文档「${dup.originalFilename}」重复`);
+    }
+
+    const documentId = genId('doc');
+    // 对象存储 key：docs/{documentId}/{originalFilename}（未配置 MinIO 时本地回退同构）
+    const filePath = join('docs', documentId, input.originalFilename);
+    await objectStorage.put(filePath, input.buffer, detectContentType(input.originalFilename));
+
+    const [row] = await db
+      .insert(documents)
+      .values({
+        documentId,
+        userId: input.userId,
+        filename: basename(filePath),
+        originalFilename: input.originalFilename,
+        fileType,
+        filePath,
+        fileSize: input.buffer.byteLength,
+        contentType: detectContentType(input.originalFilename),
+        fileHash,
+        status: 'PENDING',
+        batchTaskId: input.batchTaskId,
+      })
+      .returning({ id: documents.id });
+    if (!row) throw new Error('文档记录插入失败');
+
+    const doc = (await db.select().from(documents).where(eq(documents.id, row.id)).limit(1))[0];
+    if (!doc) throw new Error('文档记录插入失败');
+    return doc;
+  }
+
   return {
     async processBuffer(input) {
-      const fileType = assertSupportedFile(input.originalFilename, input.buffer);
-      const fileHash = await sha256(input.buffer);
-
-      // 重复文件检查（同内容且已成功入库的文档；失败的允许重传）
-      const [dup] = await db
-        .select({ documentId: documents.documentId, originalFilename: documents.originalFilename })
-        .from(documents)
-        .where(and(eq(documents.fileHash, fileHash), eq(documents.deleted, false), eq(documents.status, 'SUCCESS')))
-        .limit(1);
-      if (dup) {
-        throw conflict(`文件内容与已上传文档「${dup.originalFilename}」重复`);
-      }
-
-      const documentId = genId('doc');
-      // 对象存储 key：docs/{documentId}/{originalFilename}（未配置 MinIO 时本地回退同构）
-      const filePath = join('docs', documentId, input.originalFilename);
-      await objectStorage.put(filePath, input.buffer, detectContentType(input.originalFilename));
-
-      const [row] = await db
-        .insert(documents)
-        .values({
-          documentId,
-          userId: input.userId,
-          filename: basename(filePath),
-          originalFilename: input.originalFilename,
-          fileType,
-          filePath,
-          fileSize: input.buffer.byteLength,
-          contentType: detectContentType(input.originalFilename),
-          fileHash,
-          status: 'PENDING',
-          batchTaskId: input.batchTaskId,
-        })
-        .returning({ id: documents.id });
-      if (!row) throw new Error('文档记录插入失败');
-
-      const doc = (await db.select().from(documents).where(eq(documents.id, row.id)).limit(1))[0]!;
+      const doc = await createPendingDocument(input);
       return processDocumentRow(doc);
     },
+
+    async processSingleAsync(input) {
+      const doc = await createPendingDocument(input);
+      return { documentId: doc.documentId, status: 'PENDING' };
+    },
+
+    processDocumentRow,
 
     async reprocessStored(documentId) {
       const [doc] = await db

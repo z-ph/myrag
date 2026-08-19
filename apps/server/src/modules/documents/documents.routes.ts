@@ -5,7 +5,7 @@ import {
   documentDeleteResponseSchema,
   documentListResponseSchema,
   documentVectorDetailSchema,
-  processedFileSchema,
+  documentUploadResponseSchema,
   recoveryTriggerResponseSchema,
   rebuildAllResponseSchema,
 } from '@myrag/shared';
@@ -99,7 +99,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
             body: { content: { 'multipart/form-data': { schema: uploadFormSchema } } },
           },
           responses: {
-            201: { description: '处理结果', content: { 'application/json': { schema: processedFileSchema } } },
+            201: { description: '已入队', content: { 'application/json': { schema: documentUploadResponseSchema } } },
             ...errorResponses,
           },
         }),
@@ -109,11 +109,12 @@ export function createDocumentsRoutes(deps: AppDeps) {
           const file = body['file'];
           if (!(file instanceof File)) throw badRequest('缺少上传文件');
           if (file.size > DEFAULTS.maxFileSizeBytes) throw tooLarge('文件超过大小限制');
-          const result = await processService.processBuffer({
+          const result = await processService.processSingleAsync({
             userId: auth.username,
             originalFilename: file.name,
             buffer: Buffer.from(await file.arrayBuffer()),
           });
+          await batchService.enqueueSingle(result.documentId);
           return c.json(result, 201);
         },
       )

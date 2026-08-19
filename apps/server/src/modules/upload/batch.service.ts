@@ -5,7 +5,7 @@ import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import type { ServerConfig } from '@myrag/shared';
 import type { BatchTask, TaskStatus } from '@myrag/shared';
 import type { Db } from '../../db';
-import { batchFileResults, batchTasks } from '../../db/schema';
+import { batchFileResults, batchTasks, documents } from '../../db/schema';
 import type { ProcessService } from '../documents/process.service';
 import { genId, logger } from '../../lib/util';
 import { badRequest } from '../../lib/errors';
@@ -14,6 +14,8 @@ export interface BatchService {
   /** 创建批量任务并入队（任意实例 worker 均可拾取） */
   createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
   getTask(taskId: string): Promise<BatchTask>;
+  /** 单文件入队：job name = process-single，jobId = documentId（幂等） */
+  enqueueSingle(documentId: string): Promise<void>;
   /** 启动本实例的任务 worker（BullMQ 消费） */
   startWorker(): void;
   /** 补偿扫描：把超时/中断任务重新入队（jobId 幂等），返回触发数量 */
@@ -139,6 +141,8 @@ async function processTaskFiles(
 const QUEUE_NAME = 'batch';
 const QUEUE_PREFIX = 'myrag';
 
+type QueueJobData = { taskId: string } | { documentId: string };
+
 export function createBatchService(
   db: Db,
   processService: ProcessService,
@@ -150,7 +154,7 @@ export function createBatchService(
     port: cfg.redisPort,
     password: cfg.redisPassword || undefined,
   };
-  const queue = new Queue<{ taskId: string }>(QUEUE_NAME, {
+  const queue = new Queue<QueueJobData>(QUEUE_NAME, {
     connection,
     prefix: QUEUE_PREFIX,
     defaultJobOptions: {
@@ -161,12 +165,17 @@ export function createBatchService(
   });
   queue.on('error', (err) => logger.error('[batch] 队列异常:', err));
 
-  let worker: Worker<{ taskId: string }> | null = null;
+  let worker: Worker<QueueJobData> | null = null;
   let recoveryTimer: ReturnType<typeof setInterval> | null = null;
 
   /** 入队：jobId = taskId，重复入队为空操作（补偿扫描/重试不会并发重复消费） */
   async function enqueue(taskId: string): Promise<void> {
     await queue.add('process', { taskId }, { jobId: taskId });
+  }
+
+  /** 单文件入队：jobId = documentId，重复入队为空操作 */
+  async function enqueueSingle(documentId: string): Promise<void> {
+    await queue.add('process-single', { documentId }, { jobId: documentId });
   }
 
   function stopRecoveryLoop(): void {
@@ -201,6 +210,8 @@ export function createBatchService(
       return this.getTask(taskId);
     },
 
+    enqueueSingle,
+
     async getTask(taskId) {
       const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
       if (!task) throw badRequest('批量任务不存在');
@@ -214,10 +225,22 @@ export function createBatchService(
 
     startWorker() {
       if (worker) return;
-      worker = new Worker<{ taskId: string }>(
+      worker = new Worker<QueueJobData>(
         QUEUE_NAME,
         async (job) => {
-          await processTaskFiles(db, processService, cfg, job.data.taskId);
+          if (job.name === 'process-single') {
+            const documentId = 'documentId' in job.data ? job.data.documentId : '';
+            const [doc] = await db.select().from(documents).where(eq(documents.documentId, documentId)).limit(1);
+            if (!doc) {
+              logger.error(`[batch] 单文件任务文档不存在: ${documentId || '?'}`);
+              return;
+            }
+            await processService.processDocumentRow(doc);
+            return;
+          }
+          if ('taskId' in job.data) {
+            await processTaskFiles(db, processService, cfg, job.data.taskId);
+          }
         },
         {
           connection,
@@ -228,7 +251,10 @@ export function createBatchService(
       );
       // EventEmitter 的 error 事件无监听会抛异常进程退出
       worker.on('error', (err) => logger.error('[batch] worker 异常:', err));
-      worker.on('failed', (job, err) => logger.error(`[batch] 任务 ${job?.data.taskId ?? '?'} 执行失败:`, err));
+      worker.on('failed', (job, err) => {
+        const id = job?.data && ('taskId' in job.data ? job.data.taskId : job.data.documentId);
+        logger.error(`[batch] 任务 ${id ?? '?'} 执行失败:`, err);
+      });
       logger.info('[batch] 任务 worker 已启动 (BullMQ)');
     },
 

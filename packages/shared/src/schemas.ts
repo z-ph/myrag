@@ -65,6 +65,11 @@ export const processedFileSchema = z.object({
   vectorCount: z.number(),
 });
 
+export const documentUploadResponseSchema = z.object({
+  documentId: z.string(),
+  status: z.string(),
+});
+
 export const batchTaskSchema = z.object({
   taskId: z.string(),
   status: z.enum(TASK_STATUSES),
@@ -272,6 +277,7 @@ export type UserItem = z.infer<typeof userItemSchema>;
 export type UserCreateRequest = z.infer<typeof userCreateRequestSchema>;
 export type UserUpdateRequest = z.infer<typeof userUpdateRequestSchema>;
 export type ProcessedFile = z.infer<typeof processedFileSchema>;
+export type DocumentUploadResponse = z.infer<typeof documentUploadResponseSchema>;
 export type BatchTask = z.infer<typeof batchTaskSchema>;
 export type DocumentListItem = z.infer<typeof documentListItemSchema>;
 export type DocumentListResponse = z.infer<typeof documentListResponseSchema>;
