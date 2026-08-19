@@ -9,10 +9,10 @@ import type {
   ConversationDetail,
   DocumentDeleteResponse,
   DocumentListResponse,
+  DocumentUploadResponse,
   DocumentVectorDetail,
   LoginRequest,
   LoginResponse,
-  ProcessedFile,
   RecoveryTriggerResponse,
   RuntimeSettings,
   ToolCallSse,
@@ -80,7 +80,8 @@ export const usersApi = {
 export const documentsApi = {
   list: (keyword?: string) =>
     unwrap(rpc.documents.$get({ query: keyword ? { keyword } : {} }, { headers: authHeaders() })),
-  upload: (file: File) => unwrap(rpc.documents.$post({ form: { file } }, { headers: authHeaders() })),
+  upload: (file: File): Promise<DocumentUploadResponse> =>
+    unwrap(rpc.documents.$post({ form: { file } }, { headers: authHeaders() })),
   batchUpload: (files: File[]) =>
     unwrap(rpc.documents.uploads.$post({ form: { files } }, { headers: authHeaders() })),
   batchTask: (taskId: string) =>

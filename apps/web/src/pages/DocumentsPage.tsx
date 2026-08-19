@@ -15,7 +15,7 @@ import {
 } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DocumentListItem, DocumentVectorDetail, ProcessedFile } from '@myrag/shared';
+import type { DocumentListItem, DocumentUploadResponse, DocumentVectorDetail } from '@myrag/shared';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { ALLOWED_EXTENSIONS } from '../constants';
@@ -39,15 +39,18 @@ export default function DocumentsPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['documents', keyword],
     queryFn: () => documentsApi.list(keyword || undefined),
+    refetchInterval: (query) => {
+      const docs = query.state.data?.documents ?? [];
+      return docs.some((d) => d.status === 'PENDING' || d.status === 'PROCESSING') ? 3000 : false;
+    },
   });
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['documents'] });
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => documentsApi.upload(file),
-    onSuccess: (result: ProcessedFile) => {
-      if (result.success) message.success(`「${result.originalFilename}」已分片向量入库（${result.segmentCount} 分块）`);
-      else message.error(`「${result.originalFilename}」处理失败：${result.message}`);
+    onSuccess: (_result: DocumentUploadResponse, file) => {
+      message.success(`「${file.name}」已提交，后台分片向量入库中`);
       invalidate();
     },
     onError: (err: Error) => message.error(err.message),
@@ -227,7 +230,7 @@ export default function DocumentsPage() {
               type="info"
               showIcon
               message={`集合 ${detailDoc.vectorCollectionName} · 维度 ${detailDoc.vectorSize}`}
-              description={`分片向量入库向量 ${detailDoc.indexedPointCount} / 分块 ${detailDoc.segmentCount} · 存储模式 ${detailDoc.storageMode}`}
+              description={`向量数 ${detailDoc.indexedPointCount} / 分块 ${detailDoc.segmentCount} · 存储模式 ${detailDoc.storageMode}`}
               style={{ marginBottom: 16 }}
             />
             <Table
