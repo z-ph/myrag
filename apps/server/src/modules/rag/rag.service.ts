@@ -18,6 +18,7 @@ import { RedisKeys } from '../../store/redis';
 import type { ConversationService } from './conversation.service';
 import type { ImageService } from './image.service';
 import type { RagRetriever } from './retrieval.service';
+import { Document } from '@langchain/core/documents';
 import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from './chunk';
 import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
@@ -76,11 +77,17 @@ export interface RagService {
 /** 知识库检索工具名（模型侧 + 前端展示共用） */
 export const SEARCH_TOOL_NAME = 'search_knowledge_base';
 export const LIST_DOCUMENTS_TOOL_NAME = 'list_documents';
+export const GET_DOCUMENT_TOOL_NAME = 'get_document';
+export const READ_DOCUMENT_TOOL_NAME = 'read_document';
+
+const READ_DOCUMENT_DEFAULT_CHUNKS = 8;
 
 /** 工具名 → 前端展示文案 */
 export const TOOL_LABELS: Record<string, string> = {
   [SEARCH_TOOL_NAME]: '检索知识库',
   [LIST_DOCUMENTS_TOOL_NAME]: '列出文档',
+  [GET_DOCUMENT_TOOL_NAME]: '查看文档卡片',
+  [READ_DOCUMENT_TOOL_NAME]: '阅读文档正文',
 };
 
 export function createRagService(
@@ -153,9 +160,77 @@ export function createRagService(
       {
         name: LIST_DOCUMENTS_TOOL_NAME,
         description:
-          '列出知识库中的文档（documentId + 文件名）。可用 filterByFileName 按文件名模糊筛选；不传则列出全部。需要限定检索范围时，先用本工具拿到 documentId，再交给 search_knowledge_base。',
+          '目录：列出知识库文档的 documentId 与文件名。filterByFileName 按文件名模糊筛；不传则全部。不含正文。',
         schema: z.object({
           filterByFileName: z.string().optional().describe('按文件名模糊过滤；不传则列出全部'),
+        }),
+      },
+    );
+
+    const getDocument = tool(
+      async ({ documentId }: { documentId: string }) => {
+        const doc = await documentService.get(documentId);
+        return JSON.stringify({
+          documentId: doc.documentId,
+          filename: doc.filename,
+          fileType: doc.fileType,
+          fileSize: doc.fileSize,
+          status: doc.status,
+          segmentCount: doc.segmentCount,
+          uploadTime: doc.uploadTime,
+        });
+      },
+      {
+        name: GET_DOCUMENT_TOOL_NAME,
+        description:
+          '卡片：按 documentId 取文件身份（文件名、类型、大小、状态、分块数、上传时间）。不含正文。要读内容用 read_document。',
+        schema: z.object({
+          documentId: z.string().describe('文档 id'),
+        }),
+      },
+    );
+
+    const readDocument = tool(
+      async ({ documentId, startChunk, maxChunks }: { documentId: string; startChunk?: number; maxChunks?: number }) => {
+        const meta = await documentService.get(documentId);
+        const { chunks } = await documentService.content(documentId);
+        const start = Math.max(0, startChunk ?? 0);
+        const take = Math.max(1, maxChunks ?? READ_DOCUMENT_DEFAULT_CHUNKS);
+        const slice = chunks.filter((c) => c.chunkIndex >= start).slice(0, take);
+        for (const c of slice) {
+          const key = chunkKey({ documentId, chunkIndex: c.chunkIndex });
+          if (collector.seen.has(key)) continue;
+          collector.seen.add(key);
+          collector.docs.push(
+            new Document({
+              pageContent: c.text,
+              metadata: {
+                documentId,
+                filename: meta.filename,
+                chunkIndex: c.chunkIndex,
+                sourceType: 'TEXT',
+                vectorScore: 0,
+                bm25Score: 0,
+                score: 0,
+              },
+            }),
+          );
+        }
+        const body = slice
+          .map((c) => `[documentId=${documentId} | ${meta.filename} | chunk ${c.chunkIndex}]\n${c.text}`)
+          .join('\n\n');
+        const header = `${meta.filename} / ${meta.fileType} / 共 ${meta.segmentCount} 块 / 本段 chunk ${start}–${start + slice.length - 1}`;
+        if (!body) return `${header}\n没有更多正文。`;
+        return `${header}\n\n${body}`;
+      },
+      {
+        name: READ_DOCUMENT_TOOL_NAME,
+        description:
+          '读正文：按块返回指定文档原文，不做相关度检索。「这篇讲什么 / 全文怎么规定」用本工具。默认从 startChunk=0 起读 8 块；更长用 startChunk/maxChunks 接着读。',
+        schema: z.object({
+          documentId: z.string().describe('文档 id'),
+          startChunk: z.number().int().min(0).optional().describe('起始块序号，默认 0'),
+          maxChunks: z.number().int().min(1).max(30).optional().describe('本次读取块数，默认 8'),
         }),
       },
     );
@@ -194,7 +269,7 @@ export function createRagService(
     llm.chatModel.temperature = settings.get().llmChatTemperature;
 
     // 关闭知识库时不给工具：agent 直接回答
-    const tools = input.useKnowledgeBase === false ? [] : [listDocuments, searchKnowledgeBase];
+    const tools = input.useKnowledgeBase === false ? [] : [listDocuments, getDocument, readDocument, searchKnowledgeBase];
     const agent = createAgent({
       model: llm.chatModel,
       tools,

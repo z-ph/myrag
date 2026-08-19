@@ -25,6 +25,8 @@ export interface Downloadable {
 
 export interface DocumentService {
   list(keyword?: string): Promise<DocumentListResponse>;
+  /** 文档卡片：身份信息，不含正文 */
+  get(documentId: string): Promise<DocumentListItem>;
   /** 公开下载：返回文件流信息，文档不存在返回 null */
   download(documentId: string): Promise<Downloadable | null>;
   remove(documentId: string, operator: string): Promise<DocumentDeleteResponse>;
@@ -61,6 +63,16 @@ export function createDocumentService(
       const rows = await db.select().from(documents).where(cond).orderBy(desc(documents.createdAt)).limit(cfg.documentListLimit);
       const [totalRow] = await db.select({ total: count() }).from(documents).where(cond);
       return { documents: rows.map(toListItem), total: totalRow?.total ?? 0 };
+    },
+
+    async get(documentId) {
+      const [doc] = await db
+        .select()
+        .from(documents)
+        .where(and(eq(documents.documentId, documentId), eq(documents.deleted, false)))
+        .limit(1);
+      if (!doc) throw notFound('文档不存在');
+      return toListItem(doc);
     },
 
     async download(documentId) {
