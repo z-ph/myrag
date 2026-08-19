@@ -358,7 +358,15 @@ export default function ChatPage() {
               }}
               className={`conv-item ${meta.id === conversationId ? 'conv-active' : ''}`}
               actions={[
-                <Popconfirm key="del" title="删除该会话？" onConfirm={() => deleteConversation(meta.id)}>
+                <Popconfirm
+                  key="del"
+                  title="删除该会话？"
+                  getPopupContainer={(trigger) => trigger.closest('.ant-drawer-body') ?? document.body}
+                  onConfirm={(e) => {
+                    e?.stopPropagation();
+                    void deleteConversation(meta.id);
+                  }}
+                >
                   <Tooltip title="删除会话">
                     <Button type="text" size="small" className="conv-del" icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
                   </Tooltip>
