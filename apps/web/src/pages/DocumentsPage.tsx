@@ -16,6 +16,7 @@ import {
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem } from '@myrag/shared';
+import { useNavigate } from 'react-router-dom';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { ALLOWED_EXTENSIONS } from '../constants';
@@ -101,9 +102,26 @@ const STATUS_TAG: Record<string, { color: string; text: string }> = {
 
 export default function DocumentsPage() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
   const isManager = useAuthStore((s) => s.isManager);
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
+
+  const reportError = (err: Error) => {
+    if (!user && /权限不足|未登录/.test(err.message)) {
+      message.error(
+        <span>
+          {err.message}，
+          <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => navigate('/my')}>
+            去登录
+          </Button>
+        </span>,
+      );
+      return;
+    }
+    message.error(err.message);
+  };
   const [keyword, setKeyword] = useState('');
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
@@ -126,7 +144,7 @@ export default function DocumentsPage() {
       setBatchTaskId(task.taskId);
       invalidate();
     },
-    onError: (err: Error) => message.error(err.message),
+    onError: (err: Error) => reportError(err),
   });
 
   const deleteMutation = useMutation({
@@ -135,13 +153,13 @@ export default function DocumentsPage() {
       message.success('已删除');
       invalidate();
     },
-    onError: (err: Error) => message.error(err.message),
+    onError: (err: Error) => reportError(err),
   });
 
   const recoveryMutation = useMutation({
     mutationFn: () => documentsApi.recoveryTrigger(),
     onSuccess: (result) => message.success(`已触发 ${result.triggeredTaskCount} 个任务恢复`),
-    onError: (err: Error) => message.error(err.message),
+    onError: (err: Error) => reportError(err),
   });
 
   const rebuildMutation = useMutation({
@@ -150,7 +168,7 @@ export default function DocumentsPage() {
       message.success(`全量重建任务已创建：${result.taskId}`);
       invalidate();
     },
-    onError: (err: Error) => message.error(err.message),
+    onError: (err: Error) => reportError(err),
   });
 
   const columns: TableProps<DocumentListItem>['columns'] = [
@@ -219,7 +237,11 @@ export default function DocumentsPage() {
     <div className="page">
       <div className="page-header">
         <h1>文档库</h1>
-        <p>上传制度、流程等文档，分片向量入库后即可在智能问答中检索。</p>
+        <p>
+          {isManager
+            ? '上传制度、流程等文档，向量入库后即可在智能问答中检索。'
+            : '浏览制度与流程文件，预览或下载后可在智能问答中检索。'}
+        </p>
       </div>
       <div className="page-card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Space size={12}>
@@ -229,22 +251,24 @@ export default function DocumentsPage() {
             style={{ width: 260 }}
             onSearch={(v) => setKeyword(v.trim())}
           />
-          <Upload
-            multiple
-            fileList={[]}
-            showUploadList={false}
-            accept={ALLOWED_EXTENSIONS.join(',')}
-            beforeUpload={(file, fileList) => {
-              if (file.uid === fileList.at(-1)?.uid) {
-                if (fileList.length > 0) uploadMutation.mutate([...fileList]);
-              }
-              return false;
-            }}
-          >
-            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending}>
-              上传文档
-            </Button>
-          </Upload>
+          {isManager && (
+            <Upload
+              multiple
+              fileList={[]}
+              showUploadList={false}
+              accept={ALLOWED_EXTENSIONS.join(',')}
+              beforeUpload={(file, fileList) => {
+                if (file.uid === fileList.at(-1)?.uid) {
+                  if (fileList.length > 0) uploadMutation.mutate([...fileList]);
+                }
+                return false;
+              }}
+            >
+              <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending}>
+                上传文档
+              </Button>
+            </Upload>
+          )}
         </Space>
         {isSuperAdmin && (
           <Space>

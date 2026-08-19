@@ -33,20 +33,11 @@ test.describe('文档库', () => {
     await expect(page.locator('.ant-table-row')).toHaveCount(0);
   });
 
-  test('未登录上传文档被拒绝（跳登录提示）', async ({ page }) => {
-    const token = await apiLogin('admin', 'admin123').catch(() => null);
-    test.skip(token === null, '后端未就绪');
-
+  test('未登录不显示上传按钮', async ({ page }) => {
     await page.goto('/documents');
-    await expect(page.getByRole('button', { name: '上传文档' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '批量上传' })).toHaveCount(0);
-    await page.locator('input[type="file"]').first().setInputFiles({
-      name: 'test.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('测试文档内容'),
-    });
-    // 未登录上传应报错
-    await expect(page.locator('.ant-message')).toContainText(/未登录|权限不足|登录/, { timeout: 10_000 });
+    await expect(page.locator('.ant-table')).toBeVisible();
+    await expect(page.getByRole('button', { name: '上传文档' })).toHaveCount(0);
+    await expect(page.getByText('浏览制度与流程文件')).toBeVisible();
   });
 });
 
