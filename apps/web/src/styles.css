@@ -187,3 +187,31 @@ body {
   border: 1px solid var(--line);
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
+
+/* 文档库正文预览（与问答来源预览同一阅读节奏） */
+.doc-preview-body {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ink);
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+
+.doc-preview-chunk {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 10px 14px;
+}
+
+.doc-preview-chunk + .doc-preview-chunk {
+  margin-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.doc-preview-empty {
+  margin: 24px 0;
+  text-align: center;
+  color: var(--ink-2);
+  font-size: 14px;
+}

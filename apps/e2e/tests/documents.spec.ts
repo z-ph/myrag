@@ -10,6 +10,21 @@ test.describe('文档库', () => {
     await expect(page.locator('.ant-table-thead')).toContainText('状态');
   });
 
+  test('预览打开正文而不是向量详情', async ({ page }) => {
+    await page.goto('/documents');
+    await expect(page.locator('.ant-table')).toBeVisible();
+    const rows = page.locator('.ant-table-row');
+    test.skip((await rows.count()) === 0, '没有文档可预览');
+
+    await rows.first().getByRole('button', { name: /预览/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).not.toContainText('向量详情');
+    await expect(dialog).not.toContainText('knowledge-base');
+    await expect(dialog).not.toContainText('FULL_INDEX');
+    await expect(dialog.getByRole('button', { name: '下载文档' })).toBeVisible();
+  });
+
   test('关键字搜索过滤列表', async ({ page }) => {
     await page.goto('/documents');
     const search = page.getByPlaceholder('按文件名搜索');

@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Alert,
   App,
   Button,
-  Drawer,
   Input,
+  Modal,
   Popconfirm,
   Space,
+  Spin,
   Table,
   Tag,
   Tooltip,
@@ -15,10 +15,82 @@ import {
 } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DocumentListItem, DocumentUploadResponse, DocumentVectorDetail } from '@myrag/shared';
+import type { DocumentContent, DocumentListItem, DocumentUploadResponse } from '@myrag/shared';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { ALLOWED_EXTENSIONS } from '../constants';
+
+type PreviewTarget = { documentId: string; filename: string; status: string };
+
+function previewEmptyHint(status: string): string {
+  if (status === 'PENDING' || status === 'PROCESSING') return '文档处理中，稍后可预览正文';
+  if (status === 'FAILED') return '处理失败，无法预览正文';
+  return '这份文档没有可预览的正文';
+}
+
+function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | null; onClose: () => void }) {
+  const { message } = App.useApp();
+  const [content, setContent] = useState<DocumentContent | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContent(null);
+    setError(null);
+    if (!target) return;
+    setLoading(true);
+    documentsApi
+      .content(target.documentId)
+      .then((data) => {
+        if (!cancelled) setContent(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : '预览失败');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
+  return (
+    <Modal open={target != null} title={target?.filename} footer={null} onCancel={onClose} width={720} destroyOnHidden>
+      {target && (
+        <>
+          {loading ? (
+            <Spin style={{ display: 'block', margin: '24px auto' }} />
+          ) : error ? (
+            <p className="doc-preview-empty">{error}</p>
+          ) : content && content.chunks.length > 0 ? (
+            <div className="doc-preview-body">
+              {content.chunks.map((c) => (
+                <div key={c.chunkIndex} className="doc-preview-chunk">
+                  {c.text}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="doc-preview-empty">{previewEmptyHint(target.status)}</p>
+          )}
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            onClick={() => {
+              void documentsApi.download(target.documentId, target.filename).catch((err: unknown) => {
+                message.error(err instanceof Error ? err.message : '下载失败');
+              });
+            }}
+          >
+            下载文档
+          </Button>
+        </>
+      )}
+    </Modal>
+  );
+}
 
 const STATUS_TAG: Record<string, { color: string; text: string }> = {
   PENDING: { color: 'default', text: '待处理' },
@@ -28,12 +100,12 @@ const STATUS_TAG: Record<string, { color: string; text: string }> = {
 };
 
 export default function DocumentsPage() {
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const isManager = useAuthStore((s) => s.isManager);
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
   const [keyword, setKeyword] = useState('');
-  const [detailDoc, setDetailDoc] = useState<DocumentVectorDetail | null>(null);
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
@@ -90,14 +162,6 @@ export default function DocumentsPage() {
     onError: (err: Error) => message.error(err.message),
   });
 
-  const openDetail = async (documentId: string) => {
-    try {
-      setDetailDoc(await documentsApi.vectorDetail(documentId));
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '查询失败');
-    }
-  };
-
   const columns: TableProps<DocumentListItem>['columns'] = [
     { title: '文件名', dataIndex: 'filename', ellipsis: true },
     {
@@ -135,10 +199,20 @@ export default function DocumentsPage() {
       render: (_, row) => (
         <Space size={4}>
           <Tooltip title="下载">
-            <Button type="text" icon={<DownloadOutlined />} onClick={() => void documentsApi.download(row.documentId, row.filename)} />
+            <Button
+              type="text"
+              icon={<DownloadOutlined />}
+              aria-label={`下载「${row.filename}」`}
+              onClick={() => void documentsApi.download(row.documentId, row.filename)}
+            />
           </Tooltip>
-          <Tooltip title="向量详情">
-            <Button type="text" icon={<EyeOutlined />} onClick={() => void openDetail(row.documentId)} />
+          <Tooltip title="预览">
+            <Button
+              type="text"
+              icon={<EyeOutlined />}
+              aria-label={`预览「${row.filename}」`}
+              onClick={() => setPreview({ documentId: row.documentId, filename: row.filename, status: row.status })}
+            />
           </Tooltip>
           {isManager && (
             <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
@@ -221,41 +295,7 @@ export default function DocumentsPage() {
         />
       </div>
 
-      <Drawer
-        title={detailDoc ? `向量详情：${detailDoc.filename}` : '向量详情'}
-        open={detailDoc != null}
-        onClose={() => setDetailDoc(null)}
-        width={560}
-      >
-        {detailDoc && (
-          <>
-            <Alert
-              type="info"
-              showIcon
-              message={`集合 ${detailDoc.vectorCollectionName} · 维度 ${detailDoc.vectorSize}`}
-              description={`向量数 ${detailDoc.indexedPointCount} / 分块 ${detailDoc.segmentCount} · 存储模式 ${detailDoc.storageMode}`}
-              style={{ marginBottom: 16 }}
-            />
-            <Table
-              size="small"
-              rowKey="pointId"
-              dataSource={detailDoc.points}
-              pagination={{ pageSize: 10 }}
-              columns={[
-                { title: '#', dataIndex: 'chunkIndex', width: 48 },
-                { title: '标题', dataIndex: 'title', ellipsis: true },
-                { title: '关键词', dataIndex: 'keywords', ellipsis: true },
-                {
-                  title: '预览',
-                  dataIndex: 'textPreview',
-                  ellipsis: true,
-                  render: (v: string) => <span style={{ fontSize: 12, color: '#666' }}>{v}</span>,
-                },
-              ]}
-            />
-          </>
-        )}
-      </Drawer>
+      <DocumentPreviewModal target={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }
