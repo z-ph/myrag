@@ -59,8 +59,8 @@ interface ChatState {
   isLoadingHistory: boolean;
   /** 会话列表（服务端驱动：登录用户与访客各自名下的会话） */
   historyMetas: ConversationMeta[];
-  /** 从文档库跳转问答时暂存，进聊天页后发出 */
-  pendingAsk: string | null;
+  /** 从文档库带来的引用，进聊天页后挂在输入框上，不自动发送 */
+  pendingDocRef: { documentId: string; filename: string } | null;
   currentConversationId(): string;
   /** 从服务端拉取会话列表（失败不阻塞聊天） */
   refreshConversations(): Promise<void>;
@@ -73,8 +73,8 @@ interface ChatState {
   /** 身份切换（登录/登出）后调用：重置当前会话并刷新列表 */
   onIdentityChanged(): void;
   /** 新开会话并记下问题，供聊天页发出 */
-  askAboutDocument(filename: string): void;
-  takePendingAsk(): string | null;
+  askAboutDocument(doc: { documentId: string; filename: string }): void;
+  takePendingDocRef(): { documentId: string; filename: string } | null;
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
@@ -87,7 +87,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     isGenerating: false,
     isLoadingHistory: false,
     historyMetas: [],
-    pendingAsk: null,
+    pendingDocRef: null,
 
     currentConversationId() {
       const { conversationId } = get();
@@ -313,19 +313,19 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     onIdentityChanged() {
       saveCurrent(null);
-      set({ conversationId: null, messages: [], historyMetas: [], pendingAsk: null });
+      set({ conversationId: null, messages: [], historyMetas: [], pendingDocRef: null });
       void get().refreshConversations();
     },
 
-    askAboutDocument(filename) {
+    askAboutDocument(doc) {
       get().startNewConversation();
-      set({ pendingAsk: `请根据「${filename}」说明要点` });
+      set({ pendingDocRef: doc });
     },
 
-    takePendingAsk() {
-      const q = get().pendingAsk;
-      if (q) set({ pendingAsk: null });
-      return q;
+    takePendingDocRef() {
+      const ref = get().pendingDocRef;
+      if (ref) set({ pendingDocRef: null });
+      return ref;
     },
   };
 });

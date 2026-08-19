@@ -257,7 +257,7 @@ export default function DocumentsPage() {
             icon={<CommentOutlined />}
             aria-label={`问「${row.filename}」`}
             onClick={() => {
-              useChatStore.getState().askAboutDocument(row.filename);
+              useChatStore.getState().askAboutDocument({ documentId: row.documentId, filename: row.filename });
               navigate('/chat');
             }}
           />

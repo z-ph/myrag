@@ -578,6 +578,26 @@
   text-align: center;
 }
 
+.chat-doc-ref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--seal-soft);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.chat-doc-ref-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-image-preview {
   display: flex;
   align-items: center;

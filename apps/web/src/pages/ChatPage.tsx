@@ -4,6 +4,7 @@ import {
   DeleteOutlined,
   DownloadOutlined,
   FileImageOutlined,
+  FileTextOutlined,
   HistoryOutlined,
   PlusOutlined,
   RobotOutlined,
@@ -278,6 +279,7 @@ export default function ChatPage() {
   } = useChatStore();
 
   const [input, setInput] = useState('');
+  const [docRef, setDocRef] = useState<{ documentId: string; filename: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceReference | null>(null);
   const [image, setImage] = useState<File | null>(null);
@@ -290,13 +292,10 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (authLoading) return;
-    const boot = async () => {
-      await refreshConversations();
-      const pending = useChatStore.getState().takePendingAsk();
-      if (conversationId && !pending) await loadConversation(conversationId);
-      if (pending) await sendMessage(pending);
-    };
-    void boot();
+    const pending = useChatStore.getState().takePendingDocRef();
+    if (pending) setDocRef(pending);
+    void refreshConversations();
+    if (conversationId && !pending) void loadConversation(conversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading]);
 
@@ -312,8 +311,10 @@ export default function ChatPage() {
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
     if (!q && !image) return;
-    void sendMessage(q, image ?? undefined);
+    const asked = docRef ? `请结合「${docRef.filename}」回答：${q}` : q;
+    void sendMessage(asked, image ?? undefined);
     setInput('');
+    setDocRef(null);
     setImage(null);
     setImagePreview(null);
     if (fileRef.current) fileRef.current.value = '';
@@ -323,6 +324,7 @@ export default function ChatPage() {
     startNewConversation();
     setDrawerOpen(false);
     setInput('');
+    setDocRef(null);
     setImage(null);
     setImagePreview(null);
   };
@@ -403,6 +405,17 @@ export default function ChatPage() {
       </div>
 
       <div className="composer">
+        {docRef && (
+          <div className="chat-doc-ref">
+            <FileTextOutlined />
+            <span className="chat-doc-ref-name" title={docRef.filename}>
+              引用 {docRef.filename}
+            </span>
+            <Button size="small" type="text" onClick={() => setDocRef(null)}>
+              移除
+            </Button>
+          </div>
+        )}
         {imagePreview && (
           <div className="chat-image-preview">
             <img src={imagePreview} alt="预览" />
