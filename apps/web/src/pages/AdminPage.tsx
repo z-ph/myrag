@@ -246,7 +246,7 @@ function PromptsCard() {
         title={`版本历史 — ${selected ? (PROMPT_LABELS[selected.key] ?? selected.key) : ''}`}
         open={versionsOpen}
         onClose={() => setVersionsOpen(false)}
-        width={560}
+        size={560}
       >
         {versionsLoading ? (
           <Spin />

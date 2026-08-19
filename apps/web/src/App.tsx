@@ -77,7 +77,7 @@ function AppShell() {
         placement="left"
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
-        width={280}
+        size={280}
         className="topbar-drawer"
       >
         <nav className="topbar-drawer-nav">{renderNav('drawer')}</nav>

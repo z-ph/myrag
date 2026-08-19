@@ -346,7 +346,7 @@ export default function ChatPage() {
           </div>
         }
         placement="left"
-        width={320}
+        size={320}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         className="conv-drawer"
