@@ -1,32 +1,122 @@
 [
   {
     "question": "差旅费报销标准是什么？",
-    "expectedDocumentIds": [],
+    "expectedDocumentIds": ["doc-cc68db8b74cf485ab0e020b1ce1320ea"],
     "expectedKeywords": ["差旅", "报销", "标准"],
-    "notes": "期望检索到差旅费相关制度文档；expectedDocumentIds 待填充"
+    "notes": "差旅费管理办法（广工大规字〔2026〕8号）"
   },
   {
     "question": "采购审批流程是怎样的？",
-    "expectedDocumentIds": [],
+    "expectedDocumentIds": ["doc-91106393754d430ba5ab3c620a5151f2", "doc-1ff4690f7a1c4566b0a832abd63ab004"],
     "expectedKeywords": ["采购", "审批", "流程"],
-    "notes": "期望检索到采购管理办法或审批流程；expectedDocumentIds 待填充"
+    "notes": "采购管理办法（广工大规字〔2023〕30号）+ 零散采购实施细则（广工大规字〔2023〕28号）"
   },
   {
-    "question": "发票粘贴有什么规范？",
-    "expectedDocumentIds": [],
-    "expectedKeywords": ["发票", "粘贴", "规范"],
-    "notes": "期望检索到票据粘贴或报销附件规范；expectedDocumentIds 待填充"
+    "question": "财务报销需要准备哪些材料？",
+    "expectedDocumentIds": ["doc-99175980221041528dc5430c5f841f17"],
+    "expectedKeywords": ["报销", "材料", "附件"],
+    "notes": "财务报销管理办法（广工大规字〔2020〕26号）"
   },
   {
-    "question": "住宿费限额如何规定？",
-    "expectedDocumentIds": [],
-    "expectedKeywords": ["住宿", "限额", "标准"],
-    "notes": "期望检索到差旅住宿费限额相关条款；expectedDocumentIds 待填充"
+    "question": "公务卡如何使用和管理？",
+    "expectedDocumentIds": ["doc-4084ca92002e480297976ec12b16a459"],
+    "expectedKeywords": ["公务卡", "使用", "管理"],
+    "notes": "公务卡管理办法（广工大规字〔2023〕24号）"
   },
   {
-    "question": "公务接待费用标准是什么？",
-    "expectedDocumentIds": [],
-    "expectedKeywords": ["公务接待", "费用", "标准"],
-    "notes": "期望检索到公务接待管理办法；expectedDocumentIds 待填充"
+    "question": "暂付款借款流程是什么？",
+    "expectedDocumentIds": ["doc-b932e52c7cb74089b23f0e4ecf169a62"],
+    "expectedKeywords": ["暂付款", "借款", "流程"],
+    "notes": "暂付款管理办法（广工大规字〔2023〕38号）"
+  },
+  {
+    "question": "外币报销汇率怎么核定？",
+    "expectedDocumentIds": ["doc-51eaeb45994a4e8a972430f3e35528dd"],
+    "expectedKeywords": ["外币", "报销", "汇率"],
+    "notes": "关于调整外币报销汇率核定手续的通知（2018年）"
+  },
+  {
+    "question": "政府采购集中采购目录有哪些？",
+    "expectedDocumentIds": ["doc-89772c3aacd648ada9da2e54a7a6b657"],
+    "expectedKeywords": ["政府采购", "集中采购", "目录"],
+    "notes": "广东省政府集中采购目录及标准（2020年版）"
+  },
+  {
+    "question": "因公临时出国经费标准是多少？",
+    "expectedDocumentIds": ["doc-d58200022f134f73b744f55333128060", "doc-f3d5fb87d48e49d4ab327fc0d901c13b"],
+    "expectedKeywords": ["出国", "经费", "标准"],
+    "notes": "因公临时出国（境）管理办法（广工大规字〔2023〕39号）+ 因公临时出国经费管理办法"
+  },
+  {
+    "question": "教职工中长期公派出国有什么规定？",
+    "expectedDocumentIds": ["doc-dc81cb7d576d46a1ad1bef0db485e933"],
+    "expectedKeywords": ["公派", "出国", "管理"],
+    "notes": "教职工中长期公派出国（境）管理办法（广工大规字〔2025〕17号）"
+  },
+  {
+    "question": "实验耗材化学品如何管理？",
+    "expectedDocumentIds": ["doc-64bced83991749a898df88c56dc5cbb5"],
+    "expectedKeywords": ["实验", "耗材", "化学品"],
+    "notes": "关于进一步规范实验耗材—化学品管理的通知（2020年）"
+  },
+  {
+    "question": "教学科研实验材料低值品易耗品怎么验收？",
+    "expectedDocumentIds": ["doc-e1f3f81f5bea4f63bfd9c379859bb6d8", "doc-772adbc7622b4a90becbb8e6402a8ce0"],
+    "expectedKeywords": ["实验材料", "低值品", "易耗品", "验收"],
+    "notes": "教学科研实验材料、低值品、易耗品管理细则（广工大规字〔2018〕29号）+ 验收入库单"
+  },
+  {
+    "question": "科研项目资金采购管理有什么要求？",
+    "expectedDocumentIds": ["doc-2be225bc0e704065a8fe378f0f035efd"],
+    "expectedKeywords": ["科研", "项目", "采购", "资金"],
+    "notes": "进一步完善科研项目资金采购管理的意见（广工大规字〔2020〕19号）"
+  },
+  {
+    "question": "合同签订有什么管理规定？",
+    "expectedDocumentIds": ["doc-64c282b9334a4d548fe70026c1096d9a"],
+    "expectedKeywords": ["合同", "管理", "签订"],
+    "notes": "合同管理办法（广工大规字〔2022〕26号）"
+  },
+  {
+    "question": "保修保证金怎么退还？",
+    "expectedDocumentIds": ["doc-8b55ab124c0c4fecb1a323f6e1368696"],
+    "expectedKeywords": ["保修", "保证金", "退还"],
+    "notes": "保修保证金退还程序（2023年4月）"
+  },
+  {
+    "question": "领导干部外出需要报备吗？",
+    "expectedDocumentIds": ["doc-c75572b3dea94b9d9690b68b6d11e6f2"],
+    "expectedKeywords": ["领导干部", "外出", "报备"],
+    "notes": "关于进一步加强领导干部外出报备工作的通知（广工大党办字〔2015〕14号）"
+  },
+  {
+    "question": "培训费有哪些标准？",
+    "expectedDocumentIds": ["doc-04a639283f194712bd6c204c1bf438e5"],
+    "expectedKeywords": ["培训", "费用", "标准"],
+    "notes": "省直党政机关和事业单位培训费管理办法（粤财行〔2017〕260号）"
+  },
+  {
+    "question": "福利费使用有什么规定？",
+    "expectedDocumentIds": ["doc-f2789525cd104cc99e964796c551653c"],
+    "expectedKeywords": ["福利费", "使用", "规定"],
+    "notes": "关于规范福利费使用的通知（2013年）"
+  },
+  {
+    "question": "图书资产报增怎么办理？",
+    "expectedDocumentIds": ["doc-61e9f45eaed54e83976d188660472d0b"],
+    "expectedKeywords": ["图书", "资产", "报增"],
+    "notes": "关于图书资产报增的相关说明（2024年）"
+  },
+  {
+    "question": "基础与应用基础研究基金项目经费怎么用？",
+    "expectedDocumentIds": ["doc-96f159c50c374d289a573c9bf3759762"],
+    "expectedKeywords": ["基础研究", "基金", "经费", "包干制"],
+    "notes": "广东省基础与应用基础研究基金项目经费使用"负面清单+包干制"管理办法（粤科规范字〔2025〕4号）"
+  },
+  {
+    "question": "大型活动和外出集体活动如何管理？",
+    "expectedDocumentIds": ["doc-64901d738c864ce68fdaaed41aec595b"],
+    "expectedKeywords": ["大型活动", "集体活动", "管理"],
+    "notes": "大型活动和外出集体活动管理办法（广工大规字〔2018〕26号）"
   }
 ]
