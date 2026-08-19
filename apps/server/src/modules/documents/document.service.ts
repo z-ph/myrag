@@ -23,7 +23,7 @@ export interface Downloadable {
   size: number;
 }
 
-/** filename = 仅文件名（agent 目录）；library = 文件名 + 文号/主题/正文 */
+/** filename = 仅文件名（agent 目录）；library = 文件名 + 主题/正文 */
 export type DocumentListMatch = 'filename' | 'library';
 
 export interface DocumentService {

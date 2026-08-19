@@ -330,8 +330,8 @@ export default function DocumentsPage() {
             className="docs-search"
             value={draft}
             allowClear
-            placeholder="按文件名、文号、主题或正文搜索"
-            aria-label="按文件名、文号、主题或正文搜索"
+            placeholder="按文件名、主题或正文搜索"
+            aria-label="按文件名、主题或正文搜索"
             onChange={(e) => setDraft(e.target.value)}
             onSearch={commitSearch}
           />
