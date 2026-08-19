@@ -279,6 +279,10 @@ body {
   flex-wrap: wrap;
 }
 
+.docs-toolbar .docs-search {
+  width: min(100%, 26rem);
+}
+
 .doc-name-cell {
   white-space: normal;
   word-break: break-word;

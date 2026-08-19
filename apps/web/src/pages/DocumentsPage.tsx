@@ -327,11 +327,11 @@ export default function DocumentsPage() {
       <div className="page-card docs-toolbar">
         <Space size={12} wrap>
           <Input.Search
+            className="docs-search"
             value={draft}
             allowClear
             placeholder="按文件名、文号、主题或正文搜索"
             aria-label="按文件名、文号、主题或正文搜索"
-            style={{ width: isMobile ? '100%' : 280 }}
             onChange={(e) => setDraft(e.target.value)}
             onSearch={commitSearch}
           />
