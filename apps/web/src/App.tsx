@@ -69,7 +69,18 @@ function AppShell() {
         </button>
         <nav className="topbar-nav">{renderNav('bar')}</nav>
         <div className="topbar-right">
-          {user ? <span className="topbar-user">{user.displayName}</span> : <span className="topbar-user">访客</span>}
+          {user ? (
+            <span className="topbar-user">{user.displayName}</span>
+          ) : (
+            <button
+              type="button"
+              className="topbar-user topbar-user-guest"
+              onClick={() => navigate('/my')}
+              aria-label="去登录"
+            >
+              访客
+            </button>
+          )}
         </div>
       </header>
       <Drawer

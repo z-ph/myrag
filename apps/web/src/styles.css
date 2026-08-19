@@ -156,6 +156,21 @@ body {
   border-radius: 999px;
 }
 
+.topbar-user-guest {
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.topbar-user-guest:hover,
+.topbar-user-guest:focus-visible {
+  color: var(--ink);
+  border-color: #c5c9d4;
+  background: #f0f1f4;
+}
+
 .app-main {
   flex: 1;
   overflow: auto;
