@@ -113,10 +113,13 @@ export const useChatStore = create<ChatState>((set, get) => {
       try {
         const detail = await ragApi.conversationDetail(id);
         if (!detail.exists) {
-          // 会话可能已被清理（访客保留期）或删除
-          set({
-            messages: [{ id: `expired-${id}`, role: 'assistant', content: '该会话不存在或已删除。', status: 'ERROR' }],
-          });
+          // 会话懒创建：新 ID 在服务端尚不存在是正常空会话，不是错误。
+          const known = get().historyMetas.some((m) => m.id === id);
+          set({ messages: [] });
+          if (known) {
+            message.warning('该会话不存在或已删除');
+            get().startNewConversation();
+          }
           return;
         }
         set({

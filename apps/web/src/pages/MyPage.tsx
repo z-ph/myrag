@@ -3,13 +3,11 @@ import { App, Button, Card, Form, Input, Space, Tag, Typography } from 'antd';
 import { LogoutOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
-import { useChatStore } from '../store/chat';
 
 export default function MyPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
   const { user, login, logout } = useAuthStore();
-  const startNewConversation = useChatStore((s) => s.startNewConversation);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async (values: { username: string; password: string }) => {
@@ -17,7 +15,6 @@ export default function MyPage() {
     try {
       await login(values.username, values.password);
       message.success('登录成功');
-      startNewConversation();
       navigate('/chat');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '登录失败');
