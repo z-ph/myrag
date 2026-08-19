@@ -95,7 +95,7 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
 const STATUS_TAG: Record<string, { color: string; text: string }> = {
   PENDING: { color: 'default', text: '待处理' },
   PROCESSING: { color: 'processing', text: '处理中' },
-  SUCCESS: { color: 'success', text: '已分片向量入库' },
+  SUCCESS: { color: 'success', text: '向量入库' },
   FAILED: { color: 'error', text: '失败' },
 };
 
