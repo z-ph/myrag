@@ -114,6 +114,15 @@ const STATUS_TAG: Record<string, { color: string; text: string }> = {
   FAILED: { color: 'error', text: '失败' },
 };
 
+const FILE_TYPE_LABEL: Record<string, string> = {
+  TEXT: '文本',
+  PDF: 'PDF',
+  DOCUMENT: 'Word',
+  PRESENTATION: 'PPT',
+  EXCEL: 'Excel',
+  IMAGE: '图片',
+};
+
 function formatFileSize(bytes: number): string {
   return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
@@ -237,25 +246,29 @@ export default function DocumentsPage() {
         actionColumn,
       ]
     : [
-        { title: '文件名', dataIndex: 'filename', ellipsis: true },
+        { title: '文件名', dataIndex: 'filename', className: 'doc-name-cell' },
         {
           title: '类型',
           dataIndex: 'fileType',
-          width: 100,
-          render: (v: string) => <Tag>{v}</Tag>,
+          width: 80,
+          render: (v: string) => <Tag>{FILE_TYPE_LABEL[v] ?? v}</Tag>,
         },
         {
           title: '大小',
           dataIndex: 'fileSize',
-          width: 100,
+          width: 88,
           render: (v: number) => formatFileSize(v),
         },
-        { title: '分块', dataIndex: 'segmentCount', width: 70 },
-        { title: '向量', dataIndex: 'vectorCount', width: 70 },
+        ...(isManager
+          ? [
+              { title: '分块', dataIndex: 'segmentCount', width: 70 },
+              { title: '向量', dataIndex: 'vectorCount', width: 70 },
+            ]
+          : []),
         {
           title: '状态',
           dataIndex: 'status',
-          width: 90,
+          width: 96,
           render: (v: string) => {
             const s = STATUS_TAG[v] ?? { color: 'default', text: v };
             return <Tag color={s.color}>{s.text}</Tag>;
