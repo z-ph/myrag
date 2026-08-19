@@ -29,6 +29,7 @@ export interface ToolStep {
 /** 工具名 → 展示文案 */
 const TOOL_LABELS: Record<string, string> = {
   search_knowledge_base: '检索知识库',
+  list_documents: '列出文档',
 };
 
 function toolLabel(name: string): string {

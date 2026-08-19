@@ -21,6 +21,7 @@ import type { RagRetriever } from './retrieval.service';
 import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from './chunk';
 import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
+import type { DocumentService } from '../documents/document.service';
 
 export interface AskInput {
   question: string;
@@ -74,10 +75,12 @@ export interface RagService {
 
 /** 知识库检索工具名（模型侧 + 前端展示共用） */
 export const SEARCH_TOOL_NAME = 'search_knowledge_base';
+export const LIST_DOCUMENTS_TOOL_NAME = 'list_documents';
 
 /** 工具名 → 前端展示文案 */
 export const TOOL_LABELS: Record<string, string> = {
   [SEARCH_TOOL_NAME]: '检索知识库',
+  [LIST_DOCUMENTS_TOOL_NAME]: '列出文档',
 };
 
 export function createRagService(
@@ -89,6 +92,7 @@ export function createRagService(
   cfg: ServerConfig,
   settings: SettingsService,
   promptService: PromptService,
+  documentService: DocumentService,
 ): RagService {
   /** conversationId → 本实例进行中的生成控制器 */
   const activeGenerations = new Map<string, AbortController>();
@@ -140,9 +144,26 @@ export function createRagService(
      * 模型自行决定是否调用、以什么 query 调用、调用几次。
      * 闭包捕获本次请求的局部 collector，与并发生成隔离。
      */
+    const listDocuments = tool(
+      async ({ filterByFileName }: { filterByFileName?: string }) => {
+        const { documents } = await documentService.list(filterByFileName?.trim() || undefined);
+        if (documents.length === 0) return '没有匹配的文档。';
+        return JSON.stringify(documents.map((d) => ({ documentId: d.documentId, filename: d.filename })));
+      },
+      {
+        name: LIST_DOCUMENTS_TOOL_NAME,
+        description:
+          '列出知识库中的文档（documentId + 文件名）。可用 filterByFileName 按文件名模糊筛选；不传则列出全部。需要限定检索范围时，先用本工具拿到 documentId，再交给 search_knowledge_base。',
+        schema: z.object({
+          filterByFileName: z.string().optional().describe('按文件名模糊过滤；不传则列出全部'),
+        }),
+      },
+    );
+
     const searchKnowledgeBase = tool(
-      async ({ query }: { query: string }) => {
-        const docs = await retriever.retrieve(query, collector.maxResults);
+      async ({ query, documentIds }: { query: string; documentIds?: string[] }) => {
+        const scope = documentIds?.filter(Boolean);
+        const docs = await retriever.retrieve(query, collector.maxResults, scope && scope.length > 0 ? scope : undefined);
         for (const d of docs) {
           const key = chunkKey(d.metadata);
           if (!collector.seen.has(key)) {
@@ -151,14 +172,15 @@ export function createRagService(
           }
         }
         const { contextText } = packContext(docs, settings.get().contextBudget);
-        return contextText ?? '知识库中没有检索到与该问题相关的资料。';
+        return contextText ?? (scope && scope.length > 0 ? '指定文档范围内没有检索到相关资料。' : '知识库中没有检索到与该问题相关的资料。');
       },
       {
         name: SEARCH_TOOL_NAME,
         description:
-          '在财务处知识库中检索与用户问题相关的资料片段。输入检索关键词或完整问题，返回最相关的文档内容。检索不到时返回「无相关资料」提示。',
+          '在财务处知识库中检索相关片段。query 为检索内容；documentIds 为可选文档范围，不传或空数组表示全库，传入则只在这些文档中检索。每条结果含 documentId。不知道 id 时先调 list_documents。',
         schema: z.object({
           query: z.string().describe('用于检索的关键词或完整问题'),
+          documentIds: z.array(z.string()).optional().describe('限定文档 id；不传则全库检索'),
         }),
       },
     );
@@ -172,7 +194,7 @@ export function createRagService(
     llm.chatModel.temperature = settings.get().llmChatTemperature;
 
     // 关闭知识库时不给工具：agent 直接回答
-    const tools = input.useKnowledgeBase === false ? [] : [searchKnowledgeBase];
+    const tools = input.useKnowledgeBase === false ? [] : [listDocuments, searchKnowledgeBase];
     const agent = createAgent({
       model: llm.chatModel,
       tools,

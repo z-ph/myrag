@@ -98,7 +98,17 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const cleanupService = createCleanupService(conversationService, settingsService, cfg);
   const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
   const imageService = createImageService(llm, promptService);
-  const ragService = createRagService(llm, retriever, imageService, conversationService, redis, cfg, settingsService, promptService);
+  const ragService = createRagService(
+    llm,
+    retriever,
+    imageService,
+    conversationService,
+    redis,
+    cfg,
+    settingsService,
+    promptService,
+    documentService,
+  );
 
   const deps: AppDeps = {
     cfg,

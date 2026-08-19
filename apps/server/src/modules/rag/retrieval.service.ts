@@ -93,16 +93,16 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
   }
 
   /** 自定义召回条数（maxResults 是请求级参数，不属于 RunnableConfig，故单独走此入口） */
-  async retrieve(question: string, maxResults?: number): Promise<ChunkDocument[]> {
-    return this.runPipeline(question, maxResults ?? this.settings.get().maxResults);
+  async retrieve(question: string, maxResults?: number, documentIds?: string[]): Promise<ChunkDocument[]> {
+    return this.runPipeline(question, maxResults ?? this.settings.get().maxResults, documentIds);
   }
 
   /** 混合管线：向量召回 → BM25 重排 → 相关度过滤 →（可选 LLM rerank）→ 去重 → MMR */
-  private async runPipeline(question: string, limit: number): Promise<ChunkDocument[]> {
+  private async runPipeline(question: string, limit: number, documentIds?: string[]): Promise<ChunkDocument[]> {
     const s = this.settings.get();
     const [vector] = await this.llm.embed([question]);
     if (!vector) throw new AppError(502, '向量化服务返回异常');
-    const hits = (await this.qdrant.search(vector, limit * s.candidateMultiplier)).filter((h) => h.score >= s.minScore);
+    const hits = (await this.qdrant.search(vector, limit * s.candidateMultiplier, documentIds)).filter((h) => h.score >= s.minScore);
     const candidates = await this.hydrate(hits);
 
     // BM25 混合重排（K1/B 参数取自动态设置）

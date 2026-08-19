@@ -29,7 +29,7 @@ export const chunkKey = (doc: Pick<ChunkMetadata, 'documentId' | 'chunkIndex'>) 
 /** 检索块格式化进上下文 */
 export function formatChunk(doc: ChunkDocument): string {
   const head = doc.metadata.title ? `【标题：${doc.metadata.title}】` : '';
-  return `${head}【来源：${doc.metadata.filename}】\n${doc.pageContent}`;
+  return `[documentId=${doc.metadata.documentId} | ${doc.metadata.filename} | chunk ${doc.metadata.chunkIndex}]${head}\n${doc.pageContent}`;
 }
 
 /** 组装检索来源引用（问答响应用） */

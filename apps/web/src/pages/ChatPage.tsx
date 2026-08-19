@@ -311,7 +311,9 @@ export default function ChatPage() {
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
     if (!q && !image) return;
-    const asked = docRef ? `请结合「${docRef.filename}」回答：${q}` : q;
+    const asked = docRef
+      ? `引用文档：${docRef.filename}\ndocumentId: ${docRef.documentId}\n\n${q}`
+      : q;
     void sendMessage(asked, image ?? undefined);
     setInput('');
     setDocRef(null);

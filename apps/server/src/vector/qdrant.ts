@@ -52,8 +52,8 @@ export interface QdrantStore {
   upsert(documentId: string, vectors: { id: string; vector: number[]; payload: ChunkPayload }[]): Promise<void>;
   /** 按文档删除全部向量点 */
   deleteByDocument(documentId: string): Promise<void>;
-  /** 向量检索 */
-  search(vector: number[], topK: number): Promise<VectorSearchHit[]>;
+  /** 向量检索；documentIds 非空时只在这些文档的点里搜 */
+  search(vector: number[], topK: number, documentIds?: string[]): Promise<VectorSearchHit[]>;
   /** 统计文档向量点数 */
   countByDocument(documentId: string): Promise<number>;
   /** 分页读取文档全部点位（含 payload） */
@@ -117,11 +117,15 @@ export function createQdrantStore(cfg: ServerConfig): QdrantStore {
       });
     },
 
-    async search(vector, topK) {
+    async search(vector, topK, documentIds) {
+      const scoped = documentIds?.filter(Boolean) ?? [];
       const result = await client.search(cfg.qdrantCollection, {
         vector,
         limit: topK,
         with_payload: true,
+        filter: scoped.length > 0
+          ? { must: [{ key: 'document_id', match: { any: scoped } }] }
+          : undefined,
       });
       const hits: VectorSearchHit[] = [];
       for (const hit of result) {
