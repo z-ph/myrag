@@ -81,9 +81,18 @@ export function createApp(cfg: ServerConfig): AppContainer {
 
   const authService = createAuthService(handle.db, cfg);
   const usersService = createUsersService(handle.db);
-  const processService = createProcessService(handle.db, qdrant, llm, objectStorage, cfg, settingsService);
+  let batchService: BatchService;
+  const processService = createProcessService(
+    handle.db,
+    qdrant,
+    llm,
+    objectStorage,
+    cfg,
+    settingsService,
+    (taskId, documentIds) => batchService.enqueueRebuild(taskId, documentIds),
+  );
   const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg);
-  const batchService = createBatchService(handle.db, processService, cfg);
+  batchService = createBatchService(handle.db, processService, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg);
   const cleanupService = createCleanupService(conversationService, settingsService, cfg);

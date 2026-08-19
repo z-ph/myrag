@@ -16,6 +16,8 @@ export interface BatchService {
   getTask(taskId: string): Promise<BatchTask>;
   /** 单文件入队：job name = process-single，jobId = documentId（幂等） */
   enqueueSingle(documentId: string): Promise<void>;
+  /** 全量重建入队：每个文档一个 process-single job，jobId = rebuild:taskId:documentId */
+  enqueueRebuild(taskId: string, documentIds: string[]): Promise<void>;
   /** 启动本实例的任务 worker（BullMQ 消费） */
   startWorker(): void;
   /** 补偿扫描：把超时/中断任务重新入队（jobId 幂等），返回触发数量 */
@@ -143,6 +145,15 @@ const QUEUE_PREFIX = 'myrag';
 
 type QueueJobData = { taskId: string } | { documentId: string };
 
+/** 全量重建：每个文档一个 process-single job，jobId 带 taskId 保证幂等 */
+export function rebuildSingleJobs(taskId: string, documentIds: string[]) {
+  return documentIds.map((documentId) => ({
+    name: 'process-single' as const,
+    data: { documentId },
+    opts: { jobId: `rebuild:${taskId}:${documentId}` },
+  }));
+}
+
 export function createBatchService(
   db: Db,
   processService: ProcessService,
@@ -178,6 +189,13 @@ export function createBatchService(
     await queue.add('process-single', { documentId }, { jobId: documentId });
   }
 
+  /** 全量重建入队：每个文档独立 process-single，worker 无需新分支 */
+  async function enqueueRebuild(taskId: string, documentIds: string[]): Promise<void> {
+    const jobs = rebuildSingleJobs(taskId, documentIds);
+    if (jobs.length === 0) return;
+    await queue.addBulk(jobs);
+  }
+
   function stopRecoveryLoop(): void {
     if (recoveryTimer) {
       clearInterval(recoveryTimer);
@@ -211,6 +229,8 @@ export function createBatchService(
     },
 
     enqueueSingle,
+
+    enqueueRebuild,
 
     async getTask(taskId) {
       const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
@@ -272,6 +292,8 @@ export function createBatchService(
           ),
         );
       for (const task of staleTasks) {
+        // rebuild-* 没有 batchFileResults，当批量上传重入队会立刻被标成功
+        if (task.taskId.startsWith('rebuild-')) continue;
         await enqueue(task.taskId);
       }
 

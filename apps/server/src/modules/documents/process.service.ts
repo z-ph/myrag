@@ -1,10 +1,10 @@
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { DocumentStatus, ServerConfig, FileType, SettingsService } from '@myrag/shared';
 import { DEFAULTS } from '@myrag/shared';
 import type { Db } from '../../db';
-import { documents, documentChunks, type DocumentRow } from '../../db/schema';
+import { batchTasks, documents, documentChunks, type DocumentRow } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
@@ -39,9 +39,12 @@ export interface ProcessService {
   processDocumentRow(doc: DocumentRow): Promise<ProcessResult>;
   /** 依据 documents 行重处理（全量重建用） */
   reprocessStored(documentId: string, operator: string): Promise<ProcessResult>;
-  /** 全量重建：重建集合 + 重处理全部 FULL_INDEX 文档，返回任务 ID */
+  /** 全量重建：入队后立即返回任务 ID，不逐个处理文档 */
   rebuildAll(operator: string): Promise<string>;
 }
+
+/** 全量重建入队：每个文档一个 process-single job */
+export type EnqueueRebuild = (taskId: string, documentIds: string[]) => Promise<void>;
 
 /** 按扩展名推断文档大类 */
 export function detectFileType(filename: string): FileType | null {
@@ -73,6 +76,7 @@ export function createProcessService(
   objectStorage: ObjectStorage,
   cfg: ServerConfig,
   settings: SettingsService,
+  enqueueRebuild: EnqueueRebuild,
 ): ProcessService {
 
   /** 单个已入库文档的向量化流程（从解析到写入），返回分块数 */
@@ -276,22 +280,29 @@ export function createProcessService(
       return processDocumentRow(doc);
     },
 
-    async rebuildAll(operator) {
+    async rebuildAll(_operator) {
       const taskId = genId('rebuild');
-      await qdrant.rebuildCollection(cfg.qdrantVectorSize);
       const docs = await db
         .select()
         .from(documents)
         .where(and(eq(documents.deleted, false), eq(documents.storageMode, 'FULL_INDEX')));
-      let success = 0;
-      let failed = 0;
-      for (const doc of docs) {
-        await db.update(documents).set({ status: 'PENDING', vectorCount: 0, segmentCount: 0 }).where(eq(documents.id, doc.id));
-        const result = await processDocumentRow(doc);
-        if (result.success) success += 1;
-        else failed += 1;
+      await db.insert(batchTasks).values({
+        taskId,
+        status: 'PENDING',
+        totalFiles: docs.length,
+      });
+      await qdrant.rebuildCollection(cfg.qdrantVectorSize);
+      if (docs.length > 0) {
+        await db
+          .update(documents)
+          .set({ status: 'PENDING', vectorCount: 0, segmentCount: 0 })
+          .where(inArray(documents.id, docs.map((doc) => doc.id)));
       }
-      logger.info(`[rebuild] 全量重建完成: 共 ${docs.length} 个文档, 成功 ${success}, 失败 ${failed}`);
+      await enqueueRebuild(
+        taskId,
+        docs.map((doc) => doc.documentId),
+      );
+      logger.info(`[rebuild] 全量重建已入队: ${taskId}，共 ${docs.length} 个文档`);
       return taskId;
     },
   };
