@@ -77,8 +77,20 @@ export const usersApi = {
 
 // ---------- Documents（文档资源 + 批量任务资源） ----------
 export const documentsApi = {
-  list: (keyword?: string) =>
-    unwrap(rpc.documents.$get({ query: keyword ? { keyword } : {} }, { headers: authHeaders() })),
+  list: (query?: { keyword?: string; fileType?: string; status?: string; year?: number }) =>
+    unwrap(
+      rpc.documents.$get(
+        {
+          query: {
+            ...(query?.keyword ? { keyword: query.keyword } : {}),
+            ...(query?.fileType ? { fileType: query.fileType } : {}),
+            ...(query?.status ? { status: query.status } : {}),
+            ...(query?.year ? { year: String(query.year) } : {}),
+          },
+        },
+        { headers: authHeaders() },
+      ),
+    ),
   batchUpload: (files: File[]) =>
     unwrap(rpc.documents.uploads.$post({ form: { files } }, { headers: authHeaders() })),
   batchTask: (taskId: string) =>

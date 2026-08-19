@@ -5,6 +5,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Spin,
   Table,
@@ -15,7 +16,8 @@ import {
 } from 'antd';
 import { CloseOutlined, CloudUploadOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DocumentContent, DocumentListItem } from '@myrag/shared';
+import type { DocumentContent, DocumentListItem, DocumentStatus, FileType } from '@myrag/shared';
+import { FILE_TYPES } from '@myrag/shared';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
@@ -124,6 +126,24 @@ const FILE_TYPE_LABEL: Record<string, string> = {
   IMAGE: '图片',
 };
 
+const STATUS_FILTERS = ['PENDING', 'PROCESSING', 'SUCCESS', 'FAILED'] as const;
+
+const YEAR_OPTIONS = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i);
+
+function parseFileType(raw: string | null): FileType | '' {
+  return raw && (FILE_TYPES as readonly string[]).includes(raw) ? (raw as FileType) : '';
+}
+
+function parseStatus(raw: string | null): DocumentStatus | '' {
+  return raw && (STATUS_FILTERS as readonly string[]).includes(raw) ? (raw as DocumentStatus) : '';
+}
+
+function parseYear(raw: string | null): number | '' {
+  if (!raw || !/^\d{4}$/.test(raw)) return '';
+  const year = Number(raw);
+  return year >= 2000 && year <= 2100 ? year : '';
+}
+
 function formatFileSize(bytes: number): string {
   return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
@@ -165,14 +185,26 @@ export default function DocumentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [keyword, setKeyword] = useState(() => searchParams.get('q')?.trim() ?? '');
   const [draft, setDraft] = useState(keyword);
+  const [fileType, setFileType] = useState<FileType | ''>(() => parseFileType(searchParams.get('type')));
+  const [statusFilter, setStatusFilter] = useState<DocumentStatus | ''>(() => parseStatus(searchParams.get('status')));
+  const [year, setYear] = useState<number | ''>(() => parseYear(searchParams.get('year')));
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
+
+  const writeParams = (next: { q: string; type: string; status: string; year: string }) => {
+    const params = new URLSearchParams();
+    if (next.q) params.set('q', next.q);
+    if (next.type) params.set('type', next.type);
+    if (next.status) params.set('status', next.status);
+    if (next.year) params.set('year', next.year);
+    setSearchParams(params, { replace: true });
+  };
 
   const commitSearch = (raw: string) => {
     const next = raw.trim();
     setDraft(raw);
     setKeyword(next);
-    setSearchParams(next ? { q: next } : {}, { replace: true });
+    writeParams({ q: next, type: fileType, status: statusFilter, year: year === '' ? '' : String(year) });
   };
 
   useEffect(() => {
@@ -180,14 +212,20 @@ export default function DocumentsPage() {
       const next = draft.trim();
       if (next === keyword) return;
       setKeyword(next);
-      setSearchParams(next ? { q: next } : {}, { replace: true });
+      writeParams({ q: next, type: fileType, status: statusFilter, year: year === '' ? '' : String(year) });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [draft, keyword, setSearchParams]);
+  }, [draft, keyword, fileType, statusFilter, year, setSearchParams]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['documents', keyword],
-    queryFn: () => documentsApi.list(keyword || undefined),
+    queryKey: ['documents', keyword, fileType, statusFilter, year],
+    queryFn: () =>
+      documentsApi.list({
+        keyword: keyword || undefined,
+        fileType: fileType || undefined,
+        status: statusFilter || undefined,
+        year: year === '' ? undefined : year,
+      }),
     refetchInterval: (query) => {
       const docs = query.state.data?.documents ?? [];
       return docs.some((d) => d.status === 'PENDING' || d.status === 'PROCESSING') ? 3000 : false;
@@ -335,6 +373,45 @@ export default function DocumentsPage() {
             onChange={(e) => setDraft(e.target.value)}
             onSearch={commitSearch}
           />
+          <Select
+            allowClear
+            placeholder="类型"
+            aria-label="按类型筛选"
+            value={fileType || undefined}
+            style={{ width: 112 }}
+            options={FILE_TYPES.map((t) => ({ value: t, label: FILE_TYPE_LABEL[t] ?? t }))}
+            onChange={(v) => {
+              const next = parseFileType(v ?? null);
+              setFileType(next);
+              writeParams({ q: keyword, type: next, status: statusFilter, year: year === '' ? '' : String(year) });
+            }}
+          />
+          <Select
+            allowClear
+            placeholder="状态"
+            aria-label="按状态筛选"
+            value={statusFilter || undefined}
+            style={{ width: 120 }}
+            options={STATUS_FILTERS.map((s) => ({ value: s, label: STATUS_TAG[s]?.text ?? s }))}
+            onChange={(v) => {
+              const next = parseStatus(v ?? null);
+              setStatusFilter(next);
+              writeParams({ q: keyword, type: fileType, status: next, year: year === '' ? '' : String(year) });
+            }}
+          />
+          <Select
+            allowClear
+            placeholder="上传年份"
+            aria-label="按上传年份筛选"
+            value={year === '' ? undefined : year}
+            style={{ width: 128 }}
+            options={YEAR_OPTIONS.map((y) => ({ value: y, label: `${y} 年` }))}
+            onChange={(v) => {
+              const next = typeof v === 'number' ? v : parseYear(v == null ? null : String(v));
+              setYear(next);
+              writeParams({ q: keyword, type: fileType, status: statusFilter, year: next === '' ? '' : String(next) });
+            }}
+          />
           {isManager && (
             <Upload
               multiple
@@ -379,7 +456,13 @@ export default function DocumentsPage() {
           dataSource={data?.documents ?? []}
           columns={columns}
           pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
-          locale={{ emptyText: keyword ? `没找到「${keyword}」` : '暂无文档' }}
+          locale={{
+            emptyText: keyword
+              ? `没找到「${keyword}」`
+              : fileType || statusFilter || year !== ''
+                ? '没有符合筛选条件的文档'
+                : '暂无文档',
+          }}
           size={isMobile ? 'small' : 'middle'}
         />
       </div>

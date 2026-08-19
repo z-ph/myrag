@@ -12,7 +12,7 @@ import type { AppDeps } from '../../app-deps';
 import { createOpenApiApp, errorResponses, bearerSecurity } from '../../openapi';
 import { requireSuperAdmin, requireStaff } from '../../middleware/auth';
 import { badRequest, notFound } from '../../lib/errors';
-import { DEFAULTS } from '@myrag/shared';
+import { DEFAULTS, FILE_TYPES } from '@myrag/shared';
 
 const documentIdParam = z.object({ documentId: z.string().min(1).max(64) });
 const taskIdParam = z.object({ taskId: z.string().min(1).max(64) });
@@ -32,18 +32,29 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'get',
           path: '/',
-          description: '文档列表（公开，支持按文件名、正文搜索）',
+          description: '文档列表（公开，支持文件名/正文搜索，以及类型、状态、上传年份筛选）',
           security: [],
           request: {
-            query: z.object({ keyword: z.string().max(100).optional() }),
+            query: z.object({
+              keyword: z.string().max(100).optional(),
+              fileType: z.enum(FILE_TYPES).optional(),
+              status: z.enum(['PENDING', 'PROCESSING', 'SUCCESS', 'FAILED']).optional(),
+              year: z.coerce.number().int().min(2000).max(2100).optional(),
+            }),
           },
           responses: {
             200: { description: '文档列表', content: { 'application/json': { schema: documentListResponseSchema } } },
           },
         }),
         async (c) => {
-          const { keyword } = c.req.valid('query');
-          const list = await documentService.list(keyword?.trim() || undefined, 'library');
+          const { keyword, fileType, status, year } = c.req.valid('query');
+          const list = await documentService.list({
+            keyword: keyword?.trim() || undefined,
+            match: 'library',
+            fileType,
+            status,
+            year,
+          });
           return c.json(list);
         },
       )

@@ -25,6 +25,13 @@ test.describe('文档库', () => {
     await expect(dialog.getByRole('button', { name: '下载文档' })).toBeVisible();
   });
 
+  test('工具栏提供类型、状态、上传年份筛选', async ({ page }) => {
+    await page.goto('/documents');
+    await expect(page.getByLabel('按类型筛选')).toBeVisible();
+    await expect(page.getByLabel('按状态筛选')).toBeVisible();
+    await expect(page.getByLabel('按上传年份筛选')).toBeVisible();
+  });
+
   test('关键字搜索过滤列表', async ({ page }) => {
     await page.goto('/documents');
     const search = page.getByPlaceholder('按文件名或正文搜索');

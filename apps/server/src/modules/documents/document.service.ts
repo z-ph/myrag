@@ -4,6 +4,7 @@ import type {
   DocumentDeleteResponse,
   DocumentListItem,
   DocumentListResponse,
+  DocumentStatus,
   DocumentVectorDetail,
   FileType,
   StorageMode,
@@ -26,8 +27,17 @@ export interface Downloadable {
 /** filename = 仅文件名（agent 目录）；library = 文件名 + 正文 */
 export type DocumentListMatch = 'filename' | 'library';
 
+export interface DocumentListQuery {
+  keyword?: string;
+  match?: DocumentListMatch;
+  fileType?: FileType;
+  status?: DocumentStatus;
+  /** 上传年份（created_at），不是公文文号里的年份 */
+  year?: number;
+}
+
 export interface DocumentService {
-  list(keyword?: string, match?: DocumentListMatch): Promise<DocumentListResponse>;
+  list(query?: DocumentListQuery): Promise<DocumentListResponse>;
   /** 文档卡片：身份信息，不含正文 */
   get(documentId: string): Promise<DocumentListItem>;
   /** 公开下载：返回文件流信息，文档不存在返回 null */
@@ -64,7 +74,8 @@ export function createDocumentService(
   cfg: ServerConfig,
 ): DocumentService {
   return {
-    async list(keyword, match = 'filename') {
+    async list(query = {}) {
+      const { keyword, match = 'filename', fileType, status, year } = query;
       const term = keyword?.trim();
       const textMatch = term
         ? match === 'library'
@@ -85,7 +96,13 @@ export function createDocumentService(
             )
           : likeContains(documents.originalFilename, term)
         : undefined;
-      const cond = and(eq(documents.deleted, false), textMatch);
+      const cond = and(
+        eq(documents.deleted, false),
+        textMatch,
+        fileType ? eq(documents.fileType, fileType) : undefined,
+        status ? eq(documents.status, status) : undefined,
+        year != null ? sql`extract(year from ${documents.createdAt}) = ${year}` : undefined,
+      );
       const rows = await db.select().from(documents).where(cond).orderBy(desc(documents.createdAt)).limit(cfg.documentListLimit);
       const [totalRow] = await db.select({ total: count() }).from(documents).where(cond);
       return { documents: rows.map(toListItem), total: totalRow?.total ?? 0 };
