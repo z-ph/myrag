@@ -23,7 +23,7 @@ export interface Downloadable {
   size: number;
 }
 
-/** filename = 仅文件名（agent 目录）；library = 文件名 + 主题/正文 */
+/** filename = 仅文件名（agent 目录）；library = 文件名 + 正文 */
 export type DocumentListMatch = 'filename' | 'library';
 
 export interface DocumentService {
@@ -78,12 +78,7 @@ export function createDocumentService(
                   .where(
                     and(
                       eq(documentChunks.documentId, documents.documentId),
-                      or(
-                        likeContains(documentChunks.title, term),
-                        likeContains(documentChunks.keywords, term),
-                        likeContains(documentChunks.documentKeywords, term),
-                        likeContains(documentChunks.chunkText, term),
-                      ),
+                      likeContains(documentChunks.chunkText, term),
                     ),
                   ),
               ),
