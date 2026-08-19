@@ -161,14 +161,30 @@ export function createProcessService(
   }
 
   async function processDocumentRow(doc: DocumentRow): Promise<ProcessResult> {
+    const [fresh] = await db
+      .select()
+      .from(documents)
+      .where(and(eq(documents.documentId, doc.documentId), eq(documents.deleted, false)))
+      .limit(1);
+    if (!fresh) {
+      return {
+        documentId: doc.documentId,
+        originalFilename: doc.originalFilename,
+        success: false,
+        message: '文档已删除',
+        status: 'FAILED',
+        segmentCount: 0,
+        vectorCount: 0,
+      };
+    }
     try {
-      const buffer = await objectStorage.getBuffer(doc.filePath);
+      const buffer = await objectStorage.getBuffer(fresh.filePath);
       if (!buffer) throw new Error('文档文件不存在（对象存储或本地均未找到）');
       const { segmentCount, vectorCount } = await vectorize(
-        doc.documentId,
-        doc.fileType as FileType,
-        doc.filePath,
-        doc.originalFilename,
+        fresh.documentId,
+        fresh.fileType as FileType,
+        fresh.filePath,
+        fresh.originalFilename,
         buffer,
       );
       await db
@@ -180,10 +196,10 @@ export function createProcessService(
           processedAt: new Date(),
           errorMessage: null,
         })
-        .where(eq(documents.documentId, doc.documentId));
+        .where(eq(documents.documentId, fresh.documentId));
       return {
-        documentId: doc.documentId,
-        originalFilename: doc.originalFilename,
+        documentId: fresh.documentId,
+        originalFilename: fresh.originalFilename,
         success: true,
         message: '处理成功',
         status: 'SUCCESS',

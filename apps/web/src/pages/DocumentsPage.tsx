@@ -83,7 +83,10 @@ export default function DocumentsPage() {
 
   const rebuildMutation = useMutation({
     mutationFn: () => documentsApi.rebuildAll(),
-    onSuccess: (result) => message.success(`全量重建任务已创建：${result.taskId}`),
+    onSuccess: (result) => {
+      message.success(`全量重建任务已创建：${result.taskId}`);
+      invalidate();
+    },
     onError: (err: Error) => message.error(err.message),
   });
 

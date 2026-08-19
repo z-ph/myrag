@@ -69,13 +69,28 @@ async function main(): Promise<void> {
   const form = new FormData();
   form.append('file', new File([txt], `差旅费管理办法-${uniq}.txt`, { type: 'text/plain' }));
   const upload = await json('/documents', { method: 'POST', body: form });
-  const uploadData = upload.body as { documentId?: string; success?: boolean; segmentCount?: number; status?: string };
-  check('创建文档并分片向量入库', upload.status === 201 && uploadData.success === true, `分块 ${uploadData.segmentCount}`);
+  const uploadData = upload.body as { documentId?: string; status?: string };
+  check(
+    '创建文档已入队',
+    upload.status === 201 && uploadData.status === 'PENDING' && typeof uploadData.documentId === 'string' && uploadData.documentId.length > 0,
+    uploadData.documentId,
+  );
   const documentId = uploadData.documentId ?? '';
 
   const list = await json('/documents');
   const listData = list.body as { documents?: unknown[]; total?: number };
   check('文档列表', list.status === 200 && (listData.total ?? 0) >= 1);
+
+  let indexedStatus = '';
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const poll = await json('/documents');
+    const docs = (poll.body as { documents?: { documentId?: string; status?: string }[] }).documents ?? [];
+    indexedStatus = docs.find((d) => d.documentId === documentId)?.status ?? '';
+    if (indexedStatus === 'SUCCESS' || indexedStatus === 'FAILED') break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  check('文档处理完成', indexedStatus === 'SUCCESS', indexedStatus || '超时');
 
   const detail = await json(`/documents/${documentId}/vectors`);
   const detailData = detail.body as { indexedPointCount?: number; points?: unknown[] };
