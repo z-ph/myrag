@@ -15,7 +15,7 @@ import {
 } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DocumentContent, DocumentListItem, DocumentUploadResponse } from '@myrag/shared';
+import type { DocumentContent, DocumentListItem } from '@myrag/shared';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { ALLOWED_EXTENSIONS } from '../constants';
@@ -120,18 +120,9 @@ export default function DocumentsPage() {
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['documents'] });
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => documentsApi.upload(file),
-    onSuccess: (_result: DocumentUploadResponse, file) => {
-      message.success(`「${file.name}」已提交，后台分片向量入库中`);
-      invalidate();
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  const batchMutation = useMutation({
     mutationFn: (files: File[]) => documentsApi.batchUpload(files),
     onSuccess: (task) => {
-      message.success(`批量任务已创建（${task.totalFiles} 个文件）`);
+      message.success(task.totalFiles === 1 ? '已提交 1 个文件，后台处理中' : `已提交 ${task.totalFiles} 个文件，后台处理中`);
       setBatchTaskId(task.taskId);
       invalidate();
     },
@@ -245,14 +236,12 @@ export default function DocumentsPage() {
             accept={ALLOWED_EXTENSIONS.join(',')}
             beforeUpload={(file, fileList) => {
               if (file.uid === fileList.at(-1)?.uid) {
-                const files = fileList.filter((f): f is File => f instanceof File);
-                if (files.length === 1) void uploadMutation.mutateAsync(files[0]).catch(() => {});
-                else if (files.length > 1) batchMutation.mutate(files);
+                if (fileList.length > 0) uploadMutation.mutate([...fileList]);
               }
               return false;
             }}
           >
-            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending || batchMutation.isPending}>
+            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending}>
               上传文档
             </Button>
           </Upload>

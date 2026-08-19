@@ -5,14 +5,13 @@ import {
   documentDeleteResponseSchema,
   documentListResponseSchema,
   documentVectorDetailSchema,
-  documentUploadResponseSchema,
   recoveryTriggerResponseSchema,
   rebuildAllResponseSchema,
 } from '@myrag/shared';
 import type { AppDeps } from '../../app-deps';
 import { createOpenApiApp, errorResponses, bearerSecurity } from '../../openapi';
 import { requireSuperAdmin, requireStaff } from '../../middleware/auth';
-import { badRequest, notFound, tooLarge } from '../../lib/errors';
+import { badRequest, notFound } from '../../lib/errors';
 import { DEFAULTS } from '@myrag/shared';
 
 const documentIdParam = z.object({ documentId: z.string().min(1).max(64) });
@@ -22,10 +21,6 @@ const binaryResponse = {
   description: '文件二进制流',
   content: { 'application/octet-stream': { schema: z.any() } },
 } as const;
-
-const uploadFormSchema = z.object({
-  file: z.unknown().openapi({ type: "string", format: "binary" }),
-});
 
 export function createDocumentsRoutes(deps: AppDeps) {
   const { documentService, processService, batchService } = deps;
@@ -88,37 +83,6 @@ export function createDocumentsRoutes(deps: AppDeps) {
       )
 
       // ---------- 需登录（STAFF / SUPER_ADMIN） ----------
-      .openapi(
-        createRoute({
-          method: 'post',
-          path: '/',
-          description: '上传单个文档并解析分片向量入库（创建文档资源，支持 txt/md/csv/pdf/doc/docx/ppt/pptx/xls/xlsx/图片）',
-          security: bearerSecurity,
-          middleware: [requireStaff],
-          request: {
-            body: { content: { 'multipart/form-data': { schema: uploadFormSchema } } },
-          },
-          responses: {
-            201: { description: '已入队', content: { 'application/json': { schema: documentUploadResponseSchema } } },
-            ...errorResponses,
-          },
-        }),
-        async (c) => {
-          const auth = c.get('auth');
-          const body = await c.req.parseBody();
-          const file = body['file'];
-          if (!(file instanceof File)) throw badRequest('缺少上传文件');
-          if (file.size > DEFAULTS.maxFileSizeBytes) throw tooLarge('文件超过大小限制');
-          const result = await processService.processSingleAsync({
-            userId: auth.username,
-            originalFilename: file.name,
-            buffer: Buffer.from(await file.arrayBuffer()),
-          });
-          await batchService.enqueueSingle(result.documentId);
-          return c.json(result, 201);
-        },
-      )
-
       .openapi(
         createRoute({
           method: 'post',

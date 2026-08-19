@@ -33,8 +33,6 @@ export interface ProcessResult {
 export interface ProcessService {
   /** 处理单文件（上传/批量/重建共用），写库并返回结果 */
   processBuffer(input: ProcessInput): Promise<ProcessResult>;
-  /** 单文件异步入口：校验、落盘并创建 PENDING 记录，不执行解析/向量化 */
-  processSingleAsync(input: ProcessInput): Promise<{ documentId: string; status: 'PENDING' }>;
   /** 单个已分片向量入库文档的解析→分块→向量化（worker / 重建共用） */
   processDocumentRow(doc: DocumentRow): Promise<ProcessResult>;
   /** 依据 documents 行重处理（全量重建用） */
@@ -272,11 +270,6 @@ export function createProcessService(
     async processBuffer(input) {
       const doc = await createPendingDocument(input);
       return processDocumentRow(doc);
-    },
-
-    async processSingleAsync(input) {
-      const doc = await createPendingDocument(input);
-      return { documentId: doc.documentId, status: 'PENDING' };
     },
 
     processDocumentRow,

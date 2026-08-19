@@ -66,31 +66,34 @@ async function main(): Promise<void> {
   console.log('[4] 文档上传与处理');
   const uniq = Date.now().toString(36);
   const txt = `差旅费报销管理办法（修订版 ${uniq}）：出差人员凭发票与行程单报销，住宿费按城市等级限额，伙食补助每日 100 元。`;
+  const filename = `差旅费管理办法-${uniq}.txt`;
   const form = new FormData();
-  form.append('file', new File([txt], `差旅费管理办法-${uniq}.txt`, { type: 'text/plain' }));
-  const upload = await json('/documents', { method: 'POST', body: form });
-  const uploadData = upload.body as { documentId?: string; status?: string };
+  form.append('files', new File([txt], filename, { type: 'text/plain' }));
+  const upload = await json('/documents/uploads', { method: 'POST', body: form });
+  const uploadData = upload.body as { taskId?: string; totalFiles?: number };
   check(
-    '创建文档已入队',
-    upload.status === 201 && uploadData.status === 'PENDING' && typeof uploadData.documentId === 'string' && uploadData.documentId.length > 0,
-    uploadData.documentId,
+    '创建上传任务',
+    upload.status === 201 && uploadData.totalFiles === 1 && typeof uploadData.taskId === 'string',
+    uploadData.taskId,
   );
-  const documentId = uploadData.documentId ?? '';
 
   const list = await json('/documents');
   const listData = list.body as { documents?: unknown[]; total?: number };
   check('文档列表', list.status === 200 && (listData.total ?? 0) >= 1);
 
+  let documentId = '';
   let indexedStatus = '';
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const poll = await json('/documents');
-    const docs = (poll.body as { documents?: { documentId?: string; status?: string }[] }).documents ?? [];
-    indexedStatus = docs.find((d) => d.documentId === documentId)?.status ?? '';
+    const docs = (poll.body as { documents?: { documentId?: string; filename?: string; status?: string }[] }).documents ?? [];
+    const found = docs.find((d) => d.filename === filename);
+    documentId = found?.documentId ?? '';
+    indexedStatus = found?.status ?? '';
     if (indexedStatus === 'SUCCESS' || indexedStatus === 'FAILED') break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  check('文档处理完成', indexedStatus === 'SUCCESS', indexedStatus || '超时');
+  check('文档处理完成', indexedStatus === 'SUCCESS' && documentId.length > 0, indexedStatus || '超时');
 
   const detail = await json(`/documents/${documentId}/vectors`);
   const detailData = detail.body as { indexedPointCount?: number; points?: unknown[] };

@@ -51,7 +51,7 @@
 | `GET /documents`、`GET /documents/{id}/file` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /documents/health` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `POST /conversations/{id}/messages`（同步/流式）、`GET /conversations/**`、`DELETE /conversations/{id}`、`POST /conversations/{id}/cancellation` | — | ✅ | ✅ | ✅ | ✅ |
-| `POST /documents`（单文件）、`POST /documents/uploads`、`GET /documents/uploads/{taskId}` | — | ❌ | ❌ | ✅ | ✅ |
+| `POST /documents/uploads`、`GET /documents/uploads/{taskId}` | — | ❌ | ❌ | ✅ | ✅ |
 | `DELETE /documents/{id}`、`GET /documents/{id}/vectors` | — | ❌ | ❌ | ✅ | ✅ |
 | `/upload-sessions/**`（分片上传） | — | ❌ | ❌ | ✅ | ✅ |
 | `POST /documents/uploads/rebuild-all`（全量重建） | — | ❌ | ❌ | ❌ | ✅ |
@@ -67,7 +67,7 @@
 
 - 未登录：导航含「智能问答 / 文档库 / 我的（登录入口）」，前端静默签发访客 token 后走与登录一致的会话链路（会话落库、可恢复），文档库只读（无上传/删除按钮）。
 - `USER`：可登录会话问答，文档库只读。
-- `STAFF`：文档库出现上传/批量上传/删除按钮；无管理面板与用户管理入口。
+- `STAFF`：文档库出现上传/删除按钮；无管理面板与用户管理入口。
 - `SUPER_ADMIN`：全部导航可见（管理面板、用户管理），文档库另有「恢复任务 / 全量重建」。
 - 前端守卫只是体验层，**权限强制在服务端中间件**。
 

@@ -33,7 +33,7 @@ RESTful 化的规则，全站统一执行：
 | 现状 | 目标 | 说明 |
 |---|---|---|
 | `GET /`（列表，公开） | 不变 | |
-| `POST /upload` | `POST /documents` | 单文件上传 = 创建文档资源（multipart） |
+| `POST /upload`、`POST /documents` | `POST /documents/uploads` | 上传统一走批量任务（1 个或多个文件） |
 | `DELETE /{documentId}` | 不变 | |
 | `GET /{documentId}/download` | `GET /{documentId}/file` | 读取文档的文件表示（附件语义） |
 | `GET /{documentId}/vector-detail` | `GET /{documentId}/vectors` | 读取文档的向量分块列表 |
