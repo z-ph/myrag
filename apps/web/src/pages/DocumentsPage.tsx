@@ -23,7 +23,7 @@ import { ALLOWED_EXTENSIONS } from '../constants';
 const STATUS_TAG: Record<string, { color: string; text: string }> = {
   PENDING: { color: 'default', text: '待处理' },
   PROCESSING: { color: 'processing', text: '处理中' },
-  SUCCESS: { color: 'success', text: '已入库' },
+  SUCCESS: { color: 'success', text: '已分片向量入库' },
   FAILED: { color: 'error', text: '失败' },
 };
 
@@ -46,7 +46,7 @@ export default function DocumentsPage() {
   const uploadMutation = useMutation({
     mutationFn: (file: File) => documentsApi.upload(file),
     onSuccess: (result: ProcessedFile) => {
-      if (result.success) message.success(`「${result.originalFilename}」已入库（${result.segmentCount} 分块）`);
+      if (result.success) message.success(`「${result.originalFilename}」已分片向量入库（${result.segmentCount} 分块）`);
       else message.error(`「${result.originalFilename}」处理失败：${result.message}`);
       invalidate();
     },
@@ -148,7 +148,7 @@ export default function DocumentsPage() {
     <div className="page">
       <div className="page-header">
         <h1>文档库</h1>
-        <p>上传制度、流程等文档，入库后即可在智能问答中检索。</p>
+        <p>上传制度、流程等文档，分片向量入库后即可在智能问答中检索。</p>
       </div>
       <div className="page-card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Space size={12}>
@@ -227,7 +227,7 @@ export default function DocumentsPage() {
               type="info"
               showIcon
               message={`集合 ${detailDoc.vectorCollectionName} · 维度 ${detailDoc.vectorSize}`}
-              description={`入库向量 ${detailDoc.indexedPointCount} / 分块 ${detailDoc.segmentCount} · 存储模式 ${detailDoc.storageMode}`}
+              description={`分片向量入库向量 ${detailDoc.indexedPointCount} / 分块 ${detailDoc.segmentCount} · 存储模式 ${detailDoc.storageMode}`}
               style={{ marginBottom: 16 }}
             />
             <Table

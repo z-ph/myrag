@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   form.append('file', new File([txt], `差旅费管理办法-${uniq}.txt`, { type: 'text/plain' }));
   const upload = await json('/documents', { method: 'POST', body: form });
   const uploadData = upload.body as { documentId?: string; success?: boolean; segmentCount?: number; status?: string };
-  check('创建文档并入库', upload.status === 201 && uploadData.success === true, `分块 ${uploadData.segmentCount}`);
+  check('创建文档并分片向量入库', upload.status === 201 && uploadData.success === true, `分块 ${uploadData.segmentCount}`);
   const documentId = uploadData.documentId ?? '';
 
   const list = await json('/documents');

@@ -92,7 +92,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/',
-          description: '上传单个文档并解析入库（创建文档资源，支持 txt/md/csv/pdf/doc/docx/ppt/pptx/xls/xlsx/图片）',
+          description: '上传单个文档并解析分片向量入库（创建文档资源，支持 txt/md/csv/pdf/doc/docx/ppt/pptx/xls/xlsx/图片）',
           security: bearerSecurity,
           middleware: [requireStaff],
           request: {
@@ -199,7 +199,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/uploads/rebuild-all',
-          description: '全量重建向量索引（仅管理员，清空向量库并重新入库）',
+          description: '全量重建向量索引（仅管理员，清空向量库并重新分片向量入库）',
           security: bearerSecurity,
           middleware: [requireSuperAdmin],
           responses: {

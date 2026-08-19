@@ -38,7 +38,7 @@ export async function uploadFile(page: Page, filePath: string): Promise<void> {
   await page.goto('/documents');
   const input = page.locator('input[type="file"]').first();
   await input.setInputFiles(filePath);
-  await expect(page.locator('.ant-message')).toContainText('已入库', { timeout: 30_000 });
+  await expect(page.locator('.ant-message')).toContainText('已分片向量入库', { timeout: 30_000 });
 }
 
 export const TEST_USER = {

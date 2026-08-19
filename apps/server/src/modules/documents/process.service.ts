@@ -35,7 +35,7 @@ export interface ProcessService {
   processBuffer(input: ProcessInput): Promise<ProcessResult>;
   /** 单文件异步入口：校验、落盘并创建 PENDING 记录，不执行解析/向量化 */
   processSingleAsync(input: ProcessInput): Promise<{ documentId: string; status: 'PENDING' }>;
-  /** 单个已入库文档的解析→分块→向量化（worker / 重建共用） */
+  /** 单个已分片向量入库文档的解析→分块→向量化（worker / 重建共用） */
   processDocumentRow(doc: DocumentRow): Promise<ProcessResult>;
   /** 依据 documents 行重处理（全量重建用） */
   reprocessStored(documentId: string, operator: string): Promise<ProcessResult>;
@@ -79,7 +79,7 @@ export function createProcessService(
   enqueueRebuild: EnqueueRebuild,
 ): ProcessService {
 
-  /** 单个已入库文档的向量化流程（从解析到写入），返回分块数 */
+  /** 单个已分片向量入库文档的向量化流程（从解析到写入），返回分块数 */
   async function vectorize(
     documentId: string,
     fileType: FileType,
@@ -214,7 +214,7 @@ export function createProcessService(
     const fileType = assertSupportedFile(input.originalFilename, input.buffer);
     const fileHash = await sha256(input.buffer);
 
-    // 重复文件检查（同内容且已成功入库的文档；失败的允许重传）
+    // 重复文件检查（同内容且已成功分片向量入库的文档；失败的允许重传）
     const [dup] = await db
       .select({ documentId: documents.documentId, originalFilename: documents.originalFilename })
       .from(documents)
