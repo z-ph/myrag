@@ -13,7 +13,7 @@ import {
   Upload,
   type TableProps,
 } from 'antd';
-import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CloseOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem } from '@myrag/shared';
 import { useNavigate } from 'react-router-dom';
@@ -61,7 +61,13 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
     <Modal
       className="doc-preview-modal"
       open={target != null}
-      title={target?.filename}
+      title={
+        <div className="doc-preview-head">
+          <span className="doc-preview-head-title">{target?.filename}</span>
+          <Button type="text" className="doc-preview-head-close" icon={<CloseOutlined />} aria-label="关闭" onClick={onClose} />
+        </div>
+      }
+      closable={false}
       footer={null}
       onCancel={onClose}
       width="min(720px, calc(100vw - 24px))"

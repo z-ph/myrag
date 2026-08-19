@@ -237,20 +237,22 @@ body {
   font-size: 14px;
 }
 
-.doc-preview-modal .ant-modal-header {
-  padding-right: 48px;
+.doc-preview-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
-.doc-preview-modal .ant-modal-title {
+.doc-preview-head-title {
+  flex: 1;
+  min-width: 0;
   white-space: normal;
   word-break: break-word;
   line-height: 1.4;
-  padding-right: 8px;
 }
 
-.doc-preview-modal .ant-modal-close {
-  inset-inline-end: 12px;
-  top: 12px;
+.doc-preview-head-close {
+  flex-shrink: 0;
 }
 
 .docs-toolbar {
