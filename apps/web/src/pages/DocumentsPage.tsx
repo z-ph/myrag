@@ -15,7 +15,7 @@ import {
 } from 'antd';
 import { CloseOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DocumentContent, DocumentListItem, DocumentStatus, FileType } from '@myrag/shared';
+import type { DocumentContent, DocumentListItem, FileType } from '@myrag/shared';
 import { FILE_TYPES } from '@myrag/shared';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
@@ -133,8 +133,10 @@ function parseFileType(raw: string | null): FileType | '' {
   return raw && (FILE_TYPES as readonly string[]).includes(raw) ? (raw as FileType) : '';
 }
 
-function parseStatus(raw: string | null): DocumentStatus | '' {
-  return raw && (STATUS_FILTERS as readonly string[]).includes(raw) ? (raw as DocumentStatus) : '';
+type StatusFilter = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED';
+
+function parseStatus(raw: string | null): StatusFilter | '' {
+  return raw && (STATUS_FILTERS as readonly string[]).includes(raw) ? (raw as StatusFilter) : '';
 }
 
 function parseYear(raw: string | null): number | '' {
@@ -185,7 +187,7 @@ export default function DocumentsPage() {
   const [keyword, setKeyword] = useState(() => searchParams.get('q')?.trim() ?? '');
   const [draft, setDraft] = useState(keyword);
   const [fileType, setFileType] = useState<FileType | ''>(() => parseFileType(searchParams.get('type')));
-  const [statusFilter, setStatusFilter] = useState<DocumentStatus | ''>(() => parseStatus(searchParams.get('status')));
+  const [statusFilter, setStatusFilter] = useState<StatusFilter | ''>(() => parseStatus(searchParams.get('status')));
   const [year, setYear] = useState<number | ''>(() => parseYear(searchParams.get('year')));
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
 

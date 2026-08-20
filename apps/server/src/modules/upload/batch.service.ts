@@ -14,6 +14,8 @@ export interface BatchService {
   /** 创建批量任务并入队（任意实例 worker 均可拾取） */
   createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
   getTask(taskId: string): Promise<BatchTask>;
+  /** 列出未完成任务（PENDING/PROCESSING），返回 UI DTO */
+  listActive(): Promise<ActiveTaskView[]>;
   /** 单文件入队：job name = process-single，jobId = documentId（幂等） */
   enqueueSingle(documentId: string): Promise<void>;
   /** 全量重建入队：每个文档一个 process-single job，jobId = rebuild:taskId:documentId */
@@ -48,6 +50,58 @@ function mapTask(row: typeof batchTasks.$inferSelect, results: typeof batchFileR
     errorMessage: row.errorMessage ?? undefined,
     createdAt: row.createdAt.toISOString(),
     completedAt: row.completedAt?.toISOString(),
+  };
+}
+
+/** 面向 UI 的活跃任务视图（不暴露 DB 结构） */
+export interface ActiveTaskFileView {
+  name: string;
+  status: 'pending' | 'processing' | 'success' | 'failed';
+  message: string;
+}
+
+export interface ActiveTaskView {
+  taskId: string;
+  type: 'upload' | 'rebuild';
+  status: 'pending' | 'processing' | 'done' | 'failed' | 'partial';
+  total: number;
+  completed: number;
+  failed: number;
+  files: ActiveTaskFileView[];
+  createdAt: string;
+}
+
+function inferType(taskId: string): 'upload' | 'rebuild' {
+  return taskId.startsWith('rebuild') ? 'rebuild' : 'upload';
+}
+
+function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batchFileResults.$inferSelect[]): ActiveTaskView {
+  const statusMap: Record<string, ActiveTaskView['status']> = {
+    PENDING: 'pending',
+    PROCESSING: 'processing',
+    SUCCESS: 'done',
+    FAILED: 'failed',
+    PARTIAL: 'partial',
+  };
+  const fileStatusMap: Record<string, ActiveTaskFileView['status']> = {
+    PENDING: 'pending',
+    PROCESSING: 'processing',
+    SUCCESS: 'success',
+    FAILED: 'failed',
+  };
+  return {
+    taskId: row.taskId,
+    type: inferType(row.taskId),
+    status: statusMap[row.status] ?? 'pending',
+    total: row.totalFiles,
+    completed: row.successCount,
+    failed: row.failureCount,
+    files: results.map((r) => ({
+      name: r.filename,
+      status: fileStatusMap[r.status] ?? 'pending',
+      message: r.message ?? r.errorMessage ?? '',
+    })),
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -241,6 +295,22 @@ export function createBatchService(
         .where(eq(batchFileResults.taskId, taskId))
         .orderBy(desc(batchFileResults.id));
       return mapTask(task, results);
+    },
+
+    async listActive() {
+      const activeTasks = await db
+        .select()
+        .from(batchTasks)
+        .where(inArray(batchTasks.status, ['PENDING', 'PROCESSING']))
+        .orderBy(desc(batchTasks.createdAt));
+      if (activeTasks.length === 0) return [];
+      const taskIds = activeTasks.map((t) => t.taskId);
+      const allResults = await db
+        .select()
+        .from(batchFileResults)
+        .where(inArray(batchFileResults.taskId, taskIds))
+        .orderBy(desc(batchFileResults.id));
+      return activeTasks.map((t) => toActiveView(t, allResults.filter((r) => r.taskId === t.taskId)));
     },
 
     startWorker() {

@@ -77,7 +77,7 @@ export const usersApi = {
 
 // ---------- Documents（文档资源 + 批量任务资源） ----------
 export const documentsApi = {
-  list: (query?: { keyword?: string; fileType?: string; status?: string; year?: number }) =>
+  list: (query?: { keyword?: string; fileType?: import('@myrag/shared').FileType; status?: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED'; year?: number }) =>
     unwrap(
       rpc.documents.$get(
         {
@@ -95,6 +95,10 @@ export const documentsApi = {
     unwrap(rpc.documents.uploads.$post({ form: { files } }, { headers: authHeaders() })),
   batchTask: (taskId: string) =>
     unwrap(rpc.documents.uploads[':taskId'].$get({ param: { taskId } }, { headers: authHeaders() })),
+  listActiveTasks: () =>
+    unwrap(rpc.documents.uploads.active.$get({}, { headers: authHeaders() })),
+  rebuildDocument: (documentId: string) =>
+    unwrap(rpc.documents[':documentId'].rebuild.$post({ param: { documentId } }, { headers: authHeaders() })),
   recoveryTrigger: () =>
     unwrap(rpc.documents.uploads.recovery.$post({}, { headers: authHeaders() })),
   rebuildAll: () => unwrap(rpc.documents.uploads['rebuild-all'].$post({}, { headers: authHeaders() })),

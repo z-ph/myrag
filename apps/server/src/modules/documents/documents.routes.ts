@@ -132,6 +132,50 @@ export function createDocumentsRoutes(deps: AppDeps) {
       .openapi(
         createRoute({
           method: 'get',
+          path: '/uploads/active',
+          description: '活跃任务列表（仅未完成，返回 UI 视图）',
+          security: bearerSecurity,
+          middleware: [requireStaff],
+          responses: {
+            200: {
+              description: '活跃任务',
+              content: {
+                'application/json': {
+                  schema: z.object({
+                    tasks: z.array(
+                      z.object({
+                        taskId: z.string(),
+                        type: z.enum(['upload', 'rebuild']),
+                        status: z.enum(['pending', 'processing', 'done', 'failed', 'partial']),
+                        total: z.number(),
+                        completed: z.number(),
+                        failed: z.number(),
+                        files: z.array(
+                          z.object({
+                            name: z.string(),
+                            status: z.enum(['pending', 'processing', 'success', 'failed']),
+                            message: z.string(),
+                          }),
+                        ),
+                        createdAt: z.string(),
+                      }),
+                    ),
+                  }),
+                },
+              },
+            },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          const tasks = await batchService.listActive();
+          return c.json({ tasks });
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'get',
           path: '/uploads/{taskId}',
           description: '查询批量上传任务状态',
           security: bearerSecurity,
@@ -211,6 +255,26 @@ export function createDocumentsRoutes(deps: AppDeps) {
           const { documentId } = c.req.valid('param');
           const result = await documentService.remove(documentId, c.get('auth').username);
           return c.json(result);
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'post',
+          path: '/{documentId}/rebuild',
+          description: '单文件重建向量索引（清除旧向量，重新处理）',
+          security: bearerSecurity,
+          middleware: [requireStaff],
+          request: { params: documentIdParam },
+          responses: {
+            200: { description: '已触发', content: { 'application/json': { schema: z.object({ message: z.string() }) } } },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          const { documentId } = c.req.valid('param');
+          await batchService.enqueueSingle(documentId);
+          return c.json({ message: '已触发重建' });
         },
       )
 
