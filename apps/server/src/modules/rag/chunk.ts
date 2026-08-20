@@ -32,16 +32,29 @@ export function formatChunk(doc: ChunkDocument): string {
   return `[documentId=${doc.metadata.documentId} | ${doc.metadata.filename} | chunk ${doc.metadata.chunkIndex}]${head}\n${doc.pageContent}`;
 }
 
-/** 组装检索来源引用（问答响应用） */
+/**
+ * 组装检索来源引用（问答响应用）。
+ * 按文档去重：同一文档取相关度最高的块，非检索来源（score=0）不出现。
+ */
 export function toSourceReferences(docs: ChunkDocument[]): SourceReference[] {
-  return docs.map((d) => ({
-    sourceType: d.metadata.sourceType,
-    filename: d.metadata.filename,
-    documentId: d.metadata.documentId,
-    chunkIndex: d.metadata.chunkIndex,
-    excerpt: d.pageContent.slice(0, 500),
-    relevanceScore: Number(d.metadata.score.toFixed(4)),
-  }));
+  const byDoc = new Map<string, ChunkDocument>();
+  for (const d of docs) {
+    if (d.metadata.score <= 0) continue;
+    const existing = byDoc.get(d.metadata.documentId);
+    if (!existing || d.metadata.score > existing.metadata.score) {
+      byDoc.set(d.metadata.documentId, d);
+    }
+  }
+  return [...byDoc.values()]
+    .sort((a, b) => b.metadata.score - a.metadata.score)
+    .map((d) => ({
+      sourceType: d.metadata.sourceType,
+      filename: d.metadata.filename,
+      documentId: d.metadata.documentId,
+      chunkIndex: d.metadata.chunkIndex,
+      excerpt: d.pageContent.slice(0, 500),
+      relevanceScore: Number(d.metadata.score.toFixed(4)),
+    }));
 }
 
 /**
