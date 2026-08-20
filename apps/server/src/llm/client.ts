@@ -38,7 +38,7 @@ function buildVisionMessages(system: string, prompt: string, imageBase64: string
     new HumanMessage({
       content: [
         { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
       ],
     }),
   ];
@@ -102,6 +102,31 @@ function wrapLlmError(err: unknown, message: string): never {
   throw new AppError(502, message);
 }
 
+/** 检测是否 429 限流 */
+function isRateLimited(err: unknown): boolean {
+  return err instanceof Error && (
+    err.message.includes('429') ||
+    err.message.includes('RateLimit') ||
+    err.message.includes('rate limit') ||
+    err.message.includes('Requests are too frequent')
+  );
+}
+
+/** 429 指数退避重试：最多 retries 次，2→4→8 秒 */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isRateLimited(err) && retries > 0) {
+      const delayMs = Math.min(30000, 2000 * Math.pow(2, 3 - retries));
+      logger.warn(`[llm] 429 限流，${delayMs}ms 后重试（剩余 ${retries - 1} 次）`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return withRetry(fn, retries - 1);
+    }
+    throw err;
+  }
+}
+
 /** 归一化端点（去尾部斜杠） */
 function baseUrlOf(url: string): string | undefined {
   const normalized = url.replace(/\/+$/, '');
@@ -150,7 +175,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
 
     async embed(texts) {
       try {
-        return await embedModel.embedDocuments(texts);
+        return await withRetry(() => embedModel.embedDocuments(texts));
       } catch (err) {
         wrapLlmError(err, '向量化服务返回异常');
       }
@@ -159,7 +184,9 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     async visionChat(system, prompt, imageBase64) {
       try {
         visionModel.temperature = settings.get().llmVisionTemperature;
-        const res = await visionModel.invoke(buildVisionMessages(system, prompt, imageBase64));
+        const res = await withRetry(() =>
+          visionModel.invoke(buildVisionMessages(system, prompt, imageBase64)),
+        );
         const content = typeof res.content === 'string' ? res.content : '';
         return stripThink(content);
       } catch (err) {

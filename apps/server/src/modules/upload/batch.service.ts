@@ -320,12 +320,63 @@ export function createBatchService(
         async (job) => {
           if (job.name === 'process-single') {
             const documentId = 'documentId' in job.data ? job.data.documentId : '';
-            const [doc] = await db.select().from(documents).where(eq(documents.documentId, documentId)).limit(1);
-            if (!doc) {
-              logger.error(`[batch] 单文件任务文档不存在: ${documentId || '?'}`);
-              return;
+            const isRebuild = job.id?.startsWith('rebuild:');
+
+            // 找到关联的 batchTaskId（rebuild jobId 格式：rebuild:taskId:documentId）
+            let batchTaskId: string | null = null;
+            if (isRebuild && job.id) {
+              const parts = job.id.split(':');
+              if (parts.length >= 2) batchTaskId = parts.slice(0, 2).join(':');
             }
-            await processService.processDocumentRow(doc);
+            if (batchTaskId) {
+              // 标记 batchTask 为 PROCESSING
+              await db
+                .update(batchTasks)
+                .set({ status: 'PROCESSING', updatedAt: new Date() })
+                .where(eq(batchTasks.taskId, batchTaskId));
+            }
+
+            try {
+              if (isRebuild) {
+                await processService.reprocessStored(documentId, 'system');
+              } else {
+                const [doc] = await db.select().from(documents).where(eq(documents.documentId, documentId)).limit(1);
+                if (!doc) {
+                  logger.error(`[batch] 单文件任务文档不存在: ${documentId || '?'}`);
+                  return;
+                }
+                await processService.processDocumentRow(doc);
+              }
+
+              // 更新 batchTask 进度
+              if (batchTaskId) {
+                const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, batchTaskId)).limit(1);
+                if (task) {
+                  const newSuccess = task.successCount + 1;
+                  await db
+                    .update(batchTasks)
+                    .set({ successCount: newSuccess, updatedAt: new Date() })
+                    .where(eq(batchTasks.taskId, batchTaskId));
+                }
+              }
+            } catch (err) {
+              if (batchTaskId) {
+                const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, batchTaskId)).limit(1);
+                if (task) {
+                  const newFailure = task.failureCount + 1;
+                  const allDone = newFailure + task.successCount >= task.totalFiles;
+                  await db
+                    .update(batchTasks)
+                    .set({
+                      failureCount: newFailure,
+                      status: allDone ? 'FAILED' : 'PROCESSING',
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(batchTasks.taskId, batchTaskId));
+                }
+              }
+              throw err;
+            }
             return;
           }
           if ('taskId' in job.data) {
@@ -350,7 +401,7 @@ export function createBatchService(
 
     async recoveryScan() {
       // BullMQ 已自动重跑 stalled job；这里兜底「入队前进程崩溃 / 失败已被清除」的任务。
-      // jobId 幂等：已在队列中的任务 add 为空操作，无需旧的分布式锁。
+      // 关键：必须先清掉旧 job 再重新入队，否则 BullMQ 按 jobId 去重会跳过（空操作）。
       const stale = new Date(Date.now() - cfg.recoveryStaleMs);
       const staleTasks = await db
         .select()
@@ -362,14 +413,34 @@ export function createBatchService(
           ),
         );
       for (const task of staleTasks) {
-        // rebuild-* 没有 batchFileResults，当批量上传重入队会立刻被标成功
-        if (task.taskId.startsWith('rebuild-')) continue;
-        await enqueue(task.taskId);
+        if (task.taskId.startsWith('rebuild-')) {
+          // rebuild 任务没有 batchFileResults，文档 ID 来自 documents 表
+          const rebuildDocs = await db
+            .select({ documentId: documents.documentId })
+            .from(documents)
+            .where(and(eq(documents.status, 'PENDING'), eq(documents.deleted, false)));
+          const docIds = rebuildDocs.map((d) => d.documentId);
+          for (const docId of docIds) {
+            await queue.remove(`rebuild:${task.taskId}:${docId}`);
+          }
+          if (docIds.length > 0) {
+            await db
+              .update(documents)
+              .set({ status: 'PENDING', vectorCount: 0, segmentCount: 0 })
+              .where(inArray(documents.documentId, docIds));
+          }
+          await enqueueRebuild(task.taskId, docIds);
+        } else {
+          await queue.remove(task.taskId);
+          await enqueue(task.taskId);
+        }
+        await db
+          .update(batchTasks)
+          .set({ status: 'PENDING', updatedAt: new Date() })
+          .where(eq(batchTasks.taskId, task.taskId));
       }
 
       // 单文件 process-single 不写 batchTasks。入队前崩溃或 removeOnFail 后会永久卡 PENDING。
-      // documents 无 updatedAt，用 createdAt 衡量 PENDING 时长；只扫 batchTaskId IS NULL，避免与批量补偿重复。
-      // processedAt IS NULL 排除 rebuildAll 把旧文档拨回 PENDING 的窗口；deleted 文档不再入队。
       const staleDocs = await db
         .select({ documentId: documents.documentId })
         .from(documents)
@@ -383,6 +454,7 @@ export function createBatchService(
           ),
         );
       for (const doc of staleDocs) {
+        await queue.remove(doc.documentId);
         await enqueueSingle(doc.documentId);
       }
       return staleTasks.length + staleDocs.length;

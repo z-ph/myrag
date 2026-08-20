@@ -300,7 +300,8 @@ export function createProcessService(
         status: 'PENDING',
         totalFiles: docs.length,
       });
-      await qdrant.rebuildCollection(cfg.qdrantVectorSize);
+      // 不再先清空整个 Qdrant 集合（一旦后续 worker 全部失败，向量库就空了）。
+      // processDocumentRow → reprocessStored 路径会逐文档清旧向量再写新向量。
       if (docs.length > 0) {
         await db
           .update(documents)
