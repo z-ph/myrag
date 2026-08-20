@@ -326,7 +326,8 @@ export function createBatchService(
             let batchTaskId: string | null = null;
             if (isRebuild && job.id) {
               const parts = job.id.split(':');
-              if (parts.length >= 2) batchTaskId = parts.slice(0, 2).join(':');
+              // parts[0]='rebuild', parts[1]=taskId（DB 里的）, parts[2]=documentId
+              if (parts.length >= 2) batchTaskId = parts[1];
             }
             if (batchTaskId) {
               // 标记 batchTask 为 PROCESSING
