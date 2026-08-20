@@ -11,10 +11,9 @@ import {
   Table,
   Tag,
   Tooltip,
-  Upload,
   type TableProps,
 } from 'antd';
-import { CloseOutlined, CloudUploadOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CloseOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem, DocumentStatus, FileType } from '@myrag/shared';
 import { FILE_TYPES } from '@myrag/shared';
@@ -22,7 +21,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { useChatStore } from '../store/chat';
-import { ALLOWED_EXTENSIONS } from '../constants';
+import { DocumentUploadPanel } from './DocumentUploadPanel';
 
 type PreviewTarget = { documentId: string; filename: string; status: string };
 
@@ -189,7 +188,6 @@ export default function DocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<DocumentStatus | ''>(() => parseStatus(searchParams.get('status')));
   const [year, setYear] = useState<number | ''>(() => parseYear(searchParams.get('year')));
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
-  const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
 
   const writeParams = (next: { q: string; type: string; status: string; year: string }) => {
     const params = new URLSearchParams();
@@ -233,16 +231,6 @@ export default function DocumentsPage() {
   });
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['documents'] });
-
-  const uploadMutation = useMutation({
-    mutationFn: (files: File[]) => documentsApi.batchUpload(files),
-    onSuccess: (task) => {
-      message.success(task.totalFiles === 1 ? '已提交 1 个文件，后台处理中' : `已提交 ${task.totalFiles} 个文件，后台处理中`);
-      setBatchTaskId(task.taskId);
-      invalidate();
-    },
-    onError: (err: Error) => reportError(err),
-  });
 
   const deleteMutation = useMutation({
     mutationFn: (documentId: string) => documentsApi.remove(documentId),
@@ -412,24 +400,6 @@ export default function DocumentsPage() {
               writeParams({ q: keyword, type: fileType, status: statusFilter, year: next === '' ? '' : String(next) });
             }}
           />
-          {isManager && (
-            <Upload
-              multiple
-              fileList={[]}
-              showUploadList={false}
-              accept={ALLOWED_EXTENSIONS.join(',')}
-              beforeUpload={(file, fileList) => {
-                if (file.uid === fileList.at(-1)?.uid) {
-                  if (fileList.length > 0) uploadMutation.mutate([...fileList]);
-                }
-                return false;
-              }}
-            >
-              <Button type="primary" icon={<CloudUploadOutlined />} loading={uploadMutation.isPending}>
-                上传文档
-              </Button>
-            </Upload>
-          )}
         </Space>
         {isSuperAdmin && (
           <Space>
@@ -448,6 +418,8 @@ export default function DocumentsPage() {
           </Space>
         )}
       </div>
+
+      {isManager && <DocumentUploadPanel onSubmitted={invalidate} onError={reportError} />}
 
       <div className="page-card">
         <Table<DocumentListItem>

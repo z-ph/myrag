@@ -45,6 +45,7 @@ test.describe('文档库', () => {
     await page.goto('/documents');
     await expect(page.locator('.ant-table')).toBeVisible();
     await expect(page.getByRole('button', { name: '上传文档' })).toHaveCount(0);
+    await expect(page.getByText('拖到此处，或点击选择文件')).toHaveCount(0);
     await expect(page.getByText('浏览制度与流程文件')).toBeVisible();
   });
 });
