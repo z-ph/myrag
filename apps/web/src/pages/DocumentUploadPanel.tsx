@@ -1,7 +1,8 @@
-import { InboxOutlined } from '@ant-design/icons';
+import { useEffect, useState } from 'react';
+import { CloseOutlined, InboxOutlined } from '@ant-design/icons';
 import { DEFAULTS } from '@myrag/shared';
-import { App, Upload } from 'antd';
-import { useMutation } from '@tanstack/react-query';
+import { App, Button, Progress, Upload } from 'antd';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { documentsApi } from '../api';
 import { ALLOWED_EXTENSIONS } from '../constants';
 
@@ -34,6 +35,15 @@ function partitionFiles(files: File[]): { ok: File[]; rejected: string[] } {
   return { ok, rejected };
 }
 
+const FILE_STATUS: Record<string, string> = {
+  PENDING: '等待处理',
+  PROCESSING: '处理中',
+  SUCCESS: '已入库',
+  FAILED: '失败',
+};
+
+const TASK_DONE = new Set(['SUCCESS', 'FAILED', 'PARTIAL']);
+
 export function DocumentUploadPanel({
   onSubmitted,
   onError,
@@ -42,15 +52,33 @@ export function DocumentUploadPanel({
   onError: (err: Error) => void;
 }) {
   const { message } = App.useApp();
+  const [taskId, setTaskId] = useState<string | null>(null);
 
   const uploadMutation = useMutation({
     mutationFn: (files: File[]) => documentsApi.batchUpload(files),
     onSuccess: (task) => {
-      message.success(task.totalFiles === 1 ? '已提交 1 个文件，后台处理中' : `已提交 ${task.totalFiles} 个文件，后台处理中`);
+      setTaskId(task.taskId);
       onSubmitted();
     },
     onError: (err: Error) => onError(err),
   });
+
+  const { data: task } = useQuery({
+    queryKey: ['batch-task', taskId],
+    queryFn: () => documentsApi.batchTask(taskId!),
+    enabled: taskId != null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status == null || status === 'PENDING' || status === 'PROCESSING' ? 1500 : false;
+    },
+  });
+
+  const settled = (task?.successCount ?? 0) + (task?.failureCount ?? 0);
+  const finished = task != null && TASK_DONE.has(task.status);
+
+  useEffect(() => {
+    if (settled > 0 || finished) onSubmitted();
+  }, [settled, finished, onSubmitted]);
 
   const submit = (files: File[]) => {
     const { ok, rejected } = partitionFiles(files);
@@ -59,11 +87,15 @@ export function DocumentUploadPanel({
     uploadMutation.mutate(ok);
   };
 
+  const busy = uploadMutation.isPending || (task != null && !finished);
+  const total = task?.totalFiles ?? 0;
+  const percent = total > 0 ? Math.round((settled / total) * 100) : 0;
+
   return (
     <div className="docs-drop page-card">
       <Upload.Dragger
         multiple
-        disabled={uploadMutation.isPending}
+        disabled={busy}
         accept={ALLOWED_EXTENSIONS.join(',')}
         showUploadList={false}
         beforeUpload={(file, fileList) => {
@@ -74,11 +106,42 @@ export function DocumentUploadPanel({
         <p className="docs-drop-icon">
           <InboxOutlined />
         </p>
-        <p className="docs-drop-title">{uploadMutation.isPending ? '正在提交…' : '拖到此处，或点击选择文件'}</p>
+        <p className="docs-drop-title">{busy ? '正在处理上一批文件…' : '拖到此处，或点击选择文件'}</p>
         <p className="docs-drop-hint">
           支持 Word、PDF、文本、PPT、Excel、图片；单文件不超过 {MAX_MB}MB，单次最多 {DEFAULTS.batchUploadMaxFiles} 个。
         </p>
       </Upload.Dragger>
+      {task && (
+        <div className="docs-batch">
+          <div className="docs-batch-head">
+            <div>
+              <p className="docs-batch-title">
+                {finished
+                  ? task.failureCount > 0
+                    ? `完成：成功 ${task.successCount}，失败 ${task.failureCount}`
+                    : `已全部入库（${task.successCount}）`
+                  : `处理中 ${settled} / ${total}`}
+              </p>
+              {task.errorMessage && <p className="docs-batch-error">{task.errorMessage}</p>}
+            </div>
+            {finished && (
+              <Button type="text" icon={<CloseOutlined />} aria-label="关闭进度" onClick={() => setTaskId(null)} />
+            )}
+          </div>
+          <Progress percent={percent} status={task.failureCount > 0 && finished ? 'exception' : finished ? 'success' : 'active'} />
+          <ul className="docs-batch-list">
+            {task.results.map((item, i) => (
+              <li key={`${item.originalFilename}-${i}`} className={item.status === 'FAILED' ? 'is-failed' : undefined}>
+                <span className="docs-batch-name">{item.originalFilename}</span>
+                <span className="docs-batch-state">
+                  {FILE_STATUS[item.status] ?? item.status}
+                  {item.status === 'FAILED' && item.message ? `：${item.message}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   App,
   Button,
@@ -230,7 +230,9 @@ export default function DocumentsPage() {
     },
   });
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['documents'] });
+  const invalidate = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['documents'] });
+  }, [queryClient]);
 
   const deleteMutation = useMutation({
     mutationFn: (documentId: string) => documentsApi.remove(documentId),
