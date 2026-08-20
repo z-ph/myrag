@@ -434,10 +434,8 @@ export function createBatchService(
           await queue.remove(task.taskId);
           await enqueue(task.taskId);
         }
-        await db
-          .update(batchTasks)
-          .set({ status: 'PENDING', updatedAt: new Date() })
-          .where(eq(batchTasks.taskId, task.taskId));
+        // 不在此更新 updatedAt：worker 处理时会更新进度。
+        // recoveryScan 刷新 updatedAt 会让任务永远不 stale，手动恢复永远找不到。
       }
 
       // 单文件 process-single 不写 batchTasks。入队前崩溃或 removeOnFail 后会永久卡 PENDING。

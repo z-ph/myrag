@@ -264,7 +264,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     dbPoolSize: num('DB_POOL_SIZE', DEFAULTS.dbPoolSize),
     qdrantScrollLimit: num('QDRANT_SCROLL_LIMIT', DEFAULTS.qdrantScrollLimit),
     recoveryScanIntervalMs: num('RECOVERY_SCAN_INTERVAL_MS', 60_000),
-    recoveryStaleMs: num('RECOVERY_STALE_MS', 5 * 60_000),
+    recoveryStaleMs: num('RECOVERY_STALE_MS', 30 * 60_000),
     logLevel: env.LOG_LEVEL ?? 'info',
   };
   return ServerConfigSchema.parse(cfg);
