@@ -10,6 +10,7 @@ import {
   InputNumber,
   List,
   Popconfirm,
+  Progress,
   Row,
   Space,
   Spin,
@@ -18,7 +19,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { FileTextOutlined, HistoryOutlined, TeamOutlined } from '@ant-design/icons';
+import { FileTextOutlined, HistoryOutlined, ReloadOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentsApi, maintenanceApi, promptsApi, settingsApi, usersApi } from '../api';
 
@@ -294,35 +295,197 @@ function PromptsCard() {
   );
 }
 
+/** 活跃任务：轮询未完成任务，只展示 UI DTO */
+function ActiveTasksCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['active-tasks'],
+    queryFn: () => documentsApi.listActiveTasks(),
+    refetchInterval: (query) => {
+      const tasks = query.state.data?.tasks ?? [];
+      return tasks.length > 0 ? 2000 : false;
+    },
+  });
+
+  const tasks = data?.tasks ?? [];
+
+  if (isLoading) {
+    return (
+      <Card title="活跃任务">
+        <Spin />
+      </Card>
+    );
+  }
+
+  if (tasks.length === 0) {
+    return (
+      <Card title="活跃任务">
+        <Empty description="当前没有进行中的任务" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      </Card>
+    );
+  }
+
+  const STATUS_TAG: Record<string, { color: string; text: string }> = {
+    pending: { color: 'default', text: '等待' },
+    processing: { color: 'processing', text: '处理中' },
+    done: { color: 'success', text: '完成' },
+    failed: { color: 'error', text: '失败' },
+    partial: { color: 'warning', text: '部分成功' },
+  };
+
+  return (
+    <Card title="活跃任务">
+      {tasks.map((task) => {
+        const settled = task.completed + task.failed;
+        const percent = task.total > 0 ? Math.round((settled / task.total) * 100) : 0;
+        const s = STATUS_TAG[task.status] ?? { color: 'default', text: task.status };
+        return (
+          <div key={task.taskId} style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <Space size={6}>
+                <Tag color={task.type === 'rebuild' ? 'purple' : 'blue'}>
+                  {task.type === 'rebuild' ? '全量重建' : '上传'}
+                </Tag>
+                <span style={{ fontSize: 13 }}>{task.total} 个文件</span>
+              </Space>
+              <Tag color={s.color}>{s.text}</Tag>
+            </div>
+            <Progress
+              percent={percent}
+              size="small"
+              status={task.status === 'failed' ? 'exception' : task.status === 'done' ? 'success' : 'active'}
+            />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              成功 {task.completed} · 失败 {task.failed} · {new Date(task.createdAt).toLocaleString('zh-CN')}
+            </div>
+            {task.files.length > 0 && (
+              <List
+                size="small"
+                dataSource={task.files}
+                renderItem={(file) => (
+                  <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                    <span style={{ fontSize: 12, color: file.status === 'failed' ? '#b4382f' : '#666' }}>
+                      {file.name}
+                      {file.status === 'failed' && file.message ? ` — ${file.message}` : ''}
+                    </span>
+                  </List.Item>
+                )}
+              />
+            )}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+/** 恢复任务 + 全量重建 */
+function RecoveryRebuildCard() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+
+  const invalidateActive = () => {
+    void queryClient.invalidateQueries({ queryKey: ['active-tasks'] });
+  };
+
+  const recoveryMutation = useMutation({
+    mutationFn: () => documentsApi.recoveryTrigger(),
+    onSuccess: (r) => {
+      message.success(r.triggeredTaskCount > 0 ? `已触发 ${r.triggeredTaskCount} 个任务恢复` : '没有需要恢复的任务');
+      setTimeout(invalidateActive, 1000);
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const rebuildMutation = useMutation({
+    mutationFn: () => documentsApi.rebuildAll(),
+    onSuccess: () => {
+      message.success('全量重建已启动');
+      setTimeout(invalidateActive, 1000);
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  return (
+    <Card title="向量索引维护">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div>
+          <Button icon={<ReloadOutlined />} loading={recoveryMutation.isPending} onClick={() => recoveryMutation.mutate()}>
+            恢复未完成任务
+          </Button>
+          <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+            重启或中断后，把搁置的批量任务重新入队。
+          </Typography.Text>
+        </div>
+        <div>
+          <Popconfirm
+            title="全量重建向量索引？"
+            description="将清空向量库并重新处理全部文档，问答期间不可用。"
+            onConfirm={() => rebuildMutation.mutate()}
+          >
+            <Button danger icon={<ThunderboltOutlined />} loading={rebuildMutation.isPending}>
+              全量重建
+            </Button>
+          </Popconfirm>
+          <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+            更换 embedding 模型后使用，清空向量库重新分片入库。
+          </Typography.Text>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function AdminPage() {
   const { data: docs } = useQuery({ queryKey: ['documents'], queryFn: () => documentsApi.list() });
   const { data: users } = useQuery({ queryKey: ['users'], queryFn: () => usersApi.list() });
+
+  const docList = docs?.documents ?? [];
+  const processing = docList.filter((d) => d.status === 'PENDING' || d.status === 'PROCESSING').length;
+  const failed = docList.filter((d) => d.status === 'FAILED').length;
+  const totalChunks = docList.reduce((sum, d) => sum + (d.segmentCount ?? 0), 0);
+  const totalVectors = docList.reduce((sum, d) => sum + (d.vectorCount ?? 0), 0);
 
   return (
     <div className="page">
       <div className="page-header">
         <h1>管理面板</h1>
-        <p>系统运行概览、提示词管理与访客会话清理。</p>
+        <p>系统运行概览、向量索引维护与提示词管理。</p>
       </div>
       <Row gutter={16}>
-        <Col span={8}>
+        <Col span={6}>
           <Card>
             <Statistic title="知识库文档" value={docs?.total ?? 0} prefix={<FileTextOutlined />} />
             <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-              向量分块 {(docs?.documents ?? []).reduce((sum, d) => sum + (d.segmentCount ?? 0), 0)}
+              处理中 {processing}{failed > 0 && ` · 失败 ${failed}`}
             </div>
           </Card>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
+          <Card>
+            <Statistic title="向量分块" value={totalChunks} />
+            <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+              向量点 {totalVectors}
+            </div>
+          </Card>
+        </Col>
+        <Col span={6}>
           <Card>
             <Statistic title="用户账号" value={users?.length ?? 0} prefix={<TeamOutlined />} />
             <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-              管理员 {(users ?? []).filter((u) => u.role === 'SUPER_ADMIN').length} · 文档管理员 {(users ?? []).filter((u) => u.role === 'STAFF').length} · 普通用户 {(users ?? []).filter((u) => u.role === 'USER').length}
+              管理员 {(users ?? []).filter((u) => u.role === 'SUPER_ADMIN').length} · 文档管理员 {(users ?? []).filter((u) => u.role === 'STAFF').length} · 普通 {(users ?? []).filter((u) => u.role === 'USER').length}
             </div>
           </Card>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
           <GuestCleanupCard />
+        </Col>
+      </Row>
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={12}>
+          <ActiveTasksCard />
+        </Col>
+        <Col span={12}>
+          <RecoveryRebuildCard />
         </Col>
       </Row>
       <PromptsCard />
@@ -330,8 +493,7 @@ export default function AdminPage() {
       <Card title="运维说明" style={{ marginTop: 16 }}>
         <ul style={{ lineHeight: 2 }}>
           <li>文档上传后异步处理：解析 → 分块 → 向量化 → 分片向量入库，可在文档库查看状态。</li>
-          <li>「恢复任务」用于接管因服务中断而搁置的批量任务。</li>
-          <li>「全量重建」在更换 embedding 模型后使用，会清空向量库重新分片向量入库。</li>
+          <li>单文件重建在文档库操作列，全量重建在上方向量索引维护。</li>
           <li>用户管理：创建账号、启停、重置密码（初始密码为用户名）。</li>
           <li>访客会话由系统签发 token 并落库，按保留天数定时清理；提示词改动即时生效并保留版本。</li>
         </ul>
