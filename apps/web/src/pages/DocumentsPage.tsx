@@ -301,33 +301,46 @@ export default function DocumentsPage() {
 
   const columns: TableProps<DocumentListItem>['columns'] = isMobile
     ? [
-        { title: '文件名', dataIndex: 'filename', className: 'doc-name-cell' },
+        {
+          title: '文件名',
+          dataIndex: 'filename',
+          className: 'doc-name-cell',
+          sorter: (a, b) => a.filename.localeCompare(b.filename, 'zh'),
+        },
         actionColumn,
       ]
     : [
-        { title: '文件名', dataIndex: 'filename', className: 'doc-name-cell' },
+        {
+          title: '文件名',
+          dataIndex: 'filename',
+          className: 'doc-name-cell',
+          sorter: (a, b) => a.filename.localeCompare(b.filename, 'zh'),
+        },
         {
           title: '类型',
           dataIndex: 'fileType',
           width: 80,
+          sorter: (a, b) => a.fileType.localeCompare(b.fileType),
           render: (v: string) => <Tag>{FILE_TYPE_LABEL[v] ?? v}</Tag>,
         },
         {
           title: '大小',
           dataIndex: 'fileSize',
           width: 88,
+          sorter: (a, b) => a.fileSize - b.fileSize,
           render: (v: number) => formatFileSize(v),
         },
         ...(isManager
           ? [
-              { title: '分块', dataIndex: 'segmentCount', width: 70 },
-              { title: '向量', dataIndex: 'vectorCount', width: 70 },
+              { title: '分块', dataIndex: 'segmentCount', width: 70, sorter: (a: DocumentListItem, b: DocumentListItem) => a.segmentCount - b.segmentCount },
+              { title: '向量', dataIndex: 'vectorCount', width: 70, sorter: (a: DocumentListItem, b: DocumentListItem) => a.vectorCount - b.vectorCount },
             ]
           : []),
         {
           title: '状态',
           dataIndex: 'status',
           width: 96,
+          sorter: (a, b) => a.status.localeCompare(b.status),
           render: (v: string) => {
             const s = STATUS_TAG[v] ?? { color: 'default', text: v };
             return <Tag color={s.color}>{s.text}</Tag>;
@@ -337,6 +350,8 @@ export default function DocumentsPage() {
           title: '上传时间',
           dataIndex: 'uploadTime',
           width: 160,
+          sorter: (a, b) => new Date(a.uploadTime).getTime() - new Date(b.uploadTime).getTime(),
+          defaultSortOrder: 'descend',
           render: (v: string) => new Date(v).toLocaleString('zh-CN'),
         },
         actionColumn,
