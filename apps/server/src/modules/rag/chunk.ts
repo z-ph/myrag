@@ -34,27 +34,38 @@ export function formatChunk(doc: ChunkDocument): string {
 
 /**
  * 组装检索来源引用（问答响应用）。
- * 按文档去重：同一文档取相关度最高的块，非检索来源（score=0）不出现。
+ * 按文档去重：同一文档只出一条来源。
+ * - search 返回的块有 score（>0），显示相关度百分比
+ * - read_document 推入的块 score=0，属于阅读而非检索，不显示百分比
+ * 同一文档同时被 search 和 read 命中时，保留有 score 的那条。
  */
 export function toSourceReferences(docs: ChunkDocument[]): SourceReference[] {
   const byDoc = new Map<string, ChunkDocument>();
   for (const d of docs) {
-    if (d.metadata.score <= 0) continue;
     const existing = byDoc.get(d.metadata.documentId);
-    if (!existing || d.metadata.score > existing.metadata.score) {
+    if (!existing) {
+      byDoc.set(d.metadata.documentId, d);
+      continue;
+    }
+    // 优先保留有 score 的（检索来源），其次取 score 更高的
+    if (d.metadata.score > existing.metadata.score) {
       byDoc.set(d.metadata.documentId, d);
     }
   }
   return [...byDoc.values()]
     .sort((a, b) => b.metadata.score - a.metadata.score)
-    .map((d) => ({
-      sourceType: d.metadata.sourceType,
-      filename: d.metadata.filename,
-      documentId: d.metadata.documentId,
-      chunkIndex: d.metadata.chunkIndex,
-      excerpt: d.pageContent.slice(0, 500),
-      relevanceScore: Number(d.metadata.score.toFixed(4)),
-    }));
+    .map((d) => {
+      const isRetrieval = d.metadata.score > 0;
+      return {
+        sourceType: d.metadata.sourceType,
+        filename: d.metadata.filename,
+        documentId: d.metadata.documentId,
+        chunkIndex: d.metadata.chunkIndex,
+        excerpt: d.pageContent.slice(0, 500),
+        // 只有检索来源才有相关度；阅读来源不显示百分比
+        relevanceScore: isRetrieval ? Number(d.metadata.score.toFixed(4)) : undefined,
+      };
+    });
 }
 
 /**
