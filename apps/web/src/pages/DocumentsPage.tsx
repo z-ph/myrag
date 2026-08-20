@@ -13,7 +13,7 @@ import {
   Tooltip,
   type TableProps,
 } from 'antd';
-import { CloseOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CloseOutlined, CloudUploadOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, RetweetOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem, FileType } from '@myrag/shared';
 import { FILE_TYPES } from '@myrag/shared';
@@ -190,6 +190,7 @@ export default function DocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter | ''>(() => parseStatus(searchParams.get('status')));
   const [year, setYear] = useState<number | ''>(() => parseYear(searchParams.get('year')));
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const writeParams = (next: { q: string; type: string; status: string; year: string }) => {
     const params = new URLSearchParams();
@@ -245,16 +246,10 @@ export default function DocumentsPage() {
     onError: (err: Error) => reportError(err),
   });
 
-  const recoveryMutation = useMutation({
-    mutationFn: () => documentsApi.recoveryTrigger(),
-    onSuccess: (result) => message.success(`已触发 ${result.triggeredTaskCount} 个任务恢复`),
-    onError: (err: Error) => reportError(err),
-  });
-
-  const rebuildMutation = useMutation({
-    mutationFn: () => documentsApi.rebuildAll(),
-    onSuccess: (result) => {
-      message.success(`全量重建任务已创建：${result.taskId}`);
+  const rebuildDocMutation = useMutation({
+    mutationFn: (documentId: string) => documentsApi.rebuildDocument(documentId),
+    onSuccess: () => {
+      message.success('已触发重建');
       invalidate();
     },
     onError: (err: Error) => reportError(err),
@@ -262,7 +257,7 @@ export default function DocumentsPage() {
 
   const actionColumn: NonNullable<TableProps<DocumentListItem>['columns']>[number] = {
     title: '操作',
-    width: isMobile ? 136 : 228,
+    width: isMobile ? 160 : 260,
     render: (_, row) => (
       <Space size={4}>
         <Tooltip title="下载">
@@ -292,6 +287,17 @@ export default function DocumentsPage() {
             }}
           />
         </Tooltip>
+        {isManager && (
+          <Tooltip title="重建向量">
+            <Button
+              type="text"
+              icon={<RetweetOutlined />}
+              aria-label={`重建「${row.filename}」的向量索引`}
+              loading={rebuildDocMutation.isPending}
+              onClick={() => rebuildDocMutation.mutate(row.documentId)}
+            />
+          </Tooltip>
+        )}
         {isManager && (
           <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
             <Button type="text" danger icon={<DeleteOutlined />} />
@@ -419,26 +425,13 @@ export default function DocumentsPage() {
               writeParams({ q: keyword, type: fileType, status: statusFilter, year: next === '' ? '' : String(next) });
             }}
           />
-        </Space>
-        {isSuperAdmin && (
-          <Space>
-            <Button icon={<ReloadOutlined />} loading={recoveryMutation.isPending} onClick={() => void recoveryMutation.mutate()}>
-              恢复任务
+          {isManager && (
+            <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>
+              上传文档
             </Button>
-            <Popconfirm
-              title="全量重建向量索引？"
-              description="将清空向量库并重新处理全部文档，问答期间不可用。"
-              onConfirm={() => rebuildMutation.mutate()}
-            >
-              <Button danger icon={<ThunderboltOutlined />} loading={rebuildMutation.isPending}>
-                全量重建
-              </Button>
-            </Popconfirm>
-          </Space>
-        )}
+          )}
+        </Space>
       </div>
-
-      {isManager && <DocumentUploadPanel onSubmitted={invalidate} onError={reportError} />}
 
       <div className="page-card">
         <Table<DocumentListItem>
@@ -459,6 +452,15 @@ export default function DocumentsPage() {
       </div>
 
       <DocumentPreviewModal target={preview} onClose={() => setPreview(null)} />
+
+      {isManager && (
+        <DocumentUploadPanel
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          onSubmitted={invalidate}
+          onError={reportError}
+        />
+      )}
     </div>
   );
 }
