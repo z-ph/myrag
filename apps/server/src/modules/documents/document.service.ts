@@ -40,6 +40,8 @@ export interface DocumentService {
   list(query?: DocumentListQuery): Promise<DocumentListResponse>;
   /** 文档卡片：身份信息，不含正文 */
   get(documentId: string): Promise<DocumentListItem>;
+  /** 块目录：每块的序号、标题、大小、预览，不含全文 */
+  listChunks(documentId: string): Promise<ChunkOutline[]>;
   /** 公开下载：返回文件流信息，文档不存在返回 null */
   download(documentId: string): Promise<Downloadable | null>;
   remove(documentId: string, operator: string): Promise<DocumentDeleteResponse>;
@@ -52,6 +54,14 @@ export interface DocumentService {
 function likeContains(column: SQLWrapper, keyword: string) {
   const pattern = `%${keyword.replace(/[\\%_]/g, '\\$&')}%`;
   return sql`${column} ilike ${pattern} escape '\\'`;
+}
+
+/** 块目录：序号、标题、大小、预览（不含全文） */
+export interface ChunkOutline {
+  chunkIndex: number;
+  title?: string;
+  chunkSize: number;
+  textPreview: string;
 }
 
 function toListItem(row: typeof documents.$inferSelect): DocumentListItem {
@@ -116,6 +126,31 @@ export function createDocumentService(
         .limit(1);
       if (!doc) throw notFound('文档不存在');
       return toListItem(doc);
+    },
+
+    async listChunks(documentId) {
+      const [doc] = await db
+        .select({ documentId: documents.documentId })
+        .from(documents)
+        .where(and(eq(documents.documentId, documentId), eq(documents.deleted, false)))
+        .limit(1);
+      if (!doc) throw notFound('文档不存在');
+      const chunks = await db
+        .select({
+          chunkIndex: documentChunks.chunkIndex,
+          title: documentChunks.title,
+          chunkSize: documentChunks.chunkSize,
+          textPreview: documentChunks.chunkTextPreview,
+        })
+        .from(documentChunks)
+        .where(eq(documentChunks.documentId, documentId))
+        .orderBy(documentChunks.chunkIndex);
+      return chunks.map((c) => ({
+        chunkIndex: c.chunkIndex,
+        title: c.title ?? undefined,
+        chunkSize: c.chunkSize ?? c.textPreview?.length ?? 0,
+        textPreview: c.textPreview ?? '',
+      }));
     },
 
     async download(documentId) {

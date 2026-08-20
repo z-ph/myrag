@@ -79,6 +79,7 @@ export const SEARCH_TOOL_NAME = 'search_knowledge_base';
 export const LIST_DOCUMENTS_TOOL_NAME = 'list_documents';
 export const GET_DOCUMENT_TOOL_NAME = 'get_document';
 export const READ_DOCUMENT_TOOL_NAME = 'read_document';
+export const LIST_CHUNKS_TOOL_NAME = 'list_chunks';
 
 const READ_DOCUMENT_DEFAULT_CHUNKS = 8;
 
@@ -87,6 +88,7 @@ export const TOOL_LABELS: Record<string, string> = {
   [SEARCH_TOOL_NAME]: '检索知识库',
   [LIST_DOCUMENTS_TOOL_NAME]: '列出文档',
   [GET_DOCUMENT_TOOL_NAME]: '查看文档卡片',
+  [LIST_CHUNKS_TOOL_NAME]: '查看块目录',
   [READ_DOCUMENT_TOOL_NAME]: '阅读文档正文',
 };
 
@@ -193,6 +195,26 @@ export function createRagService(
       },
     );
 
+    const listChunks = tool(
+      async ({ documentId }: { documentId: string }) => {
+        const meta = await documentService.get(documentId);
+        const chunks = await documentService.listChunks(documentId);
+        if (chunks.length === 0) return `${meta.filename}：没有分块数据。`;
+        const lines = chunks.map(
+          (c) => `chunk ${c.chunkIndex}${c.title ? ` · ${c.title}` : ''} (${c.chunkSize} 字)\n  ${c.textPreview}`,
+        );
+        return `${meta.filename}（共 ${meta.segmentCount} 块）\n${lines.join('\n')}`;
+      },
+      {
+        name: LIST_CHUNKS_TOOL_NAME,
+        description:
+          '块目录：列出文档每个块的序号、标题、大小和预览，不含全文。agent 先看目录，再决定读哪些块。不含正文，要读正文用 read_document。',
+        schema: z.object({
+          documentId: z.string().describe('文档 id'),
+        }),
+      },
+    );
+
     const readDocument = tool(
       async ({ documentId, startChunk, maxChunks }: { documentId: string; startChunk?: number; maxChunks?: number }) => {
         const meta = await documentService.get(documentId);
@@ -229,7 +251,7 @@ export function createRagService(
       {
         name: READ_DOCUMENT_TOOL_NAME,
         description:
-          '读正文：按块返回指定文档原文，不做相关度检索。「这篇讲什么 / 全文怎么规定」用本工具。默认从 startChunk=0 起读 8 块；更长用 startChunk/maxChunks 接着读。',
+          '读正文：按块返回指定文档原文，不做相关度检索。先用 list_chunks 看块目录，再按 startChunk/maxChunks 读需要的部分。默认从 0 起读 8 块。',
         schema: z.object({
           documentId: z.string().describe('文档 id'),
           startChunk: z.number().int().min(0).optional().describe('起始块序号，默认 0'),
@@ -272,7 +294,7 @@ export function createRagService(
     llm.chatModel.temperature = settings.get().llmChatTemperature;
 
     // 关闭知识库时不给工具：agent 直接回答
-    const tools = input.useKnowledgeBase === false ? [] : [listDocuments, getDocument, readDocument, searchKnowledgeBase];
+    const tools = input.useKnowledgeBase === false ? [] : [listDocuments, getDocument, listChunks, readDocument, searchKnowledgeBase];
     const agent = createAgent({
       model: llm.chatModel,
       tools,

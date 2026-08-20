@@ -2,7 +2,7 @@
 
 本页对照当前实现，说明仓库里实际用了哪些 LangChain 抽象。以 `apps/server/src/modules/rag/rag.service.ts` 为准，不以历史设计稿为准。
 
-问答不是固定「先检索再生成」。每轮用 `createAgent` 挂四个工具，模型决定是否调用、用什么参数、调用几次。
+问答不是固定「先检索再生成」。每轮用 `createAgent` 挂五个工具，模型决定是否调用、用什么参数、调用几次。
 
 ## 问答主路径
 
@@ -11,8 +11,8 @@ POST /conversations/{id}/messages（stream=true 时 SSE）
   → 可选：imageService.understand（Agent 之前）
   → createAgent({ model, tools, systemPrompt })
   → streamEvents v3（并行：messages.reasoning / messages.text / toolCalls）
-  → list_documents / get_document / read_document / search_knowledge_base
-  → DocumentService.list|get|content / RagRetriever.retrieve
+  → list_documents / get_document / list_chunks / read_document / search_knowledge_base
+  → DocumentService.list|get|listChunks|content / RagRetriever.retrieve
   → 消息落库：content / reasoning / tool_calls / sources
 ```
 
@@ -27,8 +27,8 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 
 | 阶段 | LangChain 抽象 | 本仓库实现 |
 |---|---|---|
-| 编排 | `createAgent` | `rag.service.ts`：每请求新建，工具默认四件 |
-| 工具 | `tool` + zod schema | `list_documents` 目录；`get_document` 卡片无正文；`read_document` 按块原文；`search_knowledge_base(query, documentIds?)` 相关片段 |
+| 编排 | `createAgent` | `rag.service.ts`：每请求新建，工具默认五件 |
+| 工具 | `tool` + zod schema | `list_documents` 目录；`get_document` 卡片无正文；`list_chunks` 块目录（序号/标题/大小/预览，不含全文）；`read_document` 按块原文；`search_knowledge_base(query, documentIds?)` 相关片段 |
 | 文档块 | `Document` | `ChunkDocument`（`chunk.ts`） |
 | 分块 | Text splitter | 中文标题感知 `chunkText`（制度文档域定制） |
 | 向量化 | `OpenAIEmbeddings` | `llm/client.ts`（`stripNewLines: false`，`encodingFormat: 'float'`） |
