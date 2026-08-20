@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Tooltip } from 'antd';
+import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Switch, Tooltip } from 'antd';
 import {
   DeleteOutlined,
   DownloadOutlined,
@@ -180,7 +180,65 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
   );
 }
 
-function ToolSteps({ steps }: { steps: ToolStep[] }) {
+/** 友好渲染工具返回：把 JSON / 分块文本转成人话摘要 */
+function renderToolOutput(name: string, output: string): React.ReactNode {
+  if (!output) return null;
+  // 尝试解析为 JSON（list_documents / get_document / list_chunks 返回 JSON）
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    // read_document / search_knowledge_base 返回纯文本
+    return <pre className="tool-output-text">{output}</pre>;
+  }
+
+  if (Array.isArray(parsed)) {
+    if (name === 'list_documents') {
+      const items = parsed as { documentId: string; filename: string }[];
+      return (
+        <ul className="tool-output-list">
+          {items.map((d) => (
+            <li key={d.documentId}>
+              <span className="tool-output-file">📄 {d.filename}</span>
+              <code className="tool-output-id">{d.documentId}</code>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    if (name === 'list_chunks') {
+      const items = parsed as { chunkIndex: number; title?: string; chunkSize: number; textPreview: string }[];
+      return (
+        <ul className="tool-output-list">
+          {items.map((c) => (
+            <li key={c.chunkIndex}>
+              <span className="tool-output-chunk-head">块 {c.chunkIndex}{c.title ? ` · ${c.title}` : ''}（{c.chunkSize} 字）</span>
+              <span className="tool-output-chunk-prev">{c.textPreview}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+  }
+
+  if (parsed && typeof parsed === 'object' && name === 'get_document') {
+    const d = parsed as Record<string, unknown>;
+    return (
+      <dl className="tool-output-card">
+        <dt>文件名</dt><dd>{String(d.filename ?? '')}</dd>
+        <dt>类型</dt><dd>{String(d.fileType ?? '')}</dd>
+        <dt>大小</dt><dd>{String(d.fileSize ?? '')}</dd>
+        <dt>状态</dt><dd>{String(d.status ?? '')}</dd>
+        <dt>分块数</dt><dd>{String(d.segmentCount ?? '')}</dd>
+      </dl>
+    );
+  }
+
+  // 兜底：格式化 JSON
+  return <pre className="tool-output-json">{JSON.stringify(parsed, null, 2)}</pre>;
+}
+
+function ToolSteps({ steps, devMode }: { steps: ToolStep[]; devMode: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (steps.length === 0) return null;
   return (
@@ -201,7 +259,24 @@ function ToolSteps({ steps }: { steps: ToolStep[] }) {
                 </button>
               )}
             </div>
-            {open && hasResult && <div className="tool-output">{tc.output}</div>}
+            {open && hasResult && (
+              <div className="tool-output">
+                {devMode ? (
+                  <>
+                    <div className="tool-output-section">
+                      <span className="tool-output-section-label">输入</span>
+                      <pre className="tool-output-raw">{JSON.stringify(tc.args, null, 2)}</pre>
+                    </div>
+                    <div className="tool-output-section">
+                      <span className="tool-output-section-label">输出</span>
+                      <pre className="tool-output-raw">{tc.output}</pre>
+                    </div>
+                  </>
+                ) : (
+                  renderToolOutput(tc.name, tc.output!)
+                )}
+              </div>
+            )}
           </div>
         );
       })}
@@ -226,7 +301,7 @@ function StreamingMarkdown({ content }: { content: string }) {
   );
 }
 
-function MessageItem({ msg, onAsk, onPreview }: { msg: ChatMessage; onAsk: (q: string) => void; onPreview: (s: SourceReference) => void }) {
+function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onAsk: (q: string) => void; onPreview: (s: SourceReference) => void; devMode: boolean }) {
   const isUser = msg.role === 'user';
   if (isUser) {
     return (
@@ -244,7 +319,7 @@ function MessageItem({ msg, onAsk, onPreview }: { msg: ChatMessage; onAsk: (q: s
       <Avatar icon={<RobotOutlined />} className="msg-avatar" />
       <div className="msg-body">
         <ReasoningBlock reasoning={msg.reasoning ?? ''} generating={msg.status === 'GENERATING'} />
-        <ToolSteps steps={msg.toolCalls ?? []} />
+        <ToolSteps steps={msg.toolCalls ?? []} devMode={devMode} />
         <div className={`answer ${msg.status === 'ERROR' ? 'answer-error' : ''} ${msg.status === 'CANCELLED' ? 'answer-cancelled' : ''}`}>
           {msg.content ? (
             msg.status === 'GENERATING' ? (
@@ -279,6 +354,7 @@ export default function ChatPage() {
   } = useChatStore();
 
   const [input, setInput] = useState('');
+  const [devMode, setDevMode] = useState(false);
   const [docRef, setDocRef] = useState<{ documentId: string; filename: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceReference | null>(null);
@@ -399,7 +475,7 @@ export default function ChatPage() {
         ) : (
           <div className="chat-messages">
             {messages.map((m) => (
-              <MessageItem key={m.id} msg={m} onAsk={handleSend} onPreview={setPreviewSource} />
+              <MessageItem key={m.id} msg={m} onAsk={handleSend} onPreview={setPreviewSource} devMode={devMode} />
             ))}
             <div ref={endRef} />
           </div>
@@ -467,7 +543,13 @@ export default function ChatPage() {
             </Button>
           )}
         </div>
-        <div className="composer-tip">回答基于知识库检索，可点击来源查看引用片段</div>
+        <div className="composer-tip">
+          <span>回答基于知识库检索，可点击来源查看引用片段</span>
+          <span className="composer-dev">
+            开发者模式
+            <Switch size="small" checked={devMode} onChange={setDevMode} />
+          </span>
+        </div>
       </div>
 
       <SourcePreviewModal source={previewSource} onClose={() => setPreviewSource(null)} />

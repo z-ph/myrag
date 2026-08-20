@@ -407,8 +407,7 @@
   font-size: 12px;
   line-height: 1.7;
   color: var(--ink-3);
-  white-space: pre-wrap;
-  max-height: 200px;
+  max-height: 240px;
   overflow-y: auto;
 }
 
@@ -682,6 +681,109 @@
 }
 
 .conv-time {
+  font-size: 11px;
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+
+/* ── 工具结果友好渲染 ─────────────────────────────────── */
+.tool-output-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tool-output-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-output-list li:last-child {
+  border-bottom: none;
+}
+
+.tool-output-file {
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.tool-output-id {
+  font-size: 11px;
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+
+.tool-output-chunk-head {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.tool-output-chunk-prev {
+  color: var(--ink-3);
+  font-size: 11px;
+  display: block;
+  margin-top: 2px;
+}
+
+.tool-output-card {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+}
+
+.tool-output-card dt {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.tool-output-card dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.tool-output-text,
+.tool-output-json,
+.tool-output-raw {
+  margin: 0;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-output-section {
+  margin-bottom: 8px;
+}
+
+.tool-output-section:last-child {
+  margin-bottom: 0;
+}
+
+.tool-output-section-label {
+  display: block;
+  font-size: 11px;
+  color: var(--seal);
+  margin-bottom: 2px;
+}
+
+.composer-tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-dev {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--ink-3);
   flex-shrink: 0;
