@@ -41,9 +41,6 @@ services:
       # 容器内走 infra_llm DNS；宿主开发仍用 .env 的 LLM_BASE_URL
       LLM_BASE_URL: http://litellm:4000/v1
       LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY is required}
-    volumes:
-      - uploads:/app/uploads
-      - data:/app/data
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -76,6 +73,4 @@ networks:
     name: cwc-infra_llm
     external: true
 
-volumes:
-  uploads:
-  data:
+

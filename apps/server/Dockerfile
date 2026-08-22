@@ -32,9 +32,8 @@ COPY --from=build /app/deploy /app
 COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/apps/server/drizzle ./drizzle
 
-# 上传文件与批处理暂存目录（挂载卷）
-RUN mkdir -p /app/uploads /app/data/batch /app/data/chunks
-VOLUME ["/app/uploads", "/app/data"]
+# 批处理/分片暂存在容器可写层，重启即丢；正文在 MinIO
+RUN mkdir -p /app/data/batch /app/data/chunks
 
 EXPOSE 8080
 
