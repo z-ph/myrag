@@ -49,6 +49,7 @@ function makeDoc(overrides: Partial<DocumentRow> = {}): DocumentRow {
     batchTaskId: null,
     createdAt: new Date(),
     processedAt: null,
+    toc: null,
     ...overrides,
   };
 }

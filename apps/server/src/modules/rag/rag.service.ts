@@ -23,6 +23,7 @@ import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from '.
 import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
 import type { DocumentService } from '../documents/document.service';
+import { formatListChunksText } from '../../pipeline/outline';
 
 export interface AskInput {
   question: string;
@@ -203,17 +204,14 @@ export function createRagService(
     const listChunks = tool(
       async ({ documentId }: { documentId: string }) => {
         const meta = await documentService.get(documentId);
-        const chunks = await documentService.listChunks(documentId);
-        if (chunks.length === 0) return `${meta.filename}：没有分块数据。`;
-        const lines = chunks.map(
-          (c) => `chunk ${c.chunkIndex}${c.title ? ` · ${c.title}` : ''} (${c.chunkSize} 字)\n  ${c.textPreview}`,
-        );
-        return `${meta.filename}（共 ${meta.segmentCount} 块）\n${lines.join('\n')}`;
+        const listed = await documentService.listChunks(documentId);
+        if (listed.chunks.length === 0) return `${meta.filename}：没有分块数据。`;
+        return formatListChunksText(meta.filename, listed.toc, listed.chunks);
       },
       {
         name: LIST_CHUNKS_TOOL_NAME,
         description:
-          '块目录：列出文档每个块的序号、标题、大小和预览，不含全文。agent 先看目录，再决定读哪些块。不含正文，要读正文用 read_document。',
+          '块目录：层级目录与每块标题、摘要，不含正文。先看目录再 read_document。',
         schema: z.object({
           documentId: z.string().describe('文档 id'),
         }),

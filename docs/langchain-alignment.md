@@ -28,7 +28,7 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 | 阶段 | LangChain 抽象 | 本仓库实现 |
 |---|---|---|
 | 编排 | `createAgent` | `rag.service.ts`：每请求新建，工具默认五件；`toolCallLimitMiddleware(10)` + `modelCallLimitMiddleware(13)` 停机，`recursionLimit: 80` 避免中间件收尾再撞默认 25 |
-| 工具 | `tool` + zod schema | `list_documents` 目录；`get_document` 卡片无正文；`list_chunks` 块目录（序号/标题/大小/预览，不含全文）；`read_document` 按块原文；`search_knowledge_base(query, documentIds?)` 相关片段 |
+| 工具 | `tool` + zod schema | `list_documents` 目录；`get_document` 卡片无正文；`list_chunks` 层级目录 + 每块标题摘要，不含全文；`read_document` 按块原文；`search_knowledge_base(query, documentIds?)` 相关片段 |
 | 文档块 | `Document` | `ChunkDocument`（`chunk.ts`） |
 | 分块 | Text splitter | 中文标题感知 `chunkText`（制度文档域定制） |
 | 向量化 | `OpenAIEmbeddings` | `llm/client.ts`（`stripNewLines: false`，`encodingFormat: 'float'`） |
@@ -38,6 +38,8 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 | 图片理解 | `withStructuredOutput` | `image.service.ts`：失败回退 `visionChat` + 本地 JSON 解析 |
 
 同轮多次工具调用按 `documentId:chunkIndex` 去重后写入来源；工具返回文本按 `contextBudget` 截断。
+
+`vectorize` 在 embed 前一次 `chatStructured` 写 `documents.toc` 与每块 `title`/`summary`。
 
 ## 明确不采用
 

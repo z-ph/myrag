@@ -170,7 +170,7 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
 /** 友好渲染工具返回：把 JSON / 分块文本转成人话摘要 */
 function renderToolOutput(name: string, output: string): React.ReactNode {
   if (!output) return null;
-  // 尝试解析为 JSON（list_documents / get_document / list_chunks 返回 JSON）
+  // 尝试解析为 JSON（list_documents / get_document 返回 JSON）
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -188,19 +188,6 @@ function renderToolOutput(name: string, output: string): React.ReactNode {
             <li key={d.documentId}>
               <span className="tool-output-file">📄 {d.filename}</span>
               <code className="tool-output-id">{d.documentId}</code>
-            </li>
-          ))}
-        </ul>
-      );
-    }
-    if (name === 'list_chunks') {
-      const items = parsed as { chunkIndex: number; title?: string; chunkSize: number; textPreview: string }[];
-      return (
-        <ul className="tool-output-list">
-          {items.map((c) => (
-            <li key={c.chunkIndex}>
-              <span className="tool-output-chunk-head">块 {c.chunkIndex}{c.title ? ` · ${c.title}` : ''}（{c.chunkSize} 字）</span>
-              <span className="tool-output-chunk-prev">{c.textPreview}</span>
             </li>
           ))}
         </ul>
