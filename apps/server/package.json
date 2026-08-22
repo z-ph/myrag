@@ -13,6 +13,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.cjs",
     "build": "tsup && tsc --emitDeclarationOnly --declaration --noEmit false --outDir dist/types",
+    "build:bundle": "tsup",
     "build:types": "tsc --emitDeclarationOnly --declaration --noEmit false --outDir dist/types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

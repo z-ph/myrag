@@ -1,41 +1,38 @@
 # ---------- 构建阶段 ----------
 FROM node:24-alpine AS build
-# 依赖与 corepack（pnpm 本体）均走国内镜像，不访问 registry.npmjs.org
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
     COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable
 WORKDIR /app
 
-# 先拷贝依赖清单以利用缓存
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/server/package.json apps/server/
 RUN printf 'registry=https://registry.npmmirror.com\n' > .npmrc \
  && pnpm install --frozen-lockfile
 
-# 拷贝源码并构建（tsup 打包 server 与 migrate 双入口）
+# 运行时只要 pdf-parse 子树（其余已被 tsup 打进 bundle）。独立目录 + npm 扁平树，避免 pnpm deploy 整包复制。
+WORKDIR /app/runtime-deps
+RUN node -e "const v=require('../apps/server/package.json').dependencies['pdf-parse']; if(!v) throw new Error('pdf-parse missing'); require('fs').writeFileSync('package.json', JSON.stringify({private:true,dependencies:{'pdf-parse':v}}))" \
+ && npm install --omit=dev --registry=https://registry.npmmirror.com
+
+WORKDIR /app
 COPY packages/shared packages/shared
 COPY apps/server apps/server
-RUN pnpm --filter @myrag/server build
-
-# 部署目录：自包含生产依赖（pnpm deploy 输出真实文件而非符号链接，
-# pdf-parse 等 external 依赖在 runtime 可直接 require）
-RUN pnpm --filter @myrag/server deploy --prod --legacy /app/deploy
+# 镜像不需要 dist/types，跳过 tsc
+RUN pnpm --filter @myrag/server build:bundle
 
 # ---------- 运行阶段 ----------
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-# 运行时仅需：自包含依赖、构建产物、drizzle 迁移
-COPY --from=build /app/deploy /app
+COPY --from=build /app/runtime-deps/node_modules ./node_modules
 COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/apps/server/drizzle ./drizzle
 
-# 批处理/分片暂存在容器可写层，重启即丢；正文在 MinIO
 RUN mkdir -p /app/data/batch /app/data/chunks
 
 EXPOSE 8080
 
-# 启动前先执行数据库迁移，再启动服务
 CMD ["sh", "-c", "node dist/db/migrate.cjs && node dist/index.cjs"]
