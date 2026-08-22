@@ -50,6 +50,56 @@ test.describe('文档库', () => {
   });
 });
 
+test('未登录不显示批量选择', async ({ page }) => {
+  await page.goto('/documents');
+  await expect(page.locator('.ant-table')).toBeVisible();
+  await expect(page.locator('.ant-table-thead .ant-checkbox')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '批量删除' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '批量重建' })).toHaveCount(0);
+});
+
+
+test.describe('文档库批量选择（管理员）', () => {
+  test('可勾选多篇并取消选择', async ({ page }) => {
+    const token = await apiLogin('admin', 'admin123').catch(() => null);
+    test.skip(token === null, '后端未就绪');
+
+    await page.addInitScript((t) => {
+      localStorage.setItem('myrag-token', t);
+    }, token!);
+    await page.goto('/documents');
+    await expect(page.locator('.ant-table')).toBeVisible();
+
+    const rows = page.locator('.ant-table-row');
+    test.skip((await rows.count()) < 2, '文档不足 2 篇');
+
+    await rows.nth(0).locator('.ant-checkbox-input').check();
+    await rows.nth(1).locator('.ant-checkbox-input').check();
+    await expect(page.getByText('已选 2 篇')).toBeVisible();
+    await page.getByRole('button', { name: '取消选择' }).click();
+    await expect(page.getByText('已选 2 篇')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '批量删除' })).toHaveCount(0);
+  });
+
+  test('表头全选覆盖当前筛选全部结果', async ({ page }) => {
+    const token = await apiLogin('admin', 'admin123').catch(() => null);
+    test.skip(token === null, '后端未就绪');
+
+    await page.addInitScript((t) => {
+      localStorage.setItem('myrag-token', t);
+    }, token!);
+    await page.goto('/documents');
+    await expect(page.locator('.ant-table')).toBeVisible();
+
+    const totalText = await page.locator('.ant-pagination-total-text').textContent();
+    const total = Number(totalText?.match(/共\s*(\d+)\s*篇/)?.[1] ?? 0);
+    test.skip(total < 1, '没有文档');
+
+    await page.locator('.ant-table-thead .ant-checkbox-input').check();
+    await expect(page.getByText(`已选 ${total} 篇`)).toBeVisible();
+  });
+});
+
 test.describe('用户管理（管理员）', () => {
   test('管理员可创建用户并重置密码', async ({ page }) => {
     const token = await apiLogin('admin', 'admin123').catch(() => null);

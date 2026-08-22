@@ -284,6 +284,10 @@ body {
   max-width: 100%;
 }
 
+.docs-toolbar .docs-batch {
+  margin-left: auto;
+}
+
 .docs-drop {
   margin-bottom: 12px;
   padding: 16px 12px;

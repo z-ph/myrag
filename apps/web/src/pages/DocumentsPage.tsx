@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   App,
   Button,
@@ -22,6 +22,13 @@ import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
 import { useChatStore } from '../store/chat';
 import { DocumentUploadPanel } from './DocumentUploadPanel';
+import {
+  BATCH_CONCURRENCY,
+  formatBatchMessage,
+  nextSelectedKeys,
+  runDocumentBatch,
+  type DocumentBatchResult,
+} from './documentBatch';
 
 type PreviewTarget = { documentId: string; filename: string; status: string };
 
@@ -161,7 +168,7 @@ function useIsMobile(query = '(max-width: 800px)'): boolean {
 }
 
 export default function DocumentsPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
@@ -191,6 +198,8 @@ export default function DocumentsPage() {
   const [year, setYear] = useState<number | ''>(() => parseYear(searchParams.get('year')));
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
+  const batchBusyRef = useRef(false);
 
   const writeParams = (next: { q: string; type: string; status: string; year: string }) => {
     const params = new URLSearchParams();
@@ -202,6 +211,7 @@ export default function DocumentsPage() {
   };
 
   const commitSearch = (raw: string) => {
+    if (batchBusyRef.current) return;
     const next = raw.trim();
     setDraft(raw);
     setKeyword(next);
@@ -210,6 +220,7 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      if (batchBusyRef.current) return;
       const next = draft.trim();
       if (next === keyword) return;
       setKeyword(next);
@@ -217,6 +228,10 @@ export default function DocumentsPage() {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draft, keyword, fileType, statusFilter, year, setSearchParams]);
+
+  useEffect(() => {
+    setSelectedRowKeys([]);
+  }, [keyword, fileType, statusFilter, year]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['documents', keyword, fileType, statusFilter, year],
@@ -237,23 +252,58 @@ export default function DocumentsPage() {
     void queryClient.invalidateQueries({ queryKey: ['documents'] });
   }, [queryClient]);
 
-  const deleteMutation = useMutation({
-    mutationFn: (documentId: string) => documentsApi.remove(documentId),
-    onSuccess: () => {
-      message.success('已删除');
-      invalidate();
+  const applyBatchResult = (action: 'delete' | 'rebuild', ids: string[], result: DocumentBatchResult) => {
+    const toast = formatBatchMessage(action, result.succeeded.length, ids.length, result.firstError);
+    if (toast.type === 'success') message.success(toast.text);
+    else if (toast.type === 'warning') message.warning(toast.text);
+    else {
+      const err = new Error(result.firstError ?? toast.text);
+      if (!user && /权限不足|未登录/.test(err.message)) reportError(err);
+      else message.error(toast.text);
+    }
+    setSelectedRowKeys((prev) => prev.filter((id) => !result.succeeded.includes(id)));
+    invalidate();
+  };
+
+  const deleteManyMutation = useMutation({
+    mutationFn: (ids: string[]) =>
+      runDocumentBatch(ids, (id) => documentsApi.remove(id).then(() => undefined), BATCH_CONCURRENCY),
+    onMutate: () => {
+      batchBusyRef.current = true;
     },
+    onSuccess: (result, ids) => applyBatchResult('delete', ids, result),
     onError: (err: Error) => reportError(err),
+    onSettled: () => {
+      batchBusyRef.current = false;
+    },
   });
 
-  const rebuildDocMutation = useMutation({
-    mutationFn: (documentId: string) => documentsApi.rebuildDocument(documentId),
-    onSuccess: () => {
-      message.success('已触发重建');
-      invalidate();
+  const rebuildManyMutation = useMutation({
+    mutationFn: (ids: string[]) =>
+      runDocumentBatch(ids, (id) => documentsApi.rebuildDocument(id).then(() => undefined), BATCH_CONCURRENCY),
+    onMutate: () => {
+      batchBusyRef.current = true;
     },
+    onSuccess: (result, ids) => applyBatchResult('rebuild', ids, result),
     onError: (err: Error) => reportError(err),
+    onSettled: () => {
+      batchBusyRef.current = false;
+    },
   });
+
+  const batchBusy = deleteManyMutation.isPending || rebuildManyMutation.isPending;
+  batchBusyRef.current = batchBusy;
+
+  const confirmDeleteMany = (ids: string[]) => {
+    modal.confirm({
+      title: `删除这 ${ids.length} 篇文档？`,
+      content: '删除后不可恢复。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '返回',
+      onOk: () => deleteManyMutation.mutateAsync(ids),
+    });
+  };
 
   const actionColumn: NonNullable<TableProps<DocumentListItem>['columns']>[number] = {
     title: '操作',
@@ -293,14 +343,15 @@ export default function DocumentsPage() {
               type="text"
               icon={<RetweetOutlined />}
               aria-label={`重建「${row.filename}」的向量索引`}
-              loading={rebuildDocMutation.isPending}
-              onClick={() => rebuildDocMutation.mutate(row.documentId)}
+              loading={rebuildManyMutation.isPending}
+              disabled={batchBusy}
+              onClick={() => rebuildManyMutation.mutate([row.documentId])}
             />
           </Tooltip>
         )}
         {isManager && (
-          <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteMutation.mutate(row.documentId)}>
-            <Button type="text" danger icon={<DeleteOutlined />} />
+          <Popconfirm title={`删除「${row.filename}」？`} onConfirm={() => deleteManyMutation.mutate([row.documentId])}>
+            <Button type="text" danger icon={<DeleteOutlined />} disabled={batchBusy} />
           </Popconfirm>
         )}
       </Space>
@@ -381,6 +432,7 @@ export default function DocumentsPage() {
             className="docs-search"
             value={draft}
             allowClear
+            disabled={batchBusy}
             placeholder="按文件名或正文搜索"
             aria-label="按文件名或正文搜索"
             onChange={(e) => setDraft(e.target.value)}
@@ -392,8 +444,10 @@ export default function DocumentsPage() {
             aria-label="按类型筛选"
             value={fileType || undefined}
             style={{ width: 112 }}
+            disabled={batchBusy}
             options={FILE_TYPES.map((t) => ({ value: t, label: FILE_TYPE_LABEL[t] ?? t }))}
             onChange={(v) => {
+              if (batchBusy) return;
               const next = parseFileType(v ?? null);
               setFileType(next);
               writeParams({ q: keyword, type: next, status: statusFilter, year: year === '' ? '' : String(year) });
@@ -405,8 +459,10 @@ export default function DocumentsPage() {
             aria-label="按状态筛选"
             value={statusFilter || undefined}
             style={{ width: 120 }}
+            disabled={batchBusy}
             options={STATUS_FILTERS.map((s) => ({ value: s, label: STATUS_TAG[s]?.text ?? s }))}
             onChange={(v) => {
+              if (batchBusy) return;
               const next = parseStatus(v ?? null);
               setStatusFilter(next);
               writeParams({ q: keyword, type: fileType, status: next, year: year === '' ? '' : String(year) });
@@ -418,19 +474,48 @@ export default function DocumentsPage() {
             aria-label="按上传年份筛选"
             value={year === '' ? undefined : year}
             style={{ width: 128 }}
+            disabled={batchBusy}
             options={YEAR_OPTIONS.map((y) => ({ value: y, label: `${y} 年` }))}
             onChange={(v) => {
+              if (batchBusy) return;
               const next = typeof v === 'number' ? v : parseYear(v == null ? null : String(v));
               setYear(next);
               writeParams({ q: keyword, type: fileType, status: statusFilter, year: next === '' ? '' : String(next) });
             }}
           />
           {isManager && (
-            <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>
+            <Button type="primary" icon={<CloudUploadOutlined />} disabled={batchBusy} onClick={() => setUploadOpen(true)}>
               上传文档
             </Button>
           )}
         </Space>
+        {isManager && selectedRowKeys.length > 0 && (
+          <Space className="docs-batch" size={8} wrap>
+            <span>已选 {selectedRowKeys.length} 篇</span>
+            <Button
+              icon={<RetweetOutlined />}
+              aria-label="批量重建"
+              loading={rebuildManyMutation.isPending}
+              disabled={batchBusy}
+              onClick={() => rebuildManyMutation.mutate(selectedRowKeys)}
+            >
+              批量重建
+            </Button>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              aria-label="批量删除"
+              loading={deleteManyMutation.isPending}
+              disabled={batchBusy}
+              onClick={() => confirmDeleteMany(selectedRowKeys)}
+            >
+              批量删除
+            </Button>
+            <Button aria-label="取消选择" disabled={batchBusy} onClick={() => setSelectedRowKeys([])}>
+              取消选择
+            </Button>
+          </Space>
+        )}
       </div>
 
       <div className="page-card">
@@ -439,6 +524,24 @@ export default function DocumentsPage() {
           loading={isLoading}
           dataSource={data?.documents ?? []}
           columns={columns}
+          rowSelection={
+            isManager
+              ? {
+                  selectedRowKeys,
+                  preserveSelectedRowKeys: true,
+                  getCheckboxProps: () => ({ disabled: batchBusy }),
+                  onChange: (keys, _rows, info) => {
+                    setSelectedRowKeys(
+                      nextSelectedKeys(
+                        info.type,
+                        keys.map(String),
+                        (data?.documents ?? []).map((d) => d.documentId),
+                      ),
+                    );
+                  },
+                }
+              : undefined
+          }
           pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 篇文档` }}
           locale={{
             emptyText: keyword
