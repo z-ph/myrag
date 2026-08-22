@@ -1,7 +1,8 @@
 model_list:
   - model_name: glm-4.6v-flash
     litellm_params:
-      model: openai/glm-4.6v-flash
+      # 后端是 vLLM，必须走 hosted_vllm，openai/ 不会按 vLLM 拆 reasoning_content
+      model: hosted_vllm/glm-4.6v-flash
       api_base: http://vllm-chat:8000/v1
       api_key: none
   - model_name: qwen3-vl-embedding-2b
@@ -16,4 +17,3 @@ model_list:
       api_key: none
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
-  enable_auto_tool_choice: true # 允许透传自动选择工具的指令
