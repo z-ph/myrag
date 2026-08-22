@@ -119,9 +119,9 @@ function createService(llm: LlmClient, doc = makeDoc()) {
     llm,
     objectStorage,
     { qdrantVectorSize: 8 } as ServerConfig,
-    { get: () => ({ ...DEFAULTS, embedBatchSize: 8, chunkSize: 500, chunkOverlap: 50, chunkKeywordsTopN: 5 }) } as SettingsService,
+    { get: () => ({ ...DEFAULTS, embedBatchSize: 8, chunkSize: 500, chunkOverlap: 50, chunkKeywordsTopN: 5 }) } as unknown as SettingsService,
     vi.fn(),
-    { get: () => 'sys-outline' } as PromptService,
+    { get: () => 'sys-outline' } as unknown as PromptService,
   );
   return { service, db, qdrant, doc };
 }

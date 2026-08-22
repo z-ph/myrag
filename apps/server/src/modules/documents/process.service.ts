@@ -10,7 +10,7 @@ import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
 import type { PromptService } from '../prompts/prompt.service';
 import { analyzeDocumentOutline, OutlineError } from '../../pipeline/outline';
-import { chunkText, extractDocumentTime, extractKeywords, extractTitle } from '../../pipeline/chunker';
+import { chunkText, extractDocumentTime, extractKeywords } from '../../pipeline/chunker';
 import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
 import { conflict, badRequest } from '../../lib/errors';

@@ -197,7 +197,9 @@ export async function analyzeDocumentOutline(
   const prompt = buildOutlineUserPrompt(filename, chunks);
   let raw: OutlineResult;
   try {
-    raw = await llm.chatStructured(outlineResultSchema, { system: systemPrompt, prompt }, { name: 'ingest_outline' });
+    raw = outlineResultSchema.parse(
+      await llm.chatStructured(outlineResultSchema, { system: systemPrompt, prompt }, { name: 'ingest_outline' }),
+    );
   } catch {
     const res = await llm.chatModel.invoke([new SystemMessage(systemPrompt), new HumanMessage(prompt)]);
     raw = parseOutlineJson(stripThink(contentToText(res.content)));

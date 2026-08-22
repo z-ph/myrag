@@ -84,7 +84,7 @@ function createService(docs: DocumentRow[], enqueueRebuild = vi.fn().mockResolve
     { qdrantVectorSize: 1024 } as ServerConfig,
     { get: () => ({}) } as SettingsService,
     enqueueRebuild,
-    { get: () => '' } as PromptService,
+    { get: () => '' } as unknown as PromptService,
   );
   return { service, db, qdrant, getBuffer, enqueueRebuild };
 }
