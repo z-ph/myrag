@@ -6,6 +6,7 @@ import type { LlmClient } from '../src/llm/client';
 import type { ObjectStorage } from '../src/store/object-storage';
 import type { QdrantStore } from '../src/vector/qdrant';
 import { createProcessService } from '../src/modules/documents/process.service';
+import type { PromptService } from '../src/modules/prompts/prompt.service';
 import { rebuildSingleJobs } from '../src/modules/upload/batch.service';
 
 function makeDoc(overrides: Partial<DocumentRow> = {}): DocumentRow {
@@ -82,6 +83,7 @@ function createService(docs: DocumentRow[], enqueueRebuild = vi.fn().mockResolve
     { qdrantVectorSize: 1024 } as ServerConfig,
     { get: () => ({}) } as SettingsService,
     enqueueRebuild,
+    { get: () => '' } as PromptService,
   );
   return { service, db, qdrant, getBuffer, enqueueRebuild };
 }
@@ -94,20 +96,20 @@ describe('rebuildAll', () => {
     const taskId = await service.rebuildAll('admin');
 
     expect(taskId).toMatch(/^rebuild-/);
-    expect(qdrant.rebuildCollection).toHaveBeenCalledWith(1024);
+    expect(qdrant.rebuildCollection).not.toHaveBeenCalled();
     expect(db.inserts).toEqual([{ taskId, status: 'PENDING', totalFiles: 2 }]);
     expect(db.updates.every((u) => u.status === 'PENDING' && u.vectorCount === 0 && u.segmentCount === 0)).toBe(true);
     expect(enqueueRebuild).toHaveBeenCalledWith(taskId, ['doc-1', 'doc-2']);
     expect(getBuffer).not.toHaveBeenCalled();
   });
 
-  it('没有 FULL_INDEX 文档时仍重建集合并返回 taskId', async () => {
+  it('没有 FULL_INDEX 文档时仍入队并返回 taskId', async () => {
     const { service, db, qdrant, enqueueRebuild } = createService([]);
 
     const taskId = await service.rebuildAll('admin');
 
     expect(taskId).toMatch(/^rebuild-/);
-    expect(qdrant.rebuildCollection).toHaveBeenCalledOnce();
+    expect(qdrant.rebuildCollection).not.toHaveBeenCalled();
     expect(db.inserts).toEqual([{ taskId, status: 'PENDING', totalFiles: 0 }]);
     expect(enqueueRebuild).toHaveBeenCalledWith(taskId, []);
   });

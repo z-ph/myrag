@@ -90,6 +90,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
     cfg,
     settingsService,
     (taskId, documentIds) => batchService.enqueueRebuild(taskId, documentIds),
+    promptService,
   );
   const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg);
   batchService = createBatchService(handle.db, processService, cfg);

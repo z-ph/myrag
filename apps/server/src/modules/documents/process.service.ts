@@ -8,6 +8,8 @@ import { batchTasks, documents, documentChunks, type DocumentRow } from '../../d
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
+import type { PromptService } from '../prompts/prompt.service';
+import { analyzeDocumentOutline, OutlineError } from '../../pipeline/outline';
 import { chunkText, extractDocumentTime, extractKeywords, extractTitle } from '../../pipeline/chunker';
 import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
@@ -75,6 +77,7 @@ export function createProcessService(
   cfg: ServerConfig,
   settings: SettingsService,
   enqueueRebuild: EnqueueRebuild,
+  promptService: PromptService,
 ): ProcessService {
 
   /** 单个已分片向量入库文档的向量化流程（从解析到写入），返回分块数 */
@@ -97,7 +100,23 @@ export function createProcessService(
     const chunks = chunkText(cleanText, s.chunkSize, s.chunkOverlap, s.chunkKeywordsTopN);
     if (chunks.length === 0) throw new ParseError('未能从文档中提取到文本内容');
 
-    // 3. 向量化（分批，批次上限可配）
+    // 3. 目录分析（embed 之前；失败不得写向量）
+    let outline;
+    try {
+      outline = await analyzeDocumentOutline(
+        llm,
+        promptService.get('ingest.outline'),
+        originalFilename,
+        chunks.map((c) => ({ index: c.index, text: c.text })),
+      );
+    } catch (err) {
+      if (err instanceof OutlineError) throw err;
+      const detail = err instanceof Error ? err.message : '模型调用失败';
+      throw new OutlineError(detail);
+    }
+    const titleByIndex = new Map(outline.chunks.map((c) => [c.chunkIndex, c]));
+
+    // 4. 向量化（分批，批次上限可配）
     const documentTime = extractDocumentTime(cleanText);
     const documentKeywords = extractKeywords(cleanText);
     const vectors: number[][] = [];
@@ -106,7 +125,7 @@ export function createProcessService(
       vectors.push(...(await llm.embed(batch.map((c) => c.text))));
     }
 
-    // 4. 写 Qdrant（point ID 必须是整数或 UUID）
+    // 5. 写 Qdrant（point ID 必须是整数或 UUID）
     const ingestedAt = new Date().toISOString();
     const points = chunks.map((chunk, i) => ({
       id: randomUUID(),
@@ -116,7 +135,7 @@ export function createProcessService(
         filename: originalFilename,
         chunk_index: chunk.index,
         chunk_hash: `${documentId}:${chunk.index}`,
-        title: chunk.title,
+        title: titleByIndex.get(chunk.index)?.title ?? chunk.title,
         category: undefined,
         document_time: documentTime,
         ingested_at: ingestedAt,
@@ -127,7 +146,7 @@ export function createProcessService(
     }));
     await qdrant.upsert(documentId, points);
 
-    // 5. 快照（先清后插）
+    // 6. 快照（先清后插）
     await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
     await db.insert(documentChunks).values(
       chunks.map((chunk, i) => ({
@@ -138,7 +157,8 @@ export function createProcessService(
         chunkSize: chunk.text.length,
         rawChunkSize: chunk.text.length,
         chunkHash: `${documentId}:${chunk.index}`,
-        title: chunk.title,
+        title: titleByIndex.get(chunk.index)?.title ?? chunk.title,
+        summary: titleByIndex.get(chunk.index)?.summary ?? null,
         documentTime,
         ingestedAt,
         keywords: chunk.keywords,
@@ -147,7 +167,9 @@ export function createProcessService(
       })),
     );
 
-    // 6. 更新文档元数据（OCR 信息，仅 OCR 场景）
+    await db.update(documents).set({ toc: outline.toc }).where(eq(documents.documentId, documentId));
+
+    // 7. 更新文档元数据（OCR 信息，仅 OCR 场景）
     if (ocrModel || ocrDurationMs !== undefined) {
       await db
         .update(documents)
