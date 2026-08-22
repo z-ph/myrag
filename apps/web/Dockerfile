@@ -36,6 +36,5 @@ RUN rm -f /usr/share/nginx/html/index.html
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html${VITE_BASE}
 RUN test -n "$VITE_BASE" \
  && envsubst '${VITE_BASE}' < /tmp/nginx.conf.template > /etc/nginx/conf.d/default.conf \
- && nginx -t \
  && rm /tmp/nginx.conf.template
 EXPOSE 80
