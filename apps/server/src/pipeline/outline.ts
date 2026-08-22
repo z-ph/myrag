@@ -1,3 +1,8 @@
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { z } from 'zod';
+import type { LlmClient } from '../llm/client';
+import { stripThink } from '../llm/client';
+
 export type TocItem = {
   title: string;
   startChunk: number;
@@ -152,4 +157,50 @@ export function formatListChunksText(
     .sort((a, b) => a.chunkIndex - b.chunkIndex)
     .map((c) => `chunk ${c.chunkIndex} · ${c.title ?? '未命名'} — ${c.summary ?? ''}`);
   return `${filename}（共 ${chunks.length} 块）\n\n目录\n${tocLines.join('\n')}\n\n分块\n${chunkLines.join('\n')}`;
+}
+
+const tocItemSchema: z.ZodType<TocItem> = z.lazy(() =>
+  z.object({
+    title: z.string().trim().min(1).max(80),
+    startChunk: z.number().int().min(0),
+    endChunk: z.number().int().min(0),
+    children: z.array(tocItemSchema).optional(),
+  }),
+);
+
+export const outlineResultSchema = z.object({
+  toc: z.array(tocItemSchema).min(1),
+  chunks: z.array(
+    z.object({
+      chunkIndex: z.number().int().min(0),
+      title: z.string().trim().min(1).max(80),
+      summary: z.string().trim().min(1).max(40),
+    }),
+  ),
+});
+
+function buildOutlineUserPrompt(filename: string, chunks: Array<{ index: number; text: string }>): string {
+  const body = chunks.map((c) => `[chunk ${c.index}]\n${c.text}`).join('\n\n');
+  return `文件名：${filename}\n\n块列表：\n${body}`;
+}
+
+function contentToText(content: unknown): string {
+  return typeof content === 'string' ? content : '';
+}
+
+export async function analyzeDocumentOutline(
+  llm: LlmClient,
+  systemPrompt: string,
+  filename: string,
+  chunks: Array<{ index: number; text: string }>,
+): Promise<OutlineResult> {
+  const prompt = buildOutlineUserPrompt(filename, chunks);
+  let raw: OutlineResult;
+  try {
+    raw = await llm.chatStructured(outlineResultSchema, { system: systemPrompt, prompt }, { name: 'ingest_outline' });
+  } catch {
+    const res = await llm.chatModel.invoke([new SystemMessage(systemPrompt), new HumanMessage(prompt)]);
+    raw = parseOutlineJson(stripThink(contentToText(res.content)));
+  }
+  return validateOutline(chunks.length, raw);
 }

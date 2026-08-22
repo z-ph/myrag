@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_PROMPTS, PROMPT_KEYS } from '@myrag/shared';
 import {
+  analyzeDocumentOutline,
   formatListChunksText,
   parseOutlineJson,
   validateOutline,
   type OutlineResult,
 } from '../src/pipeline/outline';
+import type { LlmClient } from '../src/llm/client';
 
 const ok: OutlineResult = {
   toc: [
@@ -92,5 +95,72 @@ describe('formatListChunksText', () => {
 
   it('toc 为 null 时提示重建', () => {
     expect(formatListChunksText('旧.doc', null, [])).toBe('旧.doc：无目录，需重建');
+  });
+});
+
+describe('ingest.outline prompt', () => {
+  it('在 PROMPT_KEYS 中', () => {
+    expect(PROMPT_KEYS).toContain('ingest.outline');
+    expect(DEFAULT_PROMPTS['ingest.outline'].length).toBeGreaterThan(20);
+  });
+});
+
+describe('analyzeDocumentOutline', () => {
+  const chunks = [
+    { index: 0, text: '第一条 适用范围\n本办法适用于全校。' },
+    { index: 1, text: '第二条 报销标准\n列出补贴上限。' },
+  ];
+
+  it('structured 成功后校验并返回', async () => {
+    const llm = {
+      chatStructured: async () => ({
+        toc: [{ title: '总则', startChunk: 0, endChunk: 1 }],
+        chunks: [
+          { chunkIndex: 0, title: '第一条 适用范围', summary: '本办法适用于全校' },
+          { chunkIndex: 1, title: '第二条 报销标准', summary: '列出补贴上限' },
+        ],
+      }),
+    } as unknown as LlmClient;
+    const result = await analyzeDocumentOutline(llm, 'sys', 'a.pdf', chunks);
+    expect(result.toc[0]?.title).toBe('总则');
+    expect(result.chunks).toHaveLength(2);
+  });
+
+  it('structured 失败则回退自由文本 JSON', async () => {
+    const llm = {
+      chatStructured: async () => {
+        throw new Error('no tools');
+      },
+      chatModel: {
+        invoke: async () => ({
+          content: JSON.stringify({
+            toc: [{ title: '总则', startChunk: 0, endChunk: 1 }],
+            chunks: [
+              { chunkIndex: 0, title: '第一条 适用范围', summary: '本办法适用于全校' },
+              { chunkIndex: 1, title: '第二条 报销标准', summary: '列出补贴上限' },
+            ],
+          }),
+        }),
+      },
+    } as unknown as LlmClient;
+    const result = await analyzeDocumentOutline(llm, 'sys', 'a.pdf', chunks);
+    expect(result.chunks[1]?.title).toBe('第二条 报销标准');
+  });
+
+  it('回退 JSON 缺块则抛目录分析失败', async () => {
+    const llm = {
+      chatStructured: async () => {
+        throw new Error('no tools');
+      },
+      chatModel: {
+        invoke: async () => ({
+          content: JSON.stringify({
+            toc: [{ title: '总则', startChunk: 0, endChunk: 0 }],
+            chunks: [{ chunkIndex: 0, title: '仅一块', summary: '缺了第二块' }],
+          }),
+        }),
+      },
+    } as unknown as LlmClient;
+    await expect(analyzeDocumentOutline(llm, 'sys', 'a.pdf', chunks)).rejects.toThrow('目录分析失败：');
   });
 });

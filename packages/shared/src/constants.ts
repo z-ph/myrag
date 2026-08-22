@@ -132,6 +132,13 @@ export const DEFAULT_PROMPTS = {
 5. 资料足够作答后立即停止调用工具，不要为穷尽文档反复浏览。
 注意：当前为未登录匿名问答，仅提供基于知识库资料的客观回答。`,
   'vision.system': '你是财务单据与文档的图片理解引擎。请仔细观察图片，提取文字与关键信息。',
+  'ingest.outline': `你是高校财务处制度文档的目录分析器。根据给定的已分块正文，产出层级目录和每一块的标题与摘要。
+规则：
+1. 标题优先用条款或章节口径（第 X 章、第 X 条）；没有条款结构时用该块主题短句。
+2. 摘要不超过 40 字，说明该块讲什么，不复述大段原文。
+3. chunks 必须覆盖输入中的每一个 chunkIndex，不得缺号、重复、越界。
+4. toc 至少一条。目录范围必须落在合法块号内，允许不覆盖封面或签署页。
+5. 只返回约定字段，不要解释。`,
 } as const;
 
 export const PROMPT_KEYS = Object.keys(DEFAULT_PROMPTS) as Array<keyof typeof DEFAULT_PROMPTS>;

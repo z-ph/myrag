@@ -29,6 +29,15 @@ export interface LlmClient {
   ): Promise<T>;
   /** LLM 相关性重排：对每个候选打 0-10 分，返回与 candidates 同序的分数数组 */
   rerank(query: string, candidates: string[]): Promise<number[]>;
+  /**
+   * 文本结构化输出（langchain withStructuredOutput）。
+   * 网关不支持 tool/json_schema 时由调用方自行 fallback。
+   */
+  chatStructured<T extends Record<string, unknown>>(
+    schema: InteropZodType<T>,
+    input: { system: string; prompt: string },
+    options?: { name?: string },
+  ): Promise<T>;
 }
 
 /** 组装视觉模型多模态消息 */
@@ -149,6 +158,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
   const chatModel = new ChatOpenAI(chatFields);
   // 独立实例：langchain 1.x 无 bind，且 invocationParams 读 this.temperature
   const rerankModel = new ChatOpenAI({ ...chatFields, temperature: 0 });
+  const outlineModel = new ChatOpenAI({ ...chatFields, temperature: 0 });
   const visionModel = new ChatOpenAI({
     model: cfg.llmVisionModel,
     apiKey: cfg.llmVisionApiKey,
@@ -205,6 +215,23 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
         return await structured.invoke(buildVisionMessages(input.system, input.prompt, input.imageBase64));
       } catch (err) {
         // 不在此处归一化为 AppError：调用方需区分「网关不支持」以便 fallback
+        if (err instanceof AppError) throw err;
+        if (err instanceof Error && err.name === 'AbortError') throw err;
+        throw err;
+      }
+    },
+
+    async chatStructured(schema, input, options) {
+      try {
+        const structured = outlineModel.withStructuredOutput(schema, {
+          name: options?.name ?? 'structured_chat',
+          method: 'functionCalling',
+        });
+        return await structured.invoke([
+          new SystemMessage(input.system),
+          new HumanMessage(input.prompt),
+        ]);
+      } catch (err) {
         if (err instanceof AppError) throw err;
         if (err instanceof Error && err.name === 'AbortError') throw err;
         throw err;
