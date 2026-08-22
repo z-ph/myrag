@@ -24,7 +24,7 @@ services:
           -v db_name="$$DB_NAME" -v db_user="$$DB_USER" -v db_password="$$DB_PASSWORD" \
           -f /init-database.sql
     networks:
-      - default
+      - data
 
   server:
     build:
@@ -40,6 +40,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       MINIO_ENDPOINT: minio:9000
+      # 容器内走 infra_llm DNS；宿主开发仍用 .env 的 LLM_BASE_URL
+      LLM_BASE_URL: http://litellm:4000/v1
+      LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY is required}
     volumes:
       - uploads:/app/uploads
       - data:/app/data
@@ -49,7 +52,8 @@ services:
     ports:
       - "${SERVER_HOST_PORT:?SERVER_HOST_PORT is required}:8080"
     networks:
-      - default
+      - data
+      - llm
 
   web:
     build:
@@ -64,11 +68,14 @@ services:
     ports:
       - "${WEB_HOST_PORT:?WEB_HOST_PORT is required}:80"
     networks:
-      - default
+      - data
 
 networks:
-  default:
+  data:
     name: infra_default
+    external: true
+  llm:
+    name: infra_llm
     external: true
 
 volumes:

@@ -1,0 +1,145 @@
+name: infra-llm
+
+services:
+  vllm-chat:
+    image: docker.m.daocloud.io/vllm/vllm-openai:latest
+    container_name: vllm
+    runtime: nvidia
+    environment:
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+    volumes:
+      - ${MODELSCOPE_HOST_DIR:?MODELSCOPE_HOST_DIR is required}:/root/.cache/modelscope
+      - ${VLLM_CHAT_VLLM_CACHE_DIR:?VLLM_CHAT_VLLM_CACHE_DIR is required}:/root/.cache/vllm
+      - ${VLLM_CHAT_NV_CACHE_DIR:?VLLM_CHAT_NV_CACHE_DIR is required}:/root/.nv
+    ipc: host
+    expose:
+      - "8000"
+    ports:
+      - "${VLLM_CHAT_HOST_PORT:?VLLM_CHAT_HOST_PORT is required}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_CHAT_GPU:?VLLM_CHAT_GPU is required}"]
+              capabilities: [gpu]
+    command: >
+      --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-4___6V-Flash
+      --served-model-name glm-4.6v-flash
+      --trust-remote-code
+      --host 0.0.0.0
+      --gpu-memory-utilization 0.7
+      --enable-auto-tool-choice
+      --tool-call-parser glm45
+      --max-model-len 64000
+      --reasoning-parser glm45
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+    restart: unless-stopped
+
+  vllm-embedding:
+    image: docker.m.daocloud.io/vllm/vllm-openai:latest
+    container_name: embed1
+    runtime: nvidia
+    environment:
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+    volumes:
+      - ${MODELSCOPE_HOST_DIR:?MODELSCOPE_HOST_DIR is required}:/root/.cache/modelscope
+      - ${VLLM_EMBEDDING_VLLM_CACHE_DIR:?VLLM_EMBEDDING_VLLM_CACHE_DIR is required}:/root/.cache/vllm
+      - ${VLLM_EMBEDDING_NV_CACHE_DIR:?VLLM_EMBEDDING_NV_CACHE_DIR is required}:/root/.nv
+    ipc: host
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_EMBEDDING_GPU:?VLLM_EMBEDDING_GPU is required}"]
+              capabilities: [gpu]
+    ports:
+      - "${VLLM_EMBEDDING_HOST_PORT:?VLLM_EMBEDDING_HOST_PORT is required}:8000"
+    command: >
+      --model /root/.cache/modelscope/hub/models/Qwen/Qwen3-VL-Embedding-2B
+      --served-model-name qwen3-vl-embedding-2b
+      --trust-remote-code
+      --gpu-memory-utilization 0.21
+      --max-model-len 32000
+      --host 0.0.0.0
+      --runner pooling
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+    depends_on:
+      vllm-chat:
+        condition: service_healthy
+    restart: unless-stopped
+
+  vllm-ocr:
+    image: docker.m.daocloud.io/vllm/vllm-openai:latest
+    container_name: vllm-ocr
+    runtime: nvidia
+    environment:
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+    volumes:
+      - ${MODELSCOPE_HOST_DIR:?MODELSCOPE_HOST_DIR is required}:/root/.cache/modelscope
+      - ${VLLM_OCR_VLLM_CACHE_DIR:?VLLM_OCR_VLLM_CACHE_DIR is required}:/root/.cache/vllm
+      - ${VLLM_OCR_NV_CACHE_DIR:?VLLM_OCR_NV_CACHE_DIR is required}:/root/.nv
+    ipc: host
+    expose:
+      - "8000"
+    ports:
+      - "${VLLM_OCR_HOST_PORT:?VLLM_OCR_HOST_PORT is required}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_OCR_GPU:?VLLM_OCR_GPU is required}"]
+              capabilities: [gpu]
+    command: >
+      --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-OCR
+      --served-model-name glm-ocr
+      --trust-remote-code
+      --host 0.0.0.0
+      --gpu-memory-utilization 0.10
+      --max-model-len 25000
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
+    depends_on:
+      vllm-embedding:
+        condition: service_healthy
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: litellm1
+    ports:
+      - "${LITELLM_HOST_PORT:?LITELLM_HOST_PORT is required}:4000"
+    volumes:
+      - ./lite-llm.yaml:/app/config.yaml
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY is required}
+      - UI_USERNAME=${LITELLM_UI_USERNAME:?LITELLM_UI_USERNAME is required}
+      - UI_PASSWORD=${LITELLM_UI_PASSWORD:?LITELLM_UI_PASSWORD is required}
+    depends_on:
+      - vllm-chat
+      - vllm-embedding
+      - vllm-ocr
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    restart: always
+
+networks:
+  default:
+    name: infra_llm
