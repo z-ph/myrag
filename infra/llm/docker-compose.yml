@@ -9,30 +9,30 @@ services:
       - MODELSCOPE_CACHE=/root/.cache/modelscope
     volumes:
       - ${MODELSCOPE_HOST_DIR:?MODELSCOPE_HOST_DIR is required}:/root/.cache/modelscope
-      - ${VLLM_CHAT_VLLM_CACHE_DIR:?VLLM_CHAT_VLLM_CACHE_DIR is required}:/root/.cache/vllm
-      - ${VLLM_CHAT_NV_CACHE_DIR:?VLLM_CHAT_NV_CACHE_DIR is required}:/root/.nv
+      - ${CHAT_CACHE_DIR:?CHAT_CACHE_DIR is required}:/root/.cache/vllm
+      - ${CHAT_NV_CACHE_DIR:?CHAT_NV_CACHE_DIR is required}:/root/.nv
     ipc: host
     expose:
       - "8000"
     ports:
-      - "${VLLM_CHAT_HOST_PORT:?VLLM_CHAT_HOST_PORT is required}:8000"
+      - "${CHAT_HOST_PORT:?CHAT_HOST_PORT is required}:8000"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${VLLM_CHAT_GPU:?VLLM_CHAT_GPU is required}"]
+              device_ids: ["${CHAT_GPU:?CHAT_GPU is required}"]
               capabilities: [gpu]
     command: >
-      --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-4___6V-Flash
-      --served-model-name glm-4.6v-flash
+      --model ${CHAT_MODEL_PATH:?CHAT_MODEL_PATH is required}
+      --served-model-name ${CHAT_MODEL_NAME:?CHAT_MODEL_NAME is required}
       --trust-remote-code
       --host 0.0.0.0
-      --gpu-memory-utilization 0.7
+      --gpu-memory-utilization ${CHAT_GPU_MEMORY_UTILIZATION:?CHAT_GPU_MEMORY_UTILIZATION is required}
       --enable-auto-tool-choice
-      --tool-call-parser glm45
-      --max-model-len 64000
-      --reasoning-parser glm45
+      --tool-call-parser ${CHAT_TOOL_CALL_PARSER:?CHAT_TOOL_CALL_PARSER is required}  
+      --max-model-len ${CHAT_MAX_MODEL_LEN:?CHAT_MAX_MODEL_LEN is required}
+      --reasoning-parser ${CHAT_REASONING_PARSER:?CHAT_REASONING_PARSER is required}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
       interval: 10s
@@ -49,8 +49,8 @@ services:
       - MODELSCOPE_CACHE=/root/.cache/modelscope
     volumes:
       - ${MODELSCOPE_HOST_DIR:?MODELSCOPE_HOST_DIR is required}:/root/.cache/modelscope
-      - ${VLLM_EMBEDDING_VLLM_CACHE_DIR:?VLLM_EMBEDDING_VLLM_CACHE_DIR is required}:/root/.cache/vllm
-      - ${VLLM_EMBEDDING_NV_CACHE_DIR:?VLLM_EMBEDDING_NV_CACHE_DIR is required}:/root/.nv
+      - ${EMBEDDING_CACHE_DIR:?EMBEDDING_CACHE_DIR is required}:/root/.cache/vllm
+      - ${EMBEDDING_NV_CACHE_DIR:?EMBEDDING_NV_CACHE_DIR is required}:/root/.nv
     ipc: host
     expose:
       - "8000"
@@ -59,16 +59,16 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${VLLM_EMBEDDING_GPU:?VLLM_EMBEDDING_GPU is required}"]
+              device_ids: ["${EMBEDDING_GPU:?EMBEDDING_GPU is required}"]
               capabilities: [gpu]
     ports:
-      - "${VLLM_EMBEDDING_HOST_PORT:?VLLM_EMBEDDING_HOST_PORT is required}:8000"
+      - "${EMBEDDING_HOST_PORT:?EMBEDDING_HOST_PORT is required}:8000"
     command: >
-      --model /root/.cache/modelscope/hub/models/Qwen/Qwen3-VL-Embedding-2B
-      --served-model-name qwen3-vl-embedding-2b
+      --model ${EMBEDDING_MODEL_PATH:?EMBEDDING_MODEL_PATH is required}
+      --served-model-name ${EMBEDDING_MODEL_NAME:?EMBEDDING_MODEL_NAME is required}
       --trust-remote-code
-      --gpu-memory-utilization 0.21
-      --max-model-len 32000
+      --gpu-memory-utilization ${EMBEDDING_GPU_MEMORY_UTILIZATION:?EMBEDDING_GPU_MEMORY_UTILIZATION is required}
+      --max-model-len ${EMBEDDING_MAX_MODEL_LEN:?EMBEDDING_MAX_MODEL_LEN is required}
       --host 0.0.0.0
       --runner pooling
     healthcheck:
@@ -90,27 +90,27 @@ services:
       - MODELSCOPE_CACHE=/root/.cache/modelscope
     volumes:
       - ${MODELSCOPE_HOST_DIR:?MODELSCOPE_HOST_DIR is required}:/root/.cache/modelscope
-      - ${VLLM_OCR_VLLM_CACHE_DIR:?VLLM_OCR_VLLM_CACHE_DIR is required}:/root/.cache/vllm
-      - ${VLLM_OCR_NV_CACHE_DIR:?VLLM_OCR_NV_CACHE_DIR is required}:/root/.nv
+      - ${OCR_CACHE_DIR:?OCR_CACHE_DIR is required}:/root/.cache/vllm
+      - ${OCR_NV_CACHE_DIR:?OCR_NV_CACHE_DIR is required}:/root/.nv
     ipc: host
     expose:
       - "8000"
     ports:
-      - "${VLLM_OCR_HOST_PORT:?VLLM_OCR_HOST_PORT is required}:8000"
+      - "${OCR_HOST_PORT:?OCR_HOST_PORT is required}:8000"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${VLLM_OCR_GPU:?VLLM_OCR_GPU is required}"]
+              device_ids: ["${OCR_GPU:?OCR_GPU is required}"]
               capabilities: [gpu]
     command: >
-      --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-OCR
-      --served-model-name glm-ocr
+      --model ${OCR_MODEL_PATH:?OCR_MODEL_PATH is required}
+      --served-model-name ${OCR_MODEL_NAME:?OCR_MODEL_NAME is required}
       --trust-remote-code
       --host 0.0.0.0
-      --gpu-memory-utilization 0.10
-      --max-model-len 25000
+      --gpu-memory-utilization ${OCR_GPU_MEMORY_UTILIZATION:?OCR_GPU_MEMORY_UTILIZATION is required}
+      --max-model-len ${OCR_MAX_MODEL_LEN:?OCR_MAX_MODEL_LEN is required}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200' || exit 1"]
       interval: 10s
