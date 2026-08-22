@@ -10,6 +10,12 @@ import {
   isIgnoredUploadName,
   uploadFileKey,
 } from './uploadFiles';
+import {
+  aggregateTaskProgress,
+  collectTaskIds,
+  resolveFileProcessText,
+  TASK_DONE,
+} from './uploadTaskProgress';
 
 const ALLOWED = new Set<string>(ALLOWED_EXTENSIONS);
 const MAX_MB = Math.floor(DEFAULTS.maxFileSizeBytes / 1024 / 1024);
@@ -32,14 +38,6 @@ interface FileUploadState {
   taskId?: string;
 }
 
-const FILE_STATUS_LABEL: Record<string, string> = {
-  PENDING: '等待处理',
-  PROCESSING: '处理中',
-  SUCCESS: '已入库',
-  FAILED: '失败',
-};
-
-const TASK_DONE = new Set(['SUCCESS', 'FAILED', 'PARTIAL', 'INTERRUPTED']);
 
 export function DocumentUploadPanel({
   open,
@@ -56,30 +54,30 @@ export function DocumentUploadPanel({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [fileStates, setFileStates] = useState<Map<string, FileUploadState>>(new Map());
-  const [batchTaskId, setBatchTaskId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: batchTask } = useQuery({
-    queryKey: ['batch-task', batchTaskId],
-    queryFn: () => documentsApi.batchTask(batchTaskId!),
-    enabled: batchTaskId != null,
+  const taskIds = collectTaskIds(fileStates.values());
+  const { data: batchTasks = [] } = useQuery({
+    queryKey: ['batch-tasks', taskIds],
+    queryFn: () => Promise.all(taskIds.map((id) => documentsApi.batchTask(id))),
+    enabled: taskIds.length > 0,
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status == null || !TASK_DONE.has(status) ? 2000 : false;
+      const tasks = query.state.data;
+      if (!tasks || tasks.some((t) => !TASK_DONE.has(t.status))) return 2000;
+      return false;
     },
   });
 
-  const batchDone = batchTask != null && TASK_DONE.has(batchTask.status);
-  const batchSettled = (batchTask?.successCount ?? 0) + (batchTask?.failureCount ?? 0);
-  const batchTotal = batchTask?.totalFiles ?? 0;
+  const { settled: batchSettled, total: batchTotal, done: batchDone } = aggregateTaskProgress(batchTasks);
+  const batchFailed = batchTasks.reduce((n, t) => n + t.failureCount, 0);
+  const batchSucceeded = batchTasks.reduce((n, t) => n + t.successCount, 0);
 
   const reset = () => {
     setSelectedFiles([]);
     setUploading(false);
     setFileStates(new Map());
-    setBatchTaskId(null);
   };
 
   const handleClose = () => {
@@ -151,13 +149,10 @@ export function DocumentUploadPanel({
     }
     setFileStates(states);
 
-    let lastTaskId: string | null = null;
-
     for (const file of selectedFiles) {
       try {
         patchFileState(file, { status: 'uploading', progress: 0 });
         const taskId = await uploadFileChunked(file);
-        lastTaskId = taskId;
         patchFileState(file, { status: 'processing', progress: 100, taskId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : '上传失败';
@@ -166,16 +161,12 @@ export function DocumentUploadPanel({
       }
     }
 
-    if (lastTaskId) {
-      setBatchTaskId(lastTaskId);
-    }
-
     setUploading(false);
     onSubmitted();
   };
 
-  const inSelectPhase = !uploading && !batchTaskId;
-  const inProcessingPhase = batchTaskId != null;
+  const inSelectPhase = !uploading && taskIds.length === 0;
+  const inProcessingPhase = taskIds.length > 0;
 
   return (
     <Drawer
@@ -293,33 +284,27 @@ export function DocumentUploadPanel({
                   {isFailed && <span style={{ color: '#b4382f', fontSize: 12 }}>{state.message}</span>}
                 </div>
                 {isUploading && <Progress percent={state.progress} size="small" status="active" />}
-                {isProcessing && batchTask && (
+                {isProcessing && (
                   <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                    {(() => {
-                      const result = batchTask.results.find(
-                        (r) => r.documentId === state.taskId || r.originalFilename === file.name,
-                      );
-                      if (!result) return '等待处理…';
-                      return `${FILE_STATUS_LABEL[result.status] ?? result.status}${result.message ? `：${result.message}` : ''}`;
-                    })()}
+                    {resolveFileProcessText(file, state.taskId, batchTasks)}
                   </div>
                 )}
               </div>
             );
           })}
 
-          {batchTask && (
+          {batchTasks.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <div style={{ fontSize: 13, marginBottom: 8 }}>
                 {batchDone
-                  ? batchTask.failureCount > 0
-                    ? `完成：成功 ${batchTask.successCount}，失败 ${batchTask.failureCount}`
-                    : `已全部入库（${batchTask.successCount}）`
+                  ? batchFailed > 0
+                    ? `完成：成功 ${batchSucceeded}，失败 ${batchFailed}`
+                    : `已全部入库（${batchSucceeded}）`
                   : `处理中 ${batchSettled} / ${batchTotal}`}
               </div>
               <Progress
                 percent={batchTotal > 0 ? Math.round((batchSettled / batchTotal) * 100) : 0}
-                status={batchDone && batchTask.failureCount > 0 ? 'exception' : batchDone ? 'success' : 'active'}
+                status={batchDone && batchFailed > 0 ? 'exception' : batchDone ? 'success' : 'active'}
               />
             </div>
           )}
