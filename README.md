@@ -49,7 +49,7 @@ pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 
 ## 关键架构决策
 
-- **无状态化后端**：批量任务队列用 BullMQ（`jobId=taskId` 幂等入队、stalled 任务自动重跑、周期补偿扫描兜底未入队任务）、生成取消 Redis key + Pub/Sub 跨实例；状态在 PostgreSQL/Redis，服务可水平扩容。
+- **无状态化后端**：批量任务队列用 BullMQ（`jobId=taskId` 幂等入队）；中断/恢复/取消只走人工操作。生成取消 Redis key + Pub/Sub 跨实例；状态在 PostgreSQL/Redis，服务可水平扩容。
 - **契约即文档，RPC 端到端类型安全**：全部路由 `@hono/zod-openapi`，请求/响应 schema 即运行时校验，OpenAPI 自动生成（`/docs`）；后端导出 `AppType`，前端用 `hc<AppType>`（hono/client）生成类型安全客户端，接口层零手写请求/响应类型（见 `apps/web/src/api/`）。
 - **统一响应**：成功直接返回资源表示；错误由 HTTP 状态码 + `{ code, message, details }` 表达。
 - **问答 Agent（langchain.js）**：每轮 `createAgent`，混合检索封装为 `search_knowledge_base`（模型决定是否检索、改写 query）；工具内仍是 Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR。图片先视觉结构化理解再拼进 user 消息，不是图文检索双路。`streamEvents` 推思考 / 工具 / 正文，SSE `data` 一律 JSON。说明见 `docs/langchain-alignment.md`。

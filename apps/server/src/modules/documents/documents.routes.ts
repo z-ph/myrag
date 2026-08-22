@@ -17,6 +17,23 @@ import { DEFAULTS, FILE_TYPES } from '@myrag/shared';
 const documentIdParam = z.object({ documentId: z.string().min(1).max(64) });
 const taskIdParam = z.object({ taskId: z.string().min(1).max(64) });
 
+const activeTaskViewSchema = z.object({
+  taskId: z.string(),
+  type: z.enum(['upload', 'rebuild']),
+  status: z.enum(['pending', 'processing', 'interrupted', 'done', 'failed', 'partial']),
+  total: z.number(),
+  completed: z.number(),
+  failed: z.number(),
+  files: z.array(
+    z.object({
+      name: z.string(),
+      status: z.enum(['pending', 'processing', 'success', 'failed']),
+      message: z.string(),
+    }),
+  ),
+  createdAt: z.string(),
+});
+
 const binaryResponse = {
   description: '文件二进制流',
   content: { 'application/octet-stream': { schema: z.any() } },
@@ -133,33 +150,18 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'get',
           path: '/uploads/active',
-          description: '活跃任务列表（仅未完成，返回 UI 视图）',
+          description: '未完成任务分车道：活跃中 / 排队中 / 异常中断',
           security: bearerSecurity,
           middleware: [requireStaff],
           responses: {
             200: {
-              description: '活跃任务',
+              description: '未完成任务车道',
               content: {
                 'application/json': {
                   schema: z.object({
-                    tasks: z.array(
-                      z.object({
-                        taskId: z.string(),
-                        type: z.enum(['upload', 'rebuild']),
-                        status: z.enum(['pending', 'processing', 'done', 'failed', 'partial']),
-                        total: z.number(),
-                        completed: z.number(),
-                        failed: z.number(),
-                        files: z.array(
-                          z.object({
-                            name: z.string(),
-                            status: z.enum(['pending', 'processing', 'success', 'failed']),
-                            message: z.string(),
-                          }),
-                        ),
-                        createdAt: z.string(),
-                      }),
-                    ),
+                    running: z.array(activeTaskViewSchema),
+                    queued: z.array(activeTaskViewSchema),
+                    interrupted: z.array(activeTaskViewSchema),
                   }),
                 },
               },
@@ -168,8 +170,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
           },
         }),
         async (c) => {
-          const tasks = await batchService.listActive();
-          return c.json({ tasks });
+          return c.json(await batchService.listActive());
         },
       )
 
@@ -197,7 +198,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/uploads/recovery',
-          description: '手动触发未完成任务恢复（仅管理员）',
+          description: '恢复全部 INTERRUPTED 任务（仅管理员）',
           security: bearerSecurity,
           middleware: [requireSuperAdmin],
           responses: {
@@ -211,6 +212,44 @@ export function createDocumentsRoutes(deps: AppDeps) {
         async (c) => {
           const triggeredTaskCount = await batchService.recoveryScan();
           return c.json({ triggeredTaskCount });
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'post',
+          path: '/uploads/{taskId}/interrupt',
+          description: '中断进行中的批量任务',
+          security: bearerSecurity,
+          middleware: [requireSuperAdmin],
+          request: { params: taskIdParam },
+          responses: {
+            204: { description: '已中断' },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          await batchService.interrupt(c.req.valid('param').taskId);
+          return c.body(null, 204);
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'delete',
+          path: '/uploads/{taskId}',
+          description: '取消排队或删除中断任务',
+          security: bearerSecurity,
+          middleware: [requireSuperAdmin],
+          request: { params: taskIdParam },
+          responses: {
+            204: { description: '已删除' },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          await batchService.removeTask(c.req.valid('param').taskId);
+          return c.body(null, 204);
         },
       )
 

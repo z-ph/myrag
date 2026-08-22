@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { and, desc, eq, inArray, isNull, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import type { ServerConfig } from '@myrag/shared';
 import type { BatchTask, TaskStatus } from '@myrag/shared';
@@ -14,20 +14,21 @@ export interface BatchService {
   /** 创建批量任务并入队（任意实例 worker 均可拾取） */
   createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
   getTask(taskId: string): Promise<BatchTask>;
-  /** 列出未完成任务（PENDING/PROCESSING），返回 UI DTO */
-  listActive(): Promise<ActiveTaskView[]>;
+  /** 未完成任务按车道分组：活跃中 / 排队中 / 异常中断 */
+  listActive(): Promise<ActiveTaskLanes>;
   /** 单文件入队：job name = process-single，jobId = documentId（幂等） */
   enqueueSingle(documentId: string): Promise<void>;
   /** 全量重建入队：每个文档一个 process-single job，jobId = rebuild:taskId:documentId */
   enqueueRebuild(taskId: string, documentIds: string[]): Promise<void>;
   /** 启动本实例的任务 worker（BullMQ 消费） */
   startWorker(): void;
-  /** 补偿扫描：把超时/中断任务重新入队（jobId 幂等），返回触发数量 */
+  /** 进行中 → INTERRUPTED，并摘掉队列作业 */
+  interrupt(taskId: string): Promise<void>;
+  /** 取消排队或删除中断任务 */
+  removeTask(taskId: string): Promise<void>;
+  /** 把 INTERRUPTED 任务重新入队为 PENDING，返回恢复数量 */
   recoveryScan(): Promise<number>;
-  /** 周期补偿扫描 */
-  startRecoveryLoop(): void;
-  stopRecoveryLoop(): void;
-  /** 优雅关闭：停扫描、等待进行中任务收尾、断开队列连接 */
+  /** 优雅关闭：等待进行中任务收尾、断开队列连接 */
   close(): Promise<void>;
 }
 
@@ -63,12 +64,27 @@ export interface ActiveTaskFileView {
 export interface ActiveTaskView {
   taskId: string;
   type: 'upload' | 'rebuild';
-  status: 'pending' | 'processing' | 'done' | 'failed' | 'partial';
+  status: 'pending' | 'processing' | 'interrupted' | 'done' | 'failed' | 'partial';
   total: number;
   completed: number;
   failed: number;
   files: ActiveTaskFileView[];
   createdAt: string;
+}
+
+export type TaskLane = 'running' | 'queued' | 'interrupted';
+
+export interface ActiveTaskLanes {
+  running: ActiveTaskView[];
+  queued: ActiveTaskView[];
+  interrupted: ActiveTaskView[];
+}
+
+/** 车道只看任务状态：排队一直排队，中断只来自 INTERRUPTED */
+export function classifyTaskLane(status: string): TaskLane {
+  if (status === 'PROCESSING') return 'running';
+  if (status === 'INTERRUPTED') return 'interrupted';
+  return 'queued';
 }
 
 function inferType(taskId: string): 'upload' | 'rebuild' {
@@ -79,6 +95,7 @@ function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batch
   const statusMap: Record<string, ActiveTaskView['status']> = {
     PENDING: 'pending',
     PROCESSING: 'processing',
+    INTERRUPTED: 'interrupted',
     SUCCESS: 'done',
     FAILED: 'failed',
     PARTIAL: 'partial',
@@ -105,7 +122,7 @@ function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batch
   };
 }
 
-/** 处理单个任务（幂等：仅处理 PENDING/PROCESSING 的文件，终态文件跳过） */
+/** 处理单个任务（幂等：仅处理 PENDING/PROCESSING 的文件；INTERRUPTED 立即停） */
 async function processTaskFiles(
   db: Db,
   processService: ProcessService,
@@ -114,9 +131,7 @@ async function processTaskFiles(
 ): Promise<void> {
   const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
   if (!task) return;
-  if (task.status === 'SUCCESS' || task.status === 'FAILED' || task.status === 'PARTIAL') return;
-  // BullMQ 以 jobId 去重 + stalled 检测保证同一任务不会被并发消费，崩溃后自动重跑；
-  // 无需旧的 takenOver 接管判断（该判断在重跑场景下反而会让任务永久卡死）
+  if (task.status === 'INTERRUPTED' || task.status === 'SUCCESS' || task.status === 'FAILED' || task.status === 'PARTIAL') return;
   await db.update(batchTasks).set({ status: 'PROCESSING', updatedAt: new Date() }).where(eq(batchTasks.taskId, taskId));
 
   const pendingResults = await db
@@ -136,6 +151,8 @@ async function processTaskFiles(
     while (true) {
       const result = pendingResults[idx++];
       if (!result) return;
+      const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+      if (!live || live.status === 'INTERRUPTED') return;
       let buffer: Buffer;
       try {
         buffer = await readFile(result.stagedPath);
@@ -156,7 +173,6 @@ async function processTaskFiles(
           batchTaskId: taskId,
         });
       } catch (err) {
-        // 校验类业务错误（如重复文件）不应中断整个任务，记录到单文件结果
         outcome = {
           documentId: '',
           originalFilename: result.filename,
@@ -185,14 +201,18 @@ async function processTaskFiles(
 
   await Promise.all(Array.from({ length: Math.min(cfg.batchConcurrency, pendingResults.length) }, worker));
 
+  const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+  if (!live || live.status === 'INTERRUPTED') {
+    logger.info(`[batch] 任务 ${taskId} 已中断，跳过收尾`);
+    return;
+  }
   const status: TaskStatus = failure === 0 ? 'SUCCESS' : success > 0 ? 'PARTIAL' : 'FAILED';
   await db
     .update(batchTasks)
     .set({ status, successCount: success, failureCount: failure, completedAt: new Date(), updatedAt: new Date() })
-    .where(eq(batchTasks.taskId, taskId));
+    .where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
   logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failure})`);
 }
-
 /** BullMQ 队列名（name 不允许含冒号；Redis key 由 prefix:name 拼成 myrag:batch:*） */
 const QUEUE_NAME = 'batch';
 const QUEUE_PREFIX = 'myrag';
@@ -230,14 +250,13 @@ export function createBatchService(
   queue.on('error', (err) => logger.error('[batch] 队列异常:', err));
 
   let worker: Worker<QueueJobData> | null = null;
-  let recoveryTimer: ReturnType<typeof setInterval> | null = null;
 
   const JOB_TIMEOUT = 5 * 60 * 1000;
 
   /** 单任务超时：5 分钟，worker 从开始消费计时 */
   const JOB_TIMEOUT_MS = 5 * 60 * 1000;
 
-  /** 入队：jobId = taskId，重复入队为空操作（补偿扫描/重试不会并发重复消费） */
+  /** 入队：jobId = taskId，重复入队为空操作 */
   async function enqueue(taskId: string): Promise<void> {
     await queue.add('process', { taskId }, { jobId: taskId });
   }
@@ -245,6 +264,16 @@ export function createBatchService(
   /** 单文件入队：jobId = documentId，重复入队为空操作 */
   async function enqueueSingle(documentId: string): Promise<void> {
     await queue.add('process-single', { documentId }, { jobId: documentId });
+  }
+
+  async function dropJobsForTask(taskId: string): Promise<void> {
+    await queue.remove(taskId).catch(() => undefined);
+    const jobs = await queue.getJobs(['waiting', 'delayed', 'active']);
+    await Promise.all(
+      jobs
+        .filter((job) => job.id === taskId || job.id?.startsWith(`rebuild:${taskId}:`))
+        .map((job) => job.remove().catch(() => undefined)),
+    );
   }
 
   /** 全量重建入队：每个文档独立 process-single，同时写 batchFileResults 逐文件跟踪 */
@@ -291,15 +320,11 @@ export function createBatchService(
     await queue.addBulk(jobs);
   }
 
-  function stopRecoveryLoop(): void {
-    if (recoveryTimer) {
-      clearInterval(recoveryTimer);
-      recoveryTimer = null;
-    }
-  }
 
   /** 单文件处理完后，汇总 batchFileResults 更新 batchTasks 进度 */
   async function finalizeBatchTask(taskId: string): Promise<void> {
+    const [current] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+    if (!current || current.status === 'INTERRUPTED') return;
     const results = await db
       .select({ status: batchFileResults.status })
       .from(batchFileResults)
@@ -316,7 +341,7 @@ export function createBatchService(
       updatedAt: new Date(),
     };
     if (allDone) updates.completedAt = new Date();
-    await db.update(batchTasks).set(updates).where(eq(batchTasks.taskId, taskId));
+    await db.update(batchTasks).set(updates).where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
   }
 
   return {
@@ -360,19 +385,24 @@ export function createBatchService(
     },
 
     async listActive() {
+      const lanes: ActiveTaskLanes = { running: [], queued: [], interrupted: [] };
       const activeTasks = await db
         .select()
         .from(batchTasks)
-        .where(inArray(batchTasks.status, ['PENDING', 'PROCESSING']))
+        .where(inArray(batchTasks.status, ['PENDING', 'PROCESSING', 'INTERRUPTED']))
         .orderBy(desc(batchTasks.createdAt));
-      if (activeTasks.length === 0) return [];
+      if (activeTasks.length === 0) return lanes;
       const taskIds = activeTasks.map((t) => t.taskId);
       const allResults = await db
         .select()
         .from(batchFileResults)
         .where(inArray(batchFileResults.taskId, taskIds))
         .orderBy(desc(batchFileResults.id));
-      return activeTasks.map((t) => toActiveView(t, allResults.filter((r) => r.taskId === t.taskId)));
+      for (const task of activeTasks) {
+        const view = toActiveView(task, allResults.filter((r) => r.taskId === task.taskId));
+        lanes[classifyTaskLane(task.status)].push(view);
+      }
+      return lanes;
     },
 
     startWorker() {
@@ -399,7 +429,7 @@ export function createBatchService(
               await db
                 .update(batchTasks)
                 .set({ status: 'PROCESSING', updatedAt: new Date() })
-                .where(eq(batchTasks.taskId, batchTaskId));
+                .where(and(eq(batchTasks.taskId, batchTaskId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
             }
 
             try {
@@ -420,6 +450,8 @@ export function createBatchService(
               }
 
               if (batchTaskId) {
+                const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, batchTaskId)).limit(1);
+                if (live?.status === 'INTERRUPTED') return;
                 await db
                   .update(batchFileResults)
                   .set({ status: 'SUCCESS' })
@@ -457,32 +489,47 @@ export function createBatchService(
       logger.info('[batch] 任务 worker 已启动 (BullMQ)');
     },
 
+    async interrupt(taskId) {
+      const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+      if (!task) throw badRequest('批量任务不存在');
+      if (task.status !== 'PROCESSING') throw badRequest('只能中断进行中的任务');
+      await db
+        .update(batchTasks)
+        .set({ status: 'INTERRUPTED', updatedAt: new Date() })
+        .where(eq(batchTasks.taskId, taskId));
+      await db
+        .update(batchFileResults)
+        .set({ status: 'PENDING' })
+        .where(and(eq(batchFileResults.taskId, taskId), eq(batchFileResults.status, 'PROCESSING')));
+      await dropJobsForTask(taskId);
+    },
+
+    async removeTask(taskId) {
+      const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+      if (!task) throw badRequest('批量任务不存在');
+      if (task.status !== 'PENDING' && task.status !== 'INTERRUPTED') {
+        throw badRequest('只能取消排队中或删除已中断的任务');
+      }
+      await dropJobsForTask(taskId);
+      await db.delete(batchFileResults).where(eq(batchFileResults.taskId, taskId));
+      await db.delete(batchTasks).where(eq(batchTasks.taskId, taskId));
+      await rm(join(cfg.dataDir, 'batch', taskId), { recursive: true, force: true }).catch(() => undefined);
+    },
+
     async recoveryScan() {
-      // 只重跑卡住的单文件，不是整批重来。
-      // 找到 stale 的 batchTasks，查其 batchFileResults 中 PENDING/PROCESSING 的文件重新入队。
-      const stale = new Date(Date.now() - cfg.recoveryStaleMs);
-      const staleTasks = await db
-        .select()
-        .from(batchTasks)
-        .where(
-          and(
-            inArray(batchTasks.status, ['PENDING', 'PROCESSING']),
-            lt(batchTasks.updatedAt, stale),
-          ),
-        );
-      for (const task of staleTasks) {
-        // 查该任务下未完成的单文件
+      const interrupted = await db.select().from(batchTasks).where(eq(batchTasks.status, 'INTERRUPTED'));
+      for (const task of interrupted) {
         const pendingFiles = await db
           .select({ documentId: batchFileResults.documentId })
           .from(batchFileResults)
           .where(and(eq(batchFileResults.taskId, task.taskId), inArray(batchFileResults.status, ['PENDING', 'PROCESSING'])));
         const docIds = pendingFiles.map((r) => r.documentId).filter(Boolean) as string[];
-
+        await db
+          .update(batchTasks)
+          .set({ status: 'PENDING', updatedAt: new Date(), completedAt: null })
+          .where(eq(batchTasks.taskId, task.taskId));
         if (task.taskId.startsWith('rebuild-')) {
-          // 清旧 job + 重置文档状态 + 重新入队（enqueueRebuild 会写 batchFileResults 幂等）
-          for (const docId of docIds) {
-            await queue.remove(`rebuild:${task.taskId}:${docId}`);
-          }
+          await dropJobsForTask(task.taskId);
           if (docIds.length > 0) {
             await db
               .update(documents)
@@ -491,44 +538,14 @@ export function createBatchService(
           }
           await enqueueRebuild(task.taskId, docIds);
         } else {
-          await queue.remove(task.taskId);
+          await dropJobsForTask(task.taskId);
           await enqueue(task.taskId);
         }
       }
-
-      // 单文件 process-single 不写 batchTasks。入队前崩溃或 removeOnFail 后会永久卡 PENDING。
-      const staleDocs = await db
-        .select({ documentId: documents.documentId })
-        .from(documents)
-        .where(
-          and(
-            eq(documents.status, 'PENDING'),
-            eq(documents.deleted, false),
-            isNull(documents.batchTaskId),
-            isNull(documents.processedAt),
-            lt(documents.createdAt, stale),
-          ),
-        );
-      for (const doc of staleDocs) {
-        await queue.remove(doc.documentId);
-        await enqueueSingle(doc.documentId);
-      }
-      return staleTasks.length + staleDocs.length;
+      return interrupted.length;
     },
-
-    startRecoveryLoop() {
-      if (recoveryTimer) return;
-      recoveryTimer = setInterval(() => {
-        void this.recoveryScan().catch((err) => logger.error('[batch] 补偿扫描异常:', err));
-      }, cfg.recoveryScanIntervalMs);
-      recoveryTimer.unref?.();
-    },
-
-    stopRecoveryLoop,
 
     async close() {
-      stopRecoveryLoop();
-      // worker.close() 会等待进行中的任务处理完
       await worker?.close();
       worker = null;
       await queue.close();

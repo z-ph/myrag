@@ -11,7 +11,7 @@ export const DOCUMENT_STATUSES = ['PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 
 export type DocumentStatus = (typeof DOCUMENT_STATUSES)[number];
 
 /** 批量任务状态 */
-export const TASK_STATUSES = ['PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'PARTIAL'] as const;
+export const TASK_STATUSES = ['PENDING', 'PROCESSING', 'INTERRUPTED', 'SUCCESS', 'FAILED', 'PARTIAL'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /** 分片上传会话状态 */

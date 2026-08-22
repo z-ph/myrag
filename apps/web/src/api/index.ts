@@ -101,6 +101,10 @@ export const documentsApi = {
     unwrap(rpc.documents[':documentId'].rebuild.$post({ param: { documentId } }, { headers: authHeaders() })),
   recoveryTrigger: () =>
     unwrap(rpc.documents.uploads.recovery.$post({}, { headers: authHeaders() })),
+  interruptTask: (taskId: string) =>
+    unwrap(rpc.documents.uploads[':taskId'].interrupt.$post({ param: { taskId } }, { headers: authHeaders() })),
+  removeTask: (taskId: string) =>
+    unwrap(rpc.documents.uploads[':taskId'].$delete({ param: { taskId } }, { headers: authHeaders() })),
   rebuildAll: () => unwrap(rpc.documents.uploads['rebuild-all'].$post({}, { headers: authHeaders() })),
   remove: (documentId: string) =>
     unwrap(rpc.documents[':documentId'].$delete({ param: { documentId } }, { headers: authHeaders() })),

@@ -117,7 +117,6 @@ export const batchTasks = pgTable(
     successCount: integer('success_count').notNull().default(0),
     failureCount: integer('failure_count').notNull().default(0),
     errorMessage: text('error_message'),
-    /** 补偿扫描是否已接管（防止重复处理） */
     takenOver: boolean('taken_over').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),

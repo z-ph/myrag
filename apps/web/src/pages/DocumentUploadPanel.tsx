@@ -39,7 +39,7 @@ const FILE_STATUS_LABEL: Record<string, string> = {
   FAILED: '失败',
 };
 
-const TASK_DONE = new Set(['SUCCESS', 'FAILED', 'PARTIAL']);
+const TASK_DONE = new Set(['SUCCESS', 'FAILED', 'PARTIAL', 'INTERRUPTED']);
 
 export function DocumentUploadPanel({
   open,

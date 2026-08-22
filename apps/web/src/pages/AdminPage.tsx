@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   App,
   Button,
@@ -19,7 +19,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { FileTextOutlined, HistoryOutlined, ReloadOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FileTextOutlined, HistoryOutlined, ReloadOutlined, StopOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentsApi, maintenanceApi, promptsApi, settingsApi, usersApi } from '../api';
 
@@ -295,142 +295,209 @@ function PromptsCard() {
   );
 }
 
-/** 活跃任务：轮询未完成任务，只展示 UI DTO */
-function ActiveTasksCard() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['active-tasks'],
-    queryFn: () => documentsApi.listActiveTasks(),
-    refetchInterval: (query) => {
-      const tasks = query.state.data?.tasks ?? [];
-      return tasks.length > 0 ? 2000 : false;
-    },
-  });
+const TASK_STATUS_TAG: Record<string, { color: string; text: string }> = {
+  pending: { color: 'default', text: '等待' },
+  processing: { color: 'processing', text: '处理中' },
+  interrupted: { color: 'warning', text: '中断' },
+  done: { color: 'success', text: '完成' },
+  failed: { color: 'error', text: '失败' },
+  partial: { color: 'warning', text: '部分成功' },
+};
 
-  const tasks = data?.tasks ?? [];
+type LaneTask = {
+  taskId: string;
+  type: 'upload' | 'rebuild';
+  status: string;
+  total: number;
+  completed: number;
+  failed: number;
+  files: { name: string; status: string; message: string }[];
+  createdAt: string;
+};
 
-  if (isLoading) {
-    return (
-      <Card title="活跃任务">
-        <Spin />
-      </Card>
-    );
-  }
-
+function TaskLaneList({
+  tasks,
+  empty,
+  action,
+}: {
+  tasks: LaneTask[];
+  empty: string;
+  action?: (task: LaneTask) => ReactNode;
+}) {
   if (tasks.length === 0) {
-    return (
-      <Card title="活跃任务">
-        <Empty description="当前没有进行中的任务" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-      </Card>
-    );
+    return <Empty description={empty} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   }
-
-  const STATUS_TAG: Record<string, { color: string; text: string }> = {
-    pending: { color: 'default', text: '等待' },
-    processing: { color: 'processing', text: '处理中' },
-    done: { color: 'success', text: '完成' },
-    failed: { color: 'error', text: '失败' },
-    partial: { color: 'warning', text: '部分成功' },
-  };
-
   return (
-    <Card title="活跃任务">
+    <>
       {tasks.map((task) => {
         const settled = task.completed + task.failed;
         const percent = task.total > 0 ? Math.round((settled / task.total) * 100) : 0;
-        const s = STATUS_TAG[task.status] ?? { color: 'default', text: task.status };
+        const s = TASK_STATUS_TAG[task.status] ?? { color: 'default', text: task.status };
         return (
-          <div key={task.taskId} style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <div key={task.taskId} className="task-lane-item">
+            <div className="task-lane-item-head">
               <Space size={6}>
                 <Tag color={task.type === 'rebuild' ? 'purple' : 'blue'}>
                   {task.type === 'rebuild' ? '全量重建' : '上传'}
                 </Tag>
-                <span style={{ fontSize: 13 }}>{task.total} 个文件</span>
+                <span>{task.total} 个文件</span>
               </Space>
               <Tag color={s.color}>{s.text}</Tag>
+              {action?.(task)}
             </div>
             <Progress
               percent={percent}
               size="small"
               status={task.status === 'failed' ? 'exception' : task.status === 'done' ? 'success' : 'active'}
             />
-            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+            <div className="task-lane-item-meta">
               成功 {task.completed} · 失败 {task.failed} · {new Date(task.createdAt).toLocaleString('zh-CN')}
             </div>
-            {task.files.length > 0 && (
-              <List
-                size="small"
-                dataSource={task.files}
-                renderItem={(file) => (
-                  <List.Item style={{ padding: '4px 0', border: 'none' }}>
-                    <span style={{ fontSize: 12, color: file.status === 'failed' ? '#b4382f' : '#666' }}>
-                      {file.name}
-                      {file.status === 'failed' && file.message ? ` — ${file.message}` : ''}
-                    </span>
-                  </List.Item>
-                )}
-              />
-            )}
+            {task.files.map((file) => (
+              <div key={file.name} className={file.status === 'failed' ? 'task-lane-file is-failed' : 'task-lane-file'}>
+                {file.name}
+                {file.status === 'failed' && file.message ? ` — ${file.message}` : ''}
+              </div>
+            ))}
           </div>
         );
       })}
-    </Card>
+    </>
   );
 }
 
-/** 恢复任务 + 全量重建 */
-function RecoveryRebuildCard() {
+function TaskLanes() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
-
-  const invalidateActive = () => {
-    void queryClient.invalidateQueries({ queryKey: ['active-tasks'] });
-  };
+  const { data, isLoading } = useQuery({
+    queryKey: ['active-tasks'],
+    queryFn: () => documentsApi.listActiveTasks(),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      const n = (d?.running?.length ?? 0) + (d?.queued?.length ?? 0) + (d?.interrupted?.length ?? 0);
+      return n > 0 ? 2000 : false;
+    },
+  });
 
   const recoveryMutation = useMutation({
     mutationFn: () => documentsApi.recoveryTrigger(),
     onSuccess: (r) => {
-      message.success(r.triggeredTaskCount > 0 ? `已触发 ${r.triggeredTaskCount} 个任务恢复` : '没有需要恢复的任务');
-      setTimeout(invalidateActive, 1000);
+      message.success(r.triggeredTaskCount > 0 ? `已触发 ${r.triggeredTaskCount} 个中断任务恢复` : '没有可恢复的中断任务');
+      setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] }), 1000);
     },
     onError: (err: Error) => message.error(err.message),
   });
+
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] });
+  const interruptMutation = useMutation({
+    mutationFn: (taskId: string) => documentsApi.interruptTask(taskId),
+    onSuccess: () => {
+      message.success('已中断');
+      invalidate();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+  const removeMutation = useMutation({
+    mutationFn: (taskId: string) => documentsApi.removeTask(taskId),
+    onSuccess: () => {
+      message.success('已删除');
+      invalidate();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+
+  const running = data?.running ?? [];
+  const queued = data?.queued ?? [];
+  const interrupted = data?.interrupted ?? [];
+
+  return (
+    <div className="task-lanes">
+      <Card className="task-lane" title={`活跃中 ${isLoading ? '' : running.length}`} loading={isLoading}>
+        <TaskLaneList
+          tasks={running}
+          empty="没有正在处理的任务"
+          action={(task) => (
+            <Popconfirm title="中断该任务？" onConfirm={() => interruptMutation.mutate(task.taskId)}>
+              <Button size="small" type="link" icon={<StopOutlined />} loading={interruptMutation.isPending}>
+                中断
+              </Button>
+            </Popconfirm>
+          )}
+        />
+      </Card>
+      <Card className="task-lane" title={`排队中 ${isLoading ? '' : queued.length}`} loading={isLoading}>
+        <TaskLaneList
+          tasks={queued}
+          empty="没有排队任务"
+          action={(task) => (
+            <Popconfirm title="取消并删除该排队任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
+              <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
+                取消
+              </Button>
+            </Popconfirm>
+          )}
+        />
+      </Card>
+      <Card
+        className="task-lane"
+        title={`异常中断 ${isLoading ? '' : interrupted.length}`}
+        loading={isLoading}
+        extra={
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            loading={recoveryMutation.isPending}
+            onClick={() => recoveryMutation.mutate()}
+          >
+            恢复
+          </Button>
+        }
+      >
+        <TaskLaneList
+          tasks={interrupted}
+          empty="没有中断任务"
+          action={(task) => (
+            <Popconfirm title="删除该中断任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
+              <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
+                删除
+              </Button>
+            </Popconfirm>
+          )}
+        />
+      </Card>
+    </div>
+  );
+}
+
+/** 全量重建 */
+function RecoveryRebuildCard() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
 
   const rebuildMutation = useMutation({
     mutationFn: () => documentsApi.rebuildAll(),
     onSuccess: () => {
       message.success('全量重建已启动');
-      setTimeout(invalidateActive, 1000);
+      setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] }), 1000);
     },
     onError: (err: Error) => message.error(err.message),
   });
 
   return (
     <Card title="向量索引维护">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div>
-          <Button icon={<ReloadOutlined />} loading={recoveryMutation.isPending} onClick={() => recoveryMutation.mutate()}>
-            恢复未完成任务
-          </Button>
-          <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-            重启或中断后，把搁置的批量任务重新入队。
-          </Typography.Text>
-        </div>
-        <div>
-          <Popconfirm
-            title="全量重建向量索引？"
-            description="将清空向量库并重新处理全部文档，问答期间不可用。"
-            onConfirm={() => rebuildMutation.mutate()}
-          >
-            <Button danger icon={<ThunderboltOutlined />} loading={rebuildMutation.isPending}>
-              全量重建
-            </Button>
-          </Popconfirm>
-          <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-            更换 embedding 模型后使用，清空向量库重新分片入库。
-          </Typography.Text>
-        </div>
-      </div>
+      <Popconfirm
+        title="全量重建向量索引？"
+        description="将清空向量库并重新处理全部文档，问答期间不可用。"
+        onConfirm={() => rebuildMutation.mutate()}
+      >
+        <Button danger icon={<ThunderboltOutlined />} loading={rebuildMutation.isPending}>
+          全量重建
+        </Button>
+      </Popconfirm>
+      <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+        更换 embedding 模型后使用，清空向量库重新分片入库。中断任务在上方「异常中断」恢复。
+      </Typography.Text>
     </Card>
   );
 }
@@ -480,11 +547,9 @@ export default function AdminPage() {
           <GuestCleanupCard />
         </Col>
       </Row>
+      <TaskLanes />
       <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={12}>
-          <ActiveTasksCard />
-        </Col>
-        <Col span={12}>
+        <Col span={24}>
           <RecoveryRebuildCard />
         </Col>
       </Row>

@@ -66,7 +66,7 @@ export type AppVariables = { Variables: { auth: AuthContext } };
 
 export interface AppContainer {
   deps: AppDeps;
-  /** 启动初始化：建目录、建集合、种子管理员、启动 worker 与补偿扫描 */
+  /** 启动初始化：建目录、建集合、种子管理员、启动 worker */
   init(): Promise<void>;
 }
 
@@ -150,9 +150,8 @@ export function createApp(cfg: ServerConfig): AppContainer {
       await authService.bootstrapAdmin();
       await settingsService.init();
       await promptService.init();
-      // 无状态化：每个实例都是 BullMQ 任务消费者；崩溃任务由 stalled 检测 + 周期补偿扫描兜底
+      // 每个实例都是 BullMQ 消费者；中断只来自人工操作
       batchService.startWorker();
-      batchService.startRecoveryLoop();
       await cleanupService.startScheduler();
       logger.info(`[init] 应用初始化完成 (instance=${cfg.instanceId})`);
     },

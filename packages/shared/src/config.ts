@@ -114,10 +114,7 @@ export interface ServerConfig {
   dbPoolSize: number;
   /** Qdrant scroll 分页大小 */
   qdrantScrollLimit: number;
-  /** 批量任务补偿扫描间隔（毫秒） */
-  recoveryScanIntervalMs: number;
-  /** 任务超过该时长（毫秒）视为中断，可被补偿接管 */
-  recoveryStaleMs: number;
+
 
   // 其它
   logLevel: string;
@@ -190,8 +187,6 @@ const ServerConfigSchema = z.object({
   conversationListLimit: z.number(),
   dbPoolSize: z.number(),
   qdrantScrollLimit: z.number(),
-  recoveryScanIntervalMs: z.number(),
-  recoveryStaleMs: z.number(),
   logLevel: z.string(),
 });
 
@@ -263,8 +258,6 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     conversationListLimit: num('CONVERSATION_LIST_LIMIT', DEFAULTS.conversationListLimit),
     dbPoolSize: num('DB_POOL_SIZE', DEFAULTS.dbPoolSize),
     qdrantScrollLimit: num('QDRANT_SCROLL_LIMIT', DEFAULTS.qdrantScrollLimit),
-    recoveryScanIntervalMs: num('RECOVERY_SCAN_INTERVAL_MS', 60_000),
-    recoveryStaleMs: num('RECOVERY_STALE_MS', 30 * 60_000),
     logLevel: env.LOG_LEVEL ?? 'info',
   };
   return ServerConfigSchema.parse(cfg);
