@@ -7,12 +7,10 @@ services:
     restart: "no"
     env_file: .env
     environment:
-      DB_ADMIN_USER: ${DB_ADMIN_USER:?DB_ADMIN_USER is required}
-      DB_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD is required}
-      DB_NAME: ${DB_NAME:?DB_NAME is required}
       DB_USER: ${DB_USER:?DB_USER is required}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
-      PGPASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD is required}
+      DB_NAME: ${DB_NAME:?DB_NAME is required}
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     volumes:
       - ./apps/server/src/db/init-database.sql:/init-database.sql:ro
     command:
@@ -20,8 +18,8 @@ services:
       - -c
       - |
         set -eu
-        psql -h postgres -U "$$DB_ADMIN_USER" -d postgres -v ON_ERROR_STOP=1 \
-          -v db_name="$$DB_NAME" -v db_user="$$DB_USER" -v db_password="$$DB_PASSWORD" \
+        psql -h postgres -U "$$DB_USER" -d postgres -v ON_ERROR_STOP=1 \
+          -v db_name="$$DB_NAME" \
           -f /init-database.sql
     networks:
       - data
