@@ -1,75 +1,30 @@
+name: myrag
+
 services:
-  postgres:
+  db-init:
     image: postgres:18-alpine
-    container_name: myrag-postgres
-    restart: unless-stopped
+    container_name: myrag-db-init
+    restart: "no"
+    env_file: .env
     environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-rag_password}
-      POSTGRES_DB: ${DB_NAME:-rag}
-      POSTGRES_USER: ${DB_USER:-rag}
+      DB_ADMIN_USER: ${DB_ADMIN_USER:?DB_ADMIN_USER is required}
+      DB_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD is required}
+      DB_NAME: ${DB_NAME:?DB_NAME is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGPASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD is required}
     volumes:
-      # PG 18+ 镜像要求挂载 /var/lib/postgresql（数据在版本子目录，便于 pg_upgrade）
-      - postgres-data:/var/lib/postgresql
-    # 宿主映射端口由 .env 的 POSTGRES_HOST_PORT 控制（容器内固定 5432）
-    ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rag} -d ${DB_NAME:-rag}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 20s
-
-  qdrant:
-    image: qdrant/qdrant:v1.18.3
-    container_name: myrag-qdrant
-    restart: unless-stopped
-    volumes:
-      - qdrant-data:/qdrant/storage
-    ports:
-      - "${QDRANT_HOST_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-
-  redis:
-    image: redis:8-alpine
-    container_name: myrag-redis
-    restart: unless-stopped
-    volumes:
-      - redis-data:/data
-    # 宿主映射端口由 .env 的 REDIS_HOST_PORT 控制（容器内固定 6379）
-    ports:
-      - "${REDIS_HOST_PORT:-6380}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: myrag-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9101"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
-    volumes:
-      - minio-data:/data
-    # 宿主映射端口由 .env 的 MINIO_HOST_PORT / MINIO_CONSOLE_HOST_PORT 控制（容器内固定 9000/9101）
-    ports:
-      - "${MINIO_HOST_PORT:-9100}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9101}:9101"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      - ./apps/server/src/db/init-database.sql:/init-database.sql:ro
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        psql -h postgres -U "$$DB_ADMIN_USER" -d postgres -v ON_ERROR_STOP=1 \
+          -v db_name="$$DB_NAME" -v db_user="$$DB_USER" -v db_password="$$DB_PASSWORD" \
+          -f /init-database.sql
+    networks:
+      - default
 
   server:
     build:
@@ -80,52 +35,42 @@ services:
     env_file: .env
     environment:
       DB_HOST: postgres
-      # 容器网络内端口固定（.env 的 *HOST_PORT / DB_PORT 只影响宿主映射与本地开发）
-      DB_PORT: 5432
+      DB_PORT: "5432"
       QDRANT_HOST: qdrant
       REDIS_HOST: redis
-      REDIS_PORT: 6379
+      REDIS_PORT: "6379"
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-myrag-documents}
-      UPLOAD_DIR: /app/uploads
-      DATA_DIR: /app/data
     volumes:
       - uploads:/app/uploads
       - data:/app/data
     depends_on:
-      postgres:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    # 宿主映射端口由 .env 的 SERVER_HOST_PORT 控制（容器内固定 8080）
+      db-init:
+        condition: service_completed_successfully
     ports:
-      - "${SERVER_HOST_PORT:-8808}:8080"
+      - "${SERVER_HOST_PORT:?SERVER_HOST_PORT is required}:8080"
+    networks:
+      - default
 
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        # 必填（vite.config 构建期校验）；子路径部署改 VITE_BASE（如 /rag/），同时需在 nginx.conf 添加前缀 alias
-        VITE_BASE: ${VITE_BASE}
+        VITE_BASE: ${VITE_BASE:?VITE_BASE is required}
     container_name: myrag-web
     restart: unless-stopped
     depends_on:
       - server
-    # 宿主映射端口由 .env 的 WEB_HOST_PORT 控制（容器内固定 80）
     ports:
-      - "${WEB_HOST_PORT:-5173}:80"
+      - "${WEB_HOST_PORT:?WEB_HOST_PORT is required}:80"
+    networks:
+      - default
+
+networks:
+  default:
+    name: infra_default
+    external: true
 
 volumes:
-  postgres-data:
-  qdrant-data:
-  redis-data:
-  minio-data:
   uploads:
   data:
