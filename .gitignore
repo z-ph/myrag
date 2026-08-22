@@ -15,3 +15,6 @@ deploy/deploy.log
 
 # 独立子项目（自有 git 仓库，不纳入本仓库）
 copilot/
+
+# 本地 git worktree（隔离功能开发）
+.worktrees/
