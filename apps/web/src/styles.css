@@ -286,23 +286,24 @@ body {
 
 .docs-drop {
   margin-bottom: 12px;
-  padding: 0;
-}
-
-.docs-drop .ant-upload-wrapper,
-.docs-drop .ant-upload-drag {
-  display: block;
-}
-
-.docs-drop .ant-upload-drag {
-  border-color: var(--line);
-  background: var(--surface);
-  border-radius: 12px;
   padding: 16px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
 }
 
-.docs-drop .ant-upload-drag:hover {
+.docs-drop:hover,
+.docs-drop.is-over {
   border-color: var(--seal);
+}
+
+.docs-drop-actions {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 8px;
 }
 
 .docs-drop-icon {
