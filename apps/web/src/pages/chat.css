@@ -134,6 +134,48 @@
   word-break: break-word;
 }
 
+.msg-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.msg-user .msg-actions {
+  justify-content: flex-end;
+}
+
+.msg-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.msg-copy:hover,
+.msg-copy:focus-visible,
+.msg-copy.is-copied {
+  color: var(--ink-2);
+}
+
+.msg-copy:focus-visible {
+  outline: 2px solid var(--seal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-copy {
+    transition: none;
+  }
+}
+
+
 /* Markdown 渲染排版（react-markdown + gfm） */
 .answer > :first-child {
   margin-top: 0;

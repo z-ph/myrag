@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Switch, Tooltip } from 'antd';
 import {
+  CheckOutlined,
+  CopyOutlined,
   DeleteOutlined,
   DownloadOutlined,
   FileImageOutlined,
@@ -12,6 +14,7 @@ import {
   StopOutlined,
   UserOutlined,
 } from '@ant-design/icons';
+
 import { useQuery } from '@tanstack/react-query';
 import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
@@ -301,6 +304,58 @@ function StreamingMarkdown({ content }: { content: string }) {
   );
 }
 
+function MessageCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(0);
+
+  useEffect(() => () => {
+    clearTimeout(timerRef.current);
+  }, []);
+
+  if (!text.trim()) return null;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        if (!document.execCommand('copy')) return;
+      } catch {
+        return;
+      } finally {
+        document.body.removeChild(ta);
+      }
+    }
+    setCopied(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="msg-actions">
+      <button
+        type="button"
+        className={`msg-copy${copied ? ' is-copied' : ''}`}
+
+        onClick={() => void copy()}
+        aria-label={copied ? '已复制' : '复制'}
+      >
+        {copied ? <CheckOutlined /> : <CopyOutlined />}
+        {copied ? '已复制' : '复制'}
+      </button>
+    </div>
+  );
+}
+
+
 function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onAsk: (q: string) => void; onPreview: (s: SourceReference) => void; devMode: boolean }) {
   const isUser = msg.role === 'user';
   if (isUser) {
@@ -309,6 +364,8 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
         <div className="msg-body">
           {msg.imageUrl && <img src={msg.imageUrl} alt="用户图片" className="msg-image" />}
           <div className="user-bubble">{msg.content}</div>
+          <MessageCopyButton text={msg.content} />
+
         </div>
       </div>
     );
@@ -331,6 +388,8 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
             msg.status === 'GENERATING' && <span className="answer-typing">正在思考…</span>
           )}
         </div>
+        <MessageCopyButton text={msg.content} />
+
         <FollowUpChips questions={followUps} onAsk={onAsk} />
         {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} onPreview={onPreview} />}
       </div>
