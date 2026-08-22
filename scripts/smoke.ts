@@ -1,6 +1,6 @@
 /**
  * 端到端冒烟测试：验证核心业务链路。
- * 前置：基础设施（postgres/qdrant/redis）+ mock-llm + server 已就绪。
+ * 前置：基础设施（postgres/qdrant/redis）+ server 已就绪。
  * 用法：pnpm tsx scripts/smoke.ts
  */
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:8080';

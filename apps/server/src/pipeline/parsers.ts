@@ -111,6 +111,40 @@ export async function parsePptx(buffer: Buffer): Promise<string> {
   }
 }
 
+/** PDF 扫描件：用 pdf-parse 的 getScreenshot 逐页渲染为 PNG，再逐页发视觉模型 OCR */
+export async function parseScannedPdf(buffer: Buffer, llm: LlmClient): Promise<string> {
+  let screenshots;
+  try {
+    const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    try {
+      // desiredWidth=1600 保证清晰度，imageDataUrl=false 跳过 dataUrl（只取 buffer）
+      screenshots = await parser.getScreenshot({ desiredWidth: 1600, imageDataUrl: false });
+    } finally {
+      await parser.destroy();
+    }
+  } catch (err) {
+    throw new ParseError('PDF 渲染失败，无法转图片进行 OCR', err);
+  }
+
+  const pages: string[] = [];
+  for (const page of screenshots.pages) {
+    if (page.data.length === 0) continue;
+    const base64 = Buffer.from(page.data).toString('base64');
+    try {
+      const text = await llm.visionChat(
+        '你是文档 OCR 引擎。请完整提取图片中的全部文字，保持原有段落结构，不要添加任何解释。',
+        '请逐字提取图中所有文字内容，按阅读顺序输出。若图片是表格，保留表格结构（用 | 分隔列）。只输出提取的文本，不要任何额外说明。',
+        base64,
+      );
+      if (text.trim()) pages.push(`【第 ${page.pageNumber} 页】\n${text}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('模型服务')) throw err;
+      throw new ParseError(`PDF 第 ${page.pageNumber} 页 OCR 失败`, err);
+    }
+  }
+  return pages.join('\n\n');
+}
+
 /** 图片：视觉模型 OCR 提取文本 */
 export async function parseImage(buffer: Buffer, llm: LlmClient): Promise<string> {
   const base64 = buffer.toString('base64');
@@ -141,7 +175,7 @@ export async function parseDocument(
     case 'PDF': {
       const { text, isScanned } = await parsePdf(buffer);
       if (!isScanned) return { text };
-      const ocrText = await parseImage(buffer, llm);
+      const ocrText = await parseScannedPdf(buffer, llm);
       return { text: ocrText, ocrModel: 'vision', ocrDurationMs: Date.now() - start };
     }
     case 'DOCUMENT': {
