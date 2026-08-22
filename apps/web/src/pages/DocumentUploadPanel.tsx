@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import { DeleteOutlined, InboxOutlined } from '@ant-design/icons';
 import { DEFAULTS } from '@myrag/shared';
 import { App, Button, Drawer, Progress, Space } from 'antd';
-import { useQuery } from '@tanstack/react-query';
 import { documentsApi } from '../api';
 import { ALLOWED_EXTENSIONS } from '../constants';
 import {
@@ -10,12 +9,7 @@ import {
   isIgnoredUploadName,
   uploadFileKey,
 } from './uploadFiles';
-import {
-  aggregateTaskProgress,
-  collectTaskIds,
-  resolveFileProcessText,
-  TASK_DONE,
-} from './uploadTaskProgress';
+import { aggregateUploadProgress } from './uploadTaskProgress';
 
 const ALLOWED = new Set<string>(ALLOWED_EXTENSIONS);
 const MAX_MB = Math.floor(DEFAULTS.maxFileSizeBytes / 1024 / 1024);
@@ -32,10 +26,9 @@ function formatSize(bytes: number): string {
 
 interface FileUploadState {
   file: File;
-  status: 'pending' | 'uploading' | 'processing' | 'done' | 'failed';
-  progress: number; // 0-100
+  status: 'pending' | 'uploading' | 'done' | 'failed';
+  progress: number;
   message: string;
-  taskId?: string;
 }
 
 
@@ -58,21 +51,8 @@ export function DocumentUploadPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const taskIds = collectTaskIds(fileStates.values());
-  const { data: batchTasks = [] } = useQuery({
-    queryKey: ['batch-tasks', taskIds],
-    queryFn: () => Promise.all(taskIds.map((id) => documentsApi.batchTask(id))),
-    enabled: taskIds.length > 0,
-    refetchInterval: (query) => {
-      const tasks = query.state.data;
-      if (!tasks || tasks.some((t) => !TASK_DONE.has(t.status))) return 2000;
-      return false;
-    },
-  });
-
-  const { settled: batchSettled, total: batchTotal, done: batchDone } = aggregateTaskProgress(batchTasks);
-  const batchFailed = batchTasks.reduce((n, t) => n + t.failureCount, 0);
-  const batchSucceeded = batchTasks.reduce((n, t) => n + t.successCount, 0);
+  const uploadProgress = aggregateUploadProgress([...fileStates.values()]);
+  const uploadFailed = [...fileStates.values()].some((s) => s.status === 'failed');
 
   const reset = () => {
     setSelectedFiles([]);
@@ -121,8 +101,8 @@ export function DocumentUploadPanel({
     });
   };
 
-  /** 分片上传单个文件，返回 taskId */
-  async function uploadFileChunked(file: File): Promise<string> {
+  /** 分片上传单个文件 */
+  async function uploadFileChunked(file: File): Promise<void> {
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
     const session = await documentsApi.chunkedInit(file.name, totalChunks, file.size);
 
@@ -135,8 +115,7 @@ export function DocumentUploadPanel({
       patchFileState(file, { progress: Math.round(((i + 1) / totalChunks) * 100) });
     }
 
-    const completed = await documentsApi.chunkedComplete(session.uploadSessionId);
-    return completed.taskId ?? '';
+    await documentsApi.chunkedComplete(session.uploadSessionId);
   }
 
   const startUpload = async () => {
@@ -152,8 +131,8 @@ export function DocumentUploadPanel({
     for (const file of selectedFiles) {
       try {
         patchFileState(file, { status: 'uploading', progress: 0 });
-        const taskId = await uploadFileChunked(file);
-        patchFileState(file, { status: 'processing', progress: 100, taskId });
+        await uploadFileChunked(file);
+        patchFileState(file, { status: 'done', progress: 100 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : '上传失败';
         patchFileState(file, { status: 'failed', message: msg });
@@ -165,8 +144,8 @@ export function DocumentUploadPanel({
     onSubmitted();
   };
 
-  const inSelectPhase = !uploading && taskIds.length === 0;
-  const inProcessingPhase = taskIds.length > 0;
+  const inSelectPhase = !uploading && fileStates.size === 0;
+  const inUploadPhase = fileStates.size > 0;
 
   return (
     <Drawer
@@ -269,7 +248,7 @@ export function DocumentUploadPanel({
             const state = fileStates.get(key);
             const isUploading = state?.status === 'uploading';
             const isFailed = state?.status === 'failed';
-            const isProcessing = state?.status === 'processing';
+            const isDone = state?.status === 'done';
 
             return (
               <div key={key} style={{ padding: '8px 0', borderBottom: '1px solid #eee' }}>
@@ -283,28 +262,21 @@ export function DocumentUploadPanel({
                   )}
                   {isFailed && <span style={{ color: '#b4382f', fontSize: 12 }}>{state.message}</span>}
                 </div>
-                {isUploading && <Progress percent={state.progress} size="small" status="active" />}
-                {isProcessing && (
-                  <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                    {resolveFileProcessText(file, state.taskId, batchTasks)}
-                  </div>
+                {(isUploading || isDone) && (
+                  <Progress percent={state.progress} size="small" status={isDone ? 'success' : 'active'} />
                 )}
               </div>
             );
           })}
 
-          {batchTasks.length > 0 && (
+          {inUploadPhase && (
             <div style={{ marginTop: 16 }}>
               <div style={{ fontSize: 13, marginBottom: 8 }}>
-                {batchDone
-                  ? batchFailed > 0
-                    ? `完成：成功 ${batchSucceeded}，失败 ${batchFailed}`
-                    : `已全部入库（${batchSucceeded}）`
-                  : `处理中 ${batchSettled} / ${batchTotal}`}
+                {uploadProgress.done ? `上传完成（${uploadProgress.total}）` : `上传中 ${uploadProgress.finished} / ${uploadProgress.total}`}
               </div>
               <Progress
-                percent={batchTotal > 0 ? Math.round((batchSettled / batchTotal) * 100) : 0}
-                status={batchDone && batchFailed > 0 ? 'exception' : batchDone ? 'success' : 'active'}
+                percent={uploadProgress.percent}
+                status={uploadProgress.done && uploadFailed ? 'exception' : uploadProgress.done ? 'success' : 'active'}
               />
             </div>
           )}
@@ -312,11 +284,11 @@ export function DocumentUploadPanel({
       )}
 
       <div style={{ padding: 16, borderTop: '1px solid #eee', flexShrink: 0 }}>
-        {inProcessingPhase ? (
+        {inUploadPhase ? (
           <Space>
-            {batchDone && <span style={{ fontSize: 13 }}>上传完成</span>}
+            {uploadProgress.done && <span style={{ fontSize: 13 }}>上传完成</span>}
             <Button onClick={handleClose} disabled={uploading}>
-              {batchDone ? '关闭' : '后台处理中，可关闭'}
+              {uploading ? '上传中…' : '关闭'}
             </Button>
           </Space>
         ) : (
