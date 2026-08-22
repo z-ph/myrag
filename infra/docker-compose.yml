@@ -1,3 +1,4 @@
+name: infra
 services:
   # --- 1. 聊天模型节点 ---
   vllm-chat:
@@ -7,20 +8,21 @@ services:
     environment:
       - MODELSCOPE_CACHE=/root/.cache/modelscope
     volumes:
-      - /home/admini/.cache/modelscope:/root/.cache/modelscope
-      - /home/admini/.cache/glm-4.6-vl-flash/vllm:/root/.cache/vllm # 包含 torch_compile 缓存
-      - /home/admini/.cache/glm-4.6-vl-flash/.nv:/root/.nv # NVIDIA 算子缓存
+      - ${MODELSCOPE_HOST_DIR}:/root/.cache/modelscope
+      - ${VLLM_CHAT_VLLM_CACHE_DIR}:/root/.cache/vllm # 包含 torch_compile 缓存
+      - ${VLLM_CHAT_NV_CACHE_DIR}:/root/.nv # NVIDIA 算子缓存
     ipc: host
     expose:
       - "8000"
+    # 宿主映射端口由 .env 的 VLLM_CHAT_HOST_PORT 控制（容器内固定 8000）
     ports:
-      - "8000:8000"
+      - "${VLLM_CHAT_HOST_PORT}:8000"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"] # 使用第2张显卡
+              device_ids: ["${VLLM_CHAT_GPU}"]
               capabilities: [gpu]
     command: >
       --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-4___6V-Flash
@@ -49,9 +51,9 @@ services:
     environment:
       - MODELSCOPE_CACHE=/root/.cache/modelscope
     volumes:
-      - /home/admini/.cache/modelscope:/root/.cache/modelscope
-      - /home/admini/.cache/qwen3-embedding-4b/vllm:/root/.cache/vllm # 包含 torch_compile 缓存
-      - /home/admini/.cache/qwen3-embedding-4b/.nv:/root/.nv # NVIDIA 算子缓存
+      - ${MODELSCOPE_HOST_DIR}:/root/.cache/modelscope
+      - ${VLLM_EMBEDDING_VLLM_CACHE_DIR}:/root/.cache/vllm # 包含 torch_compile 缓存
+      - ${VLLM_EMBEDDING_NV_CACHE_DIR}:/root/.nv # NVIDIA 算子缓存
     ipc: host
     expose:
       - "8000"
@@ -60,10 +62,11 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"] # 同样使用第2张显卡
+              device_ids: ["${VLLM_EMBEDDING_GPU}"]
               capabilities: [gpu]
+    # 宿主映射端口由 .env 的 VLLM_EMBEDDING_HOST_PORT 控制（容器内固定 8000）
     ports:
-      - "8001:8000"
+      - "${VLLM_EMBEDDING_HOST_PORT}:8000"
     command: >
       --model /root/.cache/modelscope/hub/models/Qwen/Qwen3-VL-Embedding-2B
       --served-model-name qwen3-vl-embedding-2b
@@ -91,20 +94,21 @@ services:
     environment:
       - MODELSCOPE_CACHE=/root/.cache/modelscope
     volumes:
-      - /home/admini/.cache/modelscope:/root/.cache/modelscope
-      - /home/admini/.cache/glm-ocr/vllm:/root/.cache/vllm
-      - /home/admini/.cache/glm-ocr/.nv:/root/.nv
+      - ${MODELSCOPE_HOST_DIR}:/root/.cache/modelscope
+      - ${VLLM_OCR_VLLM_CACHE_DIR}:/root/.cache/vllm
+      - ${VLLM_OCR_NV_CACHE_DIR}:/root/.nv
     ipc: host
     expose:
       - "8000"
+    # 宿主映射端口由 .env 的 VLLM_OCR_HOST_PORT 控制（容器内固定 8000）
     ports:
-      - "8002:8000"
+      - "${VLLM_OCR_HOST_PORT}:8000"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"]
+              device_ids: ["${VLLM_OCR_GPU}"]
               capabilities: [gpu]
     command: >
       --model /root/.cache/modelscope/hub/models/ZhipuAI/GLM-OCR
@@ -129,17 +133,98 @@ services:
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: litellm1
+    # 宿主映射端口由 .env 的 LITELLM_HOST_PORT 控制（容器内固定 4000）
     ports:
-      - "4000:4000" # 统一对外端口
+      - "${LITELLM_HOST_PORT}:4000"
     volumes:
       - ./lite-llm.yaml:/app/config.yaml
     environment:
-      - LITELLM_MASTER_KEY=sk-shiliuziyyds # 界面管理密钥
-      - UI_USERNAME=admin # 界面登录账号
-      - UI_PASSWORD=admin # 界面登录密码
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - UI_USERNAME=${LITELLM_UI_USERNAME}
+      - UI_PASSWORD=${LITELLM_UI_PASSWORD}
     depends_on:
       - vllm-chat
       - vllm-embedding
       - vllm-ocr
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     restart: always
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER}
+    volumes:
+      # PG 18+ 镜像要求挂载 /var/lib/postgresql（数据在版本子目录，便于 pg_upgrade）
+      - postgres-data:/var/lib/postgresql
+    # 宿主映射端口由 .env 的 POSTGRES_HOST_PORT 控制（容器内固定 5432）
+    ports:
+      - "${POSTGRES_HOST_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.3
+    container_name: qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "${QDRANT_HOST_PORT}:6333"
+      - "${QDRANT_GRPC_HOST_PORT}:6334"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:8-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    # 宿主映射端口由 .env 的 REDIS_HOST_PORT 控制（容器内固定 6379）
+    ports:
+      - "${REDIS_HOST_PORT}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9101"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    # 宿主映射端口由 .env 的 MINIO_HOST_PORT / MINIO_CONSOLE_HOST_PORT 控制（容器内固定 9000/9101）
+    ports:
+      - "${MINIO_HOST_PORT}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT}:9101"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+networks:
+  default:
+    name: infra_default
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  redis-data:
+  minio-data:
