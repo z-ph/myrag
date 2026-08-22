@@ -20,6 +20,7 @@ import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
+import { buildFollowUpQuestions, shouldShowAssistantCopy } from './chatMessageExtras';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './chat.css';
@@ -49,23 +50,6 @@ function normalizeMarkdown(text: string): string {
     .join('\n');
 }
 
-/** 提取回答里的「反问」问题（引号包裹、带疑问语义），供点击追问 */
-function extractCounterQuestions(text: string): string[] {
-  const out: string[] = [];
-  const re = /[「“"]([^」”"\n]{4,60})[」”"]/g;
-  const qWords = /什么|多少|如何|是否|哪些|怎么|哪|吗|呢|为什么/;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    let q = (m[1] ?? '').trim();
-    if (!q) continue;
-    if (!q.endsWith('？') && !q.endsWith('?')) {
-      if (!qWords.test(q)) continue;
-      q = `${q}？`;
-    }
-    if (!out.includes(q)) out.push(q);
-  }
-  return out.slice(0, 4);
-}
 
 const DEFAULT_SUGGESTIONS = [
   '差旅费报销标准是什么？',
@@ -370,7 +354,7 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
       </div>
     );
   }
-  const followUps = msg.status === 'COMPLETED' ? extractCounterQuestions(msg.content) : [];
+  const followUps = msg.status === 'COMPLETED' ? buildFollowUpQuestions(msg.content, msg.sources ?? []) : [];
   return (
     <div className="msg-row msg-assistant">
       <Avatar icon={<RobotOutlined />} className="msg-avatar" />
@@ -388,10 +372,9 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
             msg.status === 'GENERATING' && <span className="answer-typing">正在思考…</span>
           )}
         </div>
-        <MessageCopyButton text={msg.content} />
-
-        <FollowUpChips questions={followUps} onAsk={onAsk} />
+        {shouldShowAssistantCopy(msg.status, msg.content) && <MessageCopyButton text={msg.content} />}
         {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} onPreview={onPreview} />}
+        <FollowUpChips questions={followUps} onAsk={onAsk} />
       </div>
     </div>
   );
