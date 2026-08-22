@@ -150,7 +150,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'get',
           path: '/uploads/active',
-          description: '未完成任务分车道：活跃中 / 排队中 / 异常中断',
+          description: '未完成任务分车道：活跃中 / 排队中 / 异常（中断、失败、部分成功）',
           security: bearerSecurity,
           middleware: [requireStaff],
           responses: {
@@ -198,7 +198,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/uploads/recovery',
-          description: '恢复全部 INTERRUPTED 任务（仅管理员）',
+          description: '恢复全部异常任务（中断、失败、部分成功，仅管理员）',
           security: bearerSecurity,
           middleware: [requireSuperAdmin],
           responses: {
@@ -238,7 +238,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'delete',
           path: '/uploads/{taskId}',
-          description: '取消排队或删除中断任务',
+          description: '取消排队或删除异常任务',
           security: bearerSecurity,
           middleware: [requireSuperAdmin],
           request: { params: taskIdParam },

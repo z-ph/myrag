@@ -382,7 +382,7 @@ function TaskLanes() {
   const recoveryMutation = useMutation({
     mutationFn: () => documentsApi.recoveryTrigger(),
     onSuccess: (r) => {
-      message.success(r.triggeredTaskCount > 0 ? `已触发 ${r.triggeredTaskCount} 个中断任务恢复` : '没有可恢复的中断任务');
+      message.success(r.triggeredTaskCount > 0 ? `已触发 ${r.triggeredTaskCount} 个异常任务恢复` : '没有可恢复的异常任务');
       setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] }), 1000);
     },
     onError: (err: Error) => message.error(err.message),
@@ -441,7 +441,7 @@ function TaskLanes() {
       </Card>
       <Card
         className="task-lane"
-        title={`异常中断 ${isLoading ? '' : interrupted.length}`}
+        title={`异常 ${isLoading ? '' : interrupted.length}`}
         loading={isLoading}
         extra={
           <Button
@@ -456,9 +456,9 @@ function TaskLanes() {
       >
         <TaskLaneList
           tasks={interrupted}
-          empty="没有中断任务"
+          empty="没有异常任务"
           action={(task) => (
-            <Popconfirm title="删除该中断任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
+            <Popconfirm title="删除该异常任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
               <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
                 删除
               </Button>
@@ -496,7 +496,7 @@ function RecoveryRebuildCard() {
         </Button>
       </Popconfirm>
       <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-        更换 embedding 模型后使用，清空向量库重新分片入库。中断任务在上方「异常中断」恢复。
+        更换 embedding 模型后使用，清空向量库重新分片入库。未成功任务在上方「异常」恢复或删除。
       </Typography.Text>
     </Card>
   );

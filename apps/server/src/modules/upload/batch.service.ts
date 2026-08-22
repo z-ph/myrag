@@ -14,7 +14,7 @@ export interface BatchService {
   /** 创建批量任务并入队（任意实例 worker 均可拾取） */
   createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
   getTask(taskId: string): Promise<BatchTask>;
-  /** 未完成任务按车道分组：活跃中 / 排队中 / 异常中断 */
+  /** 未完成任务按车道分组：活跃中 / 排队中 / 异常（中断、失败、部分成功） */
   listActive(): Promise<ActiveTaskLanes>;
   /** 单文件入队：job name = process-single，jobId = documentId（幂等） */
   enqueueSingle(documentId: string): Promise<void>;
@@ -24,9 +24,9 @@ export interface BatchService {
   startWorker(): void;
   /** 进行中 → INTERRUPTED，并摘掉队列作业 */
   interrupt(taskId: string): Promise<void>;
-  /** 取消排队或删除中断任务 */
+  /** 取消排队或删除异常任务 */
   removeTask(taskId: string): Promise<void>;
-  /** 把 INTERRUPTED 任务重新入队为 PENDING，返回恢复数量 */
+  /** 把异常任务重新入队为 PENDING，返回恢复数量 */
   recoveryScan(): Promise<number>;
   /** 优雅关闭：等待进行中任务收尾、断开队列连接 */
   close(): Promise<void>;
@@ -74,17 +74,31 @@ export interface ActiveTaskView {
 
 export type TaskLane = 'running' | 'queued' | 'interrupted';
 
+export const EXCEPTION_LANE_STATUSES = ['INTERRUPTED', 'FAILED', 'PARTIAL'] as const;
+export const LISTED_TASK_STATUSES = ['PENDING', 'PROCESSING', ...EXCEPTION_LANE_STATUSES] as const;
+
 export interface ActiveTaskLanes {
   running: ActiveTaskView[];
   queued: ActiveTaskView[];
   interrupted: ActiveTaskView[];
 }
 
-/** 车道只看任务状态：排队一直排队，中断只来自 INTERRUPTED */
+/** 车道只看任务状态：排队一直排队；异常 = 尝试过但未成功 */
 export function classifyTaskLane(status: string): TaskLane {
   if (status === 'PROCESSING') return 'running';
-  if (status === 'INTERRUPTED') return 'interrupted';
+  if ((EXCEPTION_LANE_STATUSES as readonly string[]).includes(status)) return 'interrupted';
   return 'queued';
+}
+
+export function summarizeTaskOutcome(fileStatuses: string[]): {
+  status: TaskStatus;
+  success: number;
+  failure: number;
+} {
+  const success = fileStatuses.filter((s) => s === 'SUCCESS').length;
+  const failure = fileStatuses.filter((s) => s === 'FAILED').length;
+  const status: TaskStatus = failure === 0 ? 'SUCCESS' : success > 0 ? 'PARTIAL' : 'FAILED';
+  return { status, success, failure };
 }
 
 function inferType(taskId: string): 'upload' | 'rebuild' {
@@ -144,8 +158,6 @@ async function processTaskFiles(
       ),
     );
 
-  let success = 0;
-  let failure = 0;
   let idx = 0;
   async function worker() {
     while (true) {
@@ -161,7 +173,6 @@ async function processTaskFiles(
           .update(batchFileResults)
           .set({ status: 'FAILED', errorMessage: '暂存文件丢失，无法处理' })
           .where(eq(batchFileResults.id, result.id));
-        failure += 1;
         continue;
       }
       let outcome;
@@ -194,8 +205,6 @@ async function processTaskFiles(
           embeddingCount: outcome.vectorCount,
         })
         .where(eq(batchFileResults.id, result.id));
-      if (outcome.success) success += 1;
-      else failure += 1;
     }
   }
 
@@ -206,7 +215,11 @@ async function processTaskFiles(
     logger.info(`[batch] 任务 ${taskId} 已中断，跳过收尾`);
     return;
   }
-  const status: TaskStatus = failure === 0 ? 'SUCCESS' : success > 0 ? 'PARTIAL' : 'FAILED';
+  const finalResults = await db
+    .select({ status: batchFileResults.status })
+    .from(batchFileResults)
+    .where(eq(batchFileResults.taskId, taskId));
+  const { status, success, failure } = summarizeTaskOutcome(finalResults.map((r) => r.status));
   await db
     .update(batchTasks)
     .set({ status, successCount: success, failureCount: failure, completedAt: new Date(), updatedAt: new Date() })
@@ -333,7 +346,7 @@ export function createBatchService(
     const failed = results.filter((r) => r.status === 'FAILED').length;
     const total = results.length;
     const allDone = success + failed >= total;
-    const status = allDone ? (failed === 0 ? 'SUCCESS' : success > 0 ? 'PARTIAL' : 'FAILED') : 'PROCESSING';
+    const status = allDone ? summarizeTaskOutcome(results.map((r) => r.status)).status : 'PROCESSING';
     const updates: Partial<typeof batchTasks.$inferInsert> = {
       successCount: success,
       failureCount: failed,
@@ -389,7 +402,7 @@ export function createBatchService(
       const activeTasks = await db
         .select()
         .from(batchTasks)
-        .where(inArray(batchTasks.status, ['PENDING', 'PROCESSING', 'INTERRUPTED']))
+        .where(inArray(batchTasks.status, [...LISTED_TASK_STATUSES]))
         .orderBy(desc(batchTasks.createdAt));
       if (activeTasks.length === 0) return lanes;
       const taskIds = activeTasks.map((t) => t.taskId);
@@ -507,8 +520,8 @@ export function createBatchService(
     async removeTask(taskId) {
       const [task] = await db.select().from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
       if (!task) throw badRequest('批量任务不存在');
-      if (task.status !== 'PENDING' && task.status !== 'INTERRUPTED') {
-        throw badRequest('只能取消排队中或删除已中断的任务');
+      if (task.status !== 'PENDING' && !(EXCEPTION_LANE_STATUSES as readonly string[]).includes(task.status)) {
+        throw badRequest('只能取消排队中或删除异常任务');
       }
       await dropJobsForTask(taskId);
       await db.delete(batchFileResults).where(eq(batchFileResults.taskId, taskId));
@@ -517,8 +530,17 @@ export function createBatchService(
     },
 
     async recoveryScan() {
-      const interrupted = await db.select().from(batchTasks).where(eq(batchTasks.status, 'INTERRUPTED'));
-      for (const task of interrupted) {
+      const exceptionTasks = await db
+        .select()
+        .from(batchTasks)
+        .where(inArray(batchTasks.status, [...EXCEPTION_LANE_STATUSES]));
+      for (const task of exceptionTasks) {
+        await db
+          .update(batchFileResults)
+          .set({ status: 'PENDING', errorMessage: null, message: null })
+          .where(
+            and(eq(batchFileResults.taskId, task.taskId), inArray(batchFileResults.status, ['FAILED', 'PROCESSING'])),
+          );
         const pendingFiles = await db
           .select({ documentId: batchFileResults.documentId })
           .from(batchFileResults)
@@ -542,7 +564,7 @@ export function createBatchService(
           await enqueue(task.taskId);
         }
       }
-      return interrupted.length;
+      return exceptionTasks.length;
     },
 
     async close() {

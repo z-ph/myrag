@@ -55,9 +55,9 @@
 | `DELETE /documents/{id}`、`GET /documents/{id}/vectors` | — | ❌ | ❌ | ✅ | ✅ |
 | `/upload-sessions/**`（分片上传） | — | ❌ | ❌ | ✅ | ✅ |
 | `POST /documents/uploads/rebuild-all`（全量重建） | — | ❌ | ❌ | ❌ | ✅ |
-| `POST /documents/uploads/recovery`（仅恢复 INTERRUPTED） | — | ❌ | ❌ | ❌ | ✅ |
+| `POST /documents/uploads/recovery`（恢复异常任务：中断 / 失败 / 部分成功） | — | ❌ | ❌ | ❌ | ✅ |
 | `POST /documents/uploads/{taskId}/interrupt`（中断进行中任务） | — | ❌ | ❌ | ❌ | ✅ |
-| `DELETE /documents/uploads/{taskId}`（取消排队或删除中断任务） | — | ❌ | ❌ | ❌ | ✅ |
+| `DELETE /documents/uploads/{taskId}`（取消排队或删除异常任务） | — | ❌ | ❌ | ❌ | ✅ |
 | `/admin/users/**`（RBAC 用户管理） | — | ❌ | ❌ | ❌ | ✅ |
 | `/admin/settings/**`（运行时设置） | — | ❌ | ❌ | ❌ | ✅ |
 | `/admin/prompts/**`（提示词管理，含版本历史/重置） | — | ❌ | ❌ | ❌ | ✅ |
