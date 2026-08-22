@@ -35,10 +35,14 @@
 - 进度条测的是分片字节（`i / totalChunks`），状态测的是另一条异步入库链。两条链没有对在一起的测试。
 - 状态匹配把 `taskId` 和 `documentId` 写在同一个 `===` 里。这种错在单测里一眼能红，但匹配逻辑当初内嵌在 JSX，没有可测缝。
 
-## 修复
+## 产品口径（已改）
 
-- 每个文件记住自己的 `taskId`，轮询全部任务。
-- 按 `taskId` 取该文件结果；单文件任务可回退到 `results[0]`。
-- 总进度对全部任务的 `successCount + failureCount` / `totalFiles` 求和。
+上传页只负责上传进度。入库状态不在这个抽屉里画。
 
-实现：`apps/web/src/pages/uploadTaskProgress.ts`。回归：`apps/web/tests/uploadTaskProgress.test.ts`。
+- 单文件条：分片上传 0–100%，完成后停在 100%。
+- 总条：各文件上传百分比的平均；文案是「上传中 x / n」或「上传完成」。
+- 不轮询任务、不出现「等待处理 / 处理中 / 已入库」。
+- 入库仍由后台任务跑，文档库列表看状态。
+
+实现：`apps/web/src/pages/uploadTaskProgress.ts` 的 `aggregateUploadProgress`。
+回归：`apps/web/tests/uploadTaskProgress.test.ts`。

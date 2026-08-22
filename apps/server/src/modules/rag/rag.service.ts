@@ -1,4 +1,4 @@
-import { createAgent, tool } from 'langchain';
+import { createAgent, modelCallLimitMiddleware, tool, toolCallLimitMiddleware } from 'langchain';
 import * as z from 'zod';
 import type {
   ServerConfig,
@@ -91,6 +91,11 @@ export const TOOL_LABELS: Record<string, string> = {
   [LIST_CHUNKS_TOOL_NAME]: '查看块目录',
   [READ_DOCUMENT_TOOL_NAME]: '阅读文档正文',
 };
+
+/** createAgent 底层图默认 25 超步。中间件节点会计步，须明显高于 2×工具轮次。 */
+export const QA_AGENT_RECURSION_LIMIT = 80;
+/** 单轮问答允许的工具调用次数。到顶后拦截，让模型基于已有资料作答。 */
+export const QA_AGENT_TOOL_RUN_LIMIT = 10;
 
 export function createRagService(
   llm: LlmClient,
@@ -299,6 +304,10 @@ export function createRagService(
       model: llm.chatModel,
       tools,
       systemPrompt,
+      middleware: [
+        toolCallLimitMiddleware({ runLimit: QA_AGENT_TOOL_RUN_LIMIT, exitBehavior: 'continue' }),
+        modelCallLimitMiddleware({ runLimit: QA_AGENT_TOOL_RUN_LIMIT + 3, exitBehavior: 'end' }),
+      ],
     });
 
     // 组装用户消息：历史回顾 + 图片理解（如有）+ 当前问题
@@ -312,41 +321,55 @@ export function createRagService(
 
     const stream = await agent.streamEvents(
       { messages: [{ role: 'user', content: userContent }] },
-      { version: 'v3', signal },
+      { version: 'v3', signal, recursionLimit: QA_AGENT_RECURSION_LIMIT },
     );
 
     let reasoning = '';
     let answer = '';
     const toolCalls: ToolCallRecord[] = [];
 
-    await Promise.all([
-      (async () => {
-        for await (const m of stream.messages) {
-          for await (const d of m.reasoning) {
-            reasoning += d;
-            handlers.onReasoningDelta(d);
-          }
-          for await (const d of m.text) {
-            if (d) {
-              answer += d;
-              handlers.onDelta(d);
+    try {
+      await Promise.all([
+        (async () => {
+          for await (const m of stream.messages) {
+            for await (const d of m.reasoning) {
+              reasoning += d;
+              handlers.onReasoningDelta(d);
+            }
+            for await (const d of m.text) {
+              if (d) {
+                answer += d;
+                handlers.onDelta(d);
+              }
             }
           }
-        }
-      })(),
-      (async () => {
-        for await (const c of stream.toolCalls) {
-          const id = c.callId;
-          const name = c.name;
-          const args = (c.input ?? {}) as Record<string, unknown>;
-          handlers.onToolCall({ id, name, args });
-          const out = await c.output;
-          const output = typeof out === 'string' ? out : JSON.stringify(out);
-          handlers.onToolResult({ id, name, output });
-          toolCalls.push({ id, name, args, output });
-        }
-      })(),
-    ]);
+        })(),
+        (async () => {
+          for await (const c of stream.toolCalls) {
+            const id = c.callId;
+            const name = c.name;
+            const args = (c.input ?? {}) as Record<string, unknown>;
+            handlers.onToolCall({ id, name, args });
+            const out = await c.output;
+            const output = typeof out === 'string' ? out : JSON.stringify(out);
+            handlers.onToolResult({ id, name, output });
+            toolCalls.push({ id, name, args, output });
+          }
+        })(),
+      ]);
+    } catch (err) {
+      if (
+        !(err instanceof Error) ||
+        (err.name !== 'GraphRecursionError' && !/recursion limit of \d+ reached/i.test(err.message))
+      ) {
+        throw err;
+      }
+      logger.warn('[rag] agent 达到递归上限', { toolCalls: toolCalls.length, answerChars: answer.length });
+      if (!answer.trim()) {
+        answer = '本轮检索步骤过多，已停止。请缩小问题范围后重试。';
+        handlers.onDelta(answer);
+      }
+    }
 
     return {
       answer: answer.trim(),
