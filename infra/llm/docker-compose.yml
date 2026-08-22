@@ -1,4 +1,4 @@
-name: infra-llm
+name: cwc-infra-llm
 
 services:
   vllm-chat:
@@ -142,4 +142,4 @@ services:
 
 networks:
   default:
-    name: infra_llm
+    name: cwc-infra_llm

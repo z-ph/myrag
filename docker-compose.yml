@@ -73,7 +73,7 @@ networks:
     name: cwc-infra_default
     external: true
   llm:
-    name: infra_llm
+    name: cwc-infra_llm
     external: true
 
 volumes:
