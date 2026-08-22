@@ -70,7 +70,7 @@ services:
 
 networks:
   data:
-    name: infra_default
+    name: cwc-infra_default
     external: true
   llm:
     name: infra_llm

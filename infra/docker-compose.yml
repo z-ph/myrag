@@ -1,4 +1,4 @@
-name: infra
+name: cwc-infra
 
 services:
   postgres:
@@ -74,7 +74,7 @@ services:
 
 networks:
   default:
-    name: infra_default
+    name: cwc-infra_default
 
 volumes:
   postgres-data:
