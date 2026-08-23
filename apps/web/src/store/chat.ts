@@ -14,6 +14,8 @@ export interface ChatMessage {
   /** agent 工具调用轨迹（按发生顺序） */
   toolCalls?: ToolStep[];
   imageUrl?: string;
+  /** 本轮生成开始时间（用于「正在回答…」的经过时间） */
+  startedAt?: number;
 }
 
 /** 一次工具调用（含执行结果） */
@@ -24,6 +26,11 @@ export interface ToolStep {
   args: Record<string, unknown>;
   output?: string;
   status: 'running' | 'done';
+  /**
+   * 该工具调用发生时回答正文的累计长度。
+   * 用于把正文按发生顺序与工具调用穿插渲染（工具调用前的叙述性文字留在工具调用之前）。
+   */
+  atOffset?: number;
 }
 
 /** 工具名 → 展示文案 */
@@ -186,6 +193,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         content: '',
         reasoning: '',
         status: 'GENERATING',
+        startedAt: Date.now(),
       };
       set((s) => ({ messages: [...s.messages, userMsg, aiMsg], isGenerating: true }));
 
@@ -241,6 +249,10 @@ export const useChatStore = create<ChatState>((set, get) => {
               if (rafId == null) rafId = requestAnimationFrame(flushDeltas);
             },
             onToolCall(call) {
+              // 工具调用发生时正文的累计长度（含尚未 flush 的 delta 缓冲）：
+              // flush 只按顺序追加 contentBuf，故 offset = 已落库正文 + 缓冲。
+              const pendingLen = contentBuf.length;
+              const curLen = get().messages.find((m) => m.id === aiMsg.id)?.content.length ?? 0;
               set((s) => ({
                 messages: s.messages.map((m) =>
                   m.id === aiMsg.id
@@ -248,7 +260,14 @@ export const useChatStore = create<ChatState>((set, get) => {
                         ...m,
                         toolCalls: [
                           ...(m.toolCalls ?? []),
-                          { id: call.id, name: call.name, label: toolLabel(call.name), args: call.args, status: 'running' as const },
+                          {
+                            id: call.id,
+                            name: call.name,
+                            label: toolLabel(call.name),
+                            args: call.args,
+                            status: 'running' as const,
+                            atOffset: curLen + pendingLen,
+                          },
                         ],
                       }
                     : m,

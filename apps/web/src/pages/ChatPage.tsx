@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Switch, Tooltip } from 'antd';
 import {
+  BarsOutlined,
+  BookOutlined,
   CheckOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -8,10 +10,14 @@ import {
   FileImageOutlined,
   FileTextOutlined,
   HistoryOutlined,
+  LoadingOutlined,
   PlusOutlined,
   RobotOutlined,
+  SearchOutlined,
   SendOutlined,
   StopOutlined,
+  ToolOutlined,
+  UnorderedListOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 
@@ -163,17 +169,55 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
 function ReasoningBlock({ reasoning, generating }: { reasoning: string; generating: boolean }) {
   const [open, setOpen] = useState(false);
   if (!reasoning.trim()) return null;
+  const live = generating && reasoning.trim().length > 0;
   return (
-    <div className="thinking">
-      <button type="button" className="thinking-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className={`thinking-dot ${generating ? 'busy' : ''}`} />
-        <span className="thinking-label">思考过程</span>
-        {!open && <span className="thinking-preview">{reasoning.replace(/\s+/g, ' ').slice(0, 80)}…</span>}
-        <span className={`thinking-arrow ${open ? 'open' : ''}`}>▾</span>
+    <div className={`think-row${live ? ' is-live' : ''}`}>
+      <button type="button" className="think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="think-icon">{live ? <span className="think-spinner" /> : <span className="think-star">✦</span>}</span>
+        <span className="think-label">思考过程</span>
+        {!open && <span className="think-preview">{reasoning.replace(/\s+/g, ' ').slice(0, 70)}</span>}
+        <span className="think-chevron">{open ? '▾' : '▸'}</span>
       </button>
-      {open && <div className="thinking-text">{reasoning}</div>}
+      {open && <div className="think-body">{reasoning}</div>}
     </div>
   );
+}
+
+/** 工具名 → 图标（DSH 风格：每个工具一个轻量图标） */
+function ToolGlyphIcon({ name }: { name: string }) {
+  switch (name) {
+    case 'search_knowledge_base':
+      return <SearchOutlined />;
+    case 'list_documents':
+      return <UnorderedListOutlined />;
+    case 'get_document':
+      return <FileTextOutlined />;
+    case 'list_chunks':
+      return <BarsOutlined />;
+    case 'read_document':
+      return <BookOutlined />;
+    default:
+      return <ToolOutlined />;
+  }
+}
+
+/** 工具行摘要：优先显示检索/读取的 query，否则按输出类型取合理摘要 */
+function toolPreview(tc: ToolStep): string {
+  if (typeof tc.args?.query === 'string' && tc.args.query.trim()) return tc.args.query.trim();
+  const out = (tc.output ?? '').replace(/\s+/g, ' ').trim();
+  if (!out) return '';
+  // JSON 数组（如 list_documents）只显示条数，避免工具行摘要是一坨 JSON
+  try {
+    const parsed = JSON.parse(out) as unknown;
+    if (Array.isArray(parsed)) return `共 ${parsed.length} 条结果`;
+    if (parsed && typeof parsed === 'object') {
+      const keys = Object.keys(parsed as Record<string, unknown>);
+      if (keys.length > 0) return keys.slice(0, 4).join('、');
+    }
+  } catch {
+    // 纯文本输出：取首段摘要
+  }
+  return out.slice(0, 90);
 }
 
 /** 友好渲染工具返回：把 JSON / 分块文本转成人话摘要 */
@@ -221,50 +265,80 @@ function renderToolOutput(name: string, output: string): React.ReactNode {
   return <pre className="tool-output-json">{JSON.stringify(parsed, null, 2)}</pre>;
 }
 
-function ToolSteps({ steps, devMode }: { steps: ToolStep[]; devMode: boolean }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  if (steps.length === 0) return null;
+/** 单条工具调用：DSH 风格行（图标 + 名称 + 单行摘要，点击展开结果） */
+function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
+  const [open, setOpen] = useState(false);
+  const running = tc.status === 'running';
+  const done = tc.status === 'done';
+  const preview = useMemo(() => toolPreview(tc), [tc]);
   return (
-    <div className="tool-trail">
-      {steps.map((tc) => {
-        const running = tc.status === 'running';
-        const hasResult = tc.status === 'done' && tc.output != null;
-        const open = openId === tc.id;
-        return (
-          <div key={tc.id} className="tool-line">
-            <div className="tool-line-main">
-              <span className={`tool-glyph ${running ? 'running' : 'done'}`}>{running ? '⟳' : '✓'}</span>
-              <span className="tool-name">{tc.label}</span>
-              {typeof tc.args?.query === 'string' && <span className="tool-query">「{tc.args.query}」</span>}
-              {hasResult && (
-                <button type="button" className="tool-expand" onClick={() => setOpenId(open ? null : tc.id)}>
-                  {open ? '收起' : '查看结果'}
-                </button>
-              )}
-            </div>
-            {open && hasResult && (
-              <div className="tool-output">
-                {devMode ? (
-                  <>
-                    <div className="tool-output-section">
-                      <span className="tool-output-section-label">输入</span>
-                      <pre className="tool-output-raw">{JSON.stringify(tc.args, null, 2)}</pre>
-                    </div>
-                    <div className="tool-output-section">
-                      <span className="tool-output-section-label">输出</span>
-                      <pre className="tool-output-raw">{tc.output}</pre>
-                    </div>
-                  </>
-                ) : (
-                  renderToolOutput(tc.name, tc.output!)
-                )}
+    <div className={`tool-row${running ? ' is-running' : ' is-done'}`}>
+      <button
+        type="button"
+        className="tool-row-head"
+        onClick={() => {
+          if (!running) setOpen((v) => !v);
+        }}
+        aria-expanded={open}
+        title={preview}
+      >
+        <span className="tool-row-icon">
+          {running ? <LoadingOutlined spin /> : <ToolGlyphIcon name={tc.name} />}
+        </span>
+        <span className="tool-row-name">{tc.label}</span>
+        {preview && <span className="tool-row-preview">{preview}</span>}
+        {done && <span className={`tool-row-chevron${open ? ' open' : ''}`}>▸</span>}
+      </button>
+      {open && done && (
+        <div className="tool-output">
+          {devMode ? (
+            <>
+              <div className="tool-output-section">
+                <span className="tool-output-section-label">输入</span>
+                <pre className="tool-output-raw">{JSON.stringify(tc.args, null, 2)}</pre>
               </div>
-            )}
-          </div>
-        );
-      })}
+              <div className="tool-output-section">
+                <span className="tool-output-section-label">输出</span>
+                <pre className="tool-output-raw">{tc.output}</pre>
+              </div>
+            </>
+          ) : (
+            renderToolOutput(tc.name, tc.output!)
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+type FlowSeg =
+  | { type: 'text'; text: string; final: boolean }
+  | { type: 'tool'; tool: ToolStep };
+
+/**
+ * 把正文与工具调用按发生顺序穿插成渲染片段：
+ * 工具调用之前的叙述性文字（如「我先检索一下」）留在工具调用之前，不再并入最终回答。
+ * 历史消息无 atOffset 时回退为「工具轨迹在前、正文在后」。
+ */
+function buildSegments(content: string, steps: ToolStep[]): FlowSeg[] {
+  if (steps.length === 0) return [{ type: 'text', text: content, final: true }];
+  if (!steps.every((s) => typeof s.atOffset === 'number')) {
+    return [
+      ...steps.map((t) => ({ type: 'tool' as const, tool: t })),
+      { type: 'text', text: content, final: true },
+    ];
+  }
+  const segs: FlowSeg[] = [];
+  let last = 0;
+  for (const s of steps) {
+    const off = Math.min(Math.max(s.atOffset ?? 0, last), content.length);
+    if (off > last) segs.push({ type: 'text', text: content.slice(last, off), final: false });
+    segs.push({ type: 'tool', tool: s });
+    last = off;
+  }
+  if (content.length > last) segs.push({ type: 'text', text: content.slice(last), final: true });
+  else segs.push({ type: 'text', text: '', final: true });
+  return segs;
 }
 
 /** 流式中按行渲染：完整行走 Markdown（memo 化，仅新行完成时重解析），未完成行用纯文本 */
@@ -279,8 +353,76 @@ function StreamingMarkdown({ content }: { content: string }) {
   return (
     <>
       {completeMd}
-      {partial ? <div className="answer-streaming-line">{partial}</div> : null}
+      <div className="answer-streaming-line">
+        {partial}
+        <span className="stream-caret" />
+      </div>
     </>
+  );
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** 正在回答：跳动圆点 + 状态文案 + 经过时间（DSH「Deep diving… · 3m 04s」式） */
+function LiveRow({ startedAt, streaming, toolRunning }: { startedAt?: number; streaming: boolean; toolRunning: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  const label = toolRunning ? '正在检索知识库…' : streaming ? '正在生成回答…' : '正在思考…';
+  return (
+    <div className="live-row" role="status" aria-live="polite">
+      <span className="live-dots"><i /><i /><i /></span>
+      <span className="live-label">{label}</span>
+      {startedAt != null && <span className="live-time">{formatElapsed(now - startedAt)}</span>}
+    </div>
+  );
+}
+
+/** 助手内容流：思考行 + 正文/工具按序穿插 + 生成中状态行 + 完成后操作区 */
+function AgentFlow({ msg, devMode }: { msg: ChatMessage; devMode: boolean }) {
+  const generating = msg.status === 'GENERATING';
+  const steps = msg.toolCalls ?? [];
+  const segments = useMemo(() => buildSegments(msg.content, steps), [msg.content, steps]);
+  const toolRunning = steps.some((s) => s.status === 'running');
+  const lastSeg: FlowSeg | undefined = segments[segments.length - 1];
+  const streamingText =
+    generating && lastSeg?.type === 'text' && lastSeg.text.trim().length > 0;
+  return (
+    <div className={`agent-flow${generating ? ' is-live' : ''}`}>
+      <ReasoningBlock reasoning={msg.reasoning ?? ''} generating={generating} />
+      {segments.map((seg, i) => {
+        if (seg.type === 'tool') return <ToolRow key={seg.tool.id} tc={seg.tool} devMode={devMode} />;
+        if (seg.final) {
+          return (
+            <div
+              key={i}
+              className={`answer ${msg.status === 'ERROR' ? 'answer-error' : ''} ${msg.status === 'CANCELLED' ? 'answer-cancelled' : ''}`}
+            >
+              {seg.text ? (
+                generating ? (
+                  <StreamingMarkdown content={seg.text} />
+                ) : (
+                  <Markdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(seg.text)}</Markdown>
+                )
+              ) : null}
+            </div>
+          );
+        }
+        if (!seg.text.trim()) return null;
+        return (
+          <div key={i} className="md-block flow-interim">
+            <Markdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(seg.text)}</Markdown>
+          </div>
+        );
+      })}
+      {generating && <LiveRow startedAt={msg.startedAt} streaming={streamingText} toolRunning={toolRunning} />}
+    </div>
   );
 }
 
@@ -351,25 +493,15 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
     );
   }
   const followUps = msg.status === 'COMPLETED' ? buildFollowUpQuestions(msg.content, msg.sources ?? []) : [];
+  const finished = msg.status !== 'GENERATING';
   return (
     <div className="msg-row msg-assistant">
       <Avatar icon={<RobotOutlined />} className="msg-avatar" />
       <div className="msg-body">
-        <ReasoningBlock reasoning={msg.reasoning ?? ''} generating={msg.status === 'GENERATING'} />
-        <ToolSteps steps={msg.toolCalls ?? []} devMode={devMode} />
-        <div className={`answer ${msg.status === 'ERROR' ? 'answer-error' : ''} ${msg.status === 'CANCELLED' ? 'answer-cancelled' : ''}`}>
-          {msg.content ? (
-            msg.status === 'GENERATING' ? (
-              <StreamingMarkdown content={msg.content} />
-            ) : (
-              <Markdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(msg.content)}</Markdown>
-            )
-          ) : (
-            msg.status === 'GENERATING' && <span className="answer-typing">正在思考…</span>
-          )}
-        </div>
-        {shouldShowAssistantCopy(msg.status, msg.content) && <MessageCopyButton text={msg.content} />}
-        {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} onPreview={onPreview} />}
+        <AgentFlow msg={msg} devMode={devMode} />
+        {/* 来源与复制、追问同时出现：只在回答完成后展示 */}
+        {finished && shouldShowAssistantCopy(msg.status, msg.content) && <MessageCopyButton text={msg.content} />}
+        {finished && msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} onPreview={onPreview} />}
         <FollowUpChips questions={followUps} onAsk={onAsk} />
       </div>
     </div>
