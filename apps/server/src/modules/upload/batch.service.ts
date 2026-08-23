@@ -26,8 +26,8 @@ export interface BatchService {
   interrupt(taskId: string): Promise<void>;
   /** 取消排队或删除异常任务 */
   removeTask(taskId: string): Promise<void>;
-  /** 把异常任务重新入队为 PENDING，返回恢复数量 */
-  recoveryScan(): Promise<number>;
+  /** 按 taskId 把异常任务重新入队为 PENDING */
+  recoverTasks(taskIds: string[]): Promise<string[]>;
   /** 优雅关闭：等待进行中任务收尾、断开队列连接 */
   close(): Promise<void>;
 }
@@ -68,6 +68,7 @@ export interface ActiveTaskView {
   total: number;
   completed: number;
   failed: number;
+  failRounds: number;
   files: ActiveTaskFileView[];
   createdAt: string;
 }
@@ -76,6 +77,26 @@ export type TaskLane = 'running' | 'queued' | 'interrupted';
 
 export const EXCEPTION_LANE_STATUSES = ['INTERRUPTED', 'FAILED', 'PARTIAL'] as const;
 export const LISTED_TASK_STATUSES = ['PENDING', 'PROCESSING', ...EXCEPTION_LANE_STATUSES] as const;
+
+export function resolveRecoverableTaskIds(
+  requestedIds: string[],
+  existing: { taskId: string; status: string }[],
+): string[] {
+  const unique = [...new Set(requestedIds)];
+  if (unique.length === 0) throw badRequest('至少选择一个任务');
+  const byId = new Map(existing.map((task) => [task.taskId, task]));
+  for (const id of unique) {
+    const task = byId.get(id);
+    if (!task || !(EXCEPTION_LANE_STATUSES as readonly string[]).includes(task.status)) {
+      throw badRequest('只能恢复异常任务');
+    }
+  }
+  return unique;
+}
+
+export function nextFailRounds(current: number, nextStatus: string): number {
+  return nextStatus === 'FAILED' || nextStatus === 'PARTIAL' ? current + 1 : current;
+}
 
 export interface ActiveTaskLanes {
   running: ActiveTaskView[];
@@ -127,6 +148,7 @@ function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batch
     total: row.totalFiles,
     completed: row.successCount,
     failed: row.failureCount,
+    failRounds: row.failRounds,
     files: results.map((r) => ({
       name: r.filename,
       status: fileStatusMap[r.status] ?? 'pending',
@@ -222,7 +244,14 @@ async function processTaskFiles(
   const { status, success, failure } = summarizeTaskOutcome(finalResults.map((r) => r.status));
   await db
     .update(batchTasks)
-    .set({ status, successCount: success, failureCount: failure, completedAt: new Date(), updatedAt: new Date() })
+    .set({
+      status,
+      successCount: success,
+      failureCount: failure,
+      failRounds: nextFailRounds(task.failRounds, status),
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
   logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failure})`);
 }
@@ -336,7 +365,11 @@ export function createBatchService(
 
   /** 单文件处理完后，汇总 batchFileResults 更新 batchTasks 进度 */
   async function finalizeBatchTask(taskId: string): Promise<void> {
-    const [current] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+    const [current] = await db
+      .select({ status: batchTasks.status, failRounds: batchTasks.failRounds })
+      .from(batchTasks)
+      .where(eq(batchTasks.taskId, taskId))
+      .limit(1);
     if (!current || current.status === 'INTERRUPTED') return;
     const results = await db
       .select({ status: batchFileResults.status })
@@ -351,6 +384,7 @@ export function createBatchService(
       successCount: success,
       failureCount: failed,
       status,
+      failRounds: nextFailRounds(current.failRounds, status),
       updatedAt: new Date(),
     };
     if (allDone) updates.completedAt = new Date();
@@ -529,12 +563,17 @@ export function createBatchService(
       await rm(join(cfg.dataDir, 'batch', taskId), { recursive: true, force: true }).catch(() => undefined);
     },
 
-    async recoveryScan() {
-      const exceptionTasks = await db
-        .select()
-        .from(batchTasks)
-        .where(inArray(batchTasks.status, [...EXCEPTION_LANE_STATUSES]));
-      for (const task of exceptionTasks) {
+    async recoverTasks(taskIds) {
+      const unique = [...new Set(taskIds)];
+      const rows =
+        unique.length === 0
+          ? []
+          : await db.select().from(batchTasks).where(inArray(batchTasks.taskId, unique));
+      const recoverable = resolveRecoverableTaskIds(unique, rows);
+      const byId = new Map(rows.map((task) => [task.taskId, task]));
+      for (const taskId of recoverable) {
+        const task = byId.get(taskId);
+        if (!task) continue;
         await db
           .update(batchFileResults)
           .set({ status: 'PENDING', errorMessage: null, message: null })
@@ -550,8 +589,8 @@ export function createBatchService(
           .update(batchTasks)
           .set({ status: 'PENDING', updatedAt: new Date(), completedAt: null })
           .where(eq(batchTasks.taskId, task.taskId));
+        await dropJobsForTask(task.taskId);
         if (task.taskId.startsWith('rebuild-')) {
-          await dropJobsForTask(task.taskId);
           if (docIds.length > 0) {
             await db
               .update(documents)
@@ -560,11 +599,10 @@ export function createBatchService(
           }
           await enqueueRebuild(task.taskId, docIds);
         } else {
-          await dropJobsForTask(task.taskId);
           await enqueue(task.taskId);
         }
       }
-      return exceptionTasks.length;
+      return recoverable;
     },
 
     async close() {

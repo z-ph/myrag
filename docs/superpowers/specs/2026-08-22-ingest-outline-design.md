@@ -191,7 +191,7 @@ chunk 1 · 第二条 报销标准 — 列出交通住宿伙食补贴上限
 
 目录分析失败与解析失败、向量失败相同：文档 `FAILED`，批任务进异常车道。超级管理员只做「恢复」或「删除」。
 
-恢复走现有 `POST /documents/uploads/recovery`（`recoveryScan`）。单文件走现有 `POST /documents/{documentId}/rebuild`。全量重建走现有 `rebuild-all`。三种都会重跑第 3 步。
+恢复走 `POST /documents/uploads/recoveries`（`recoverTasks`，按 `taskIds`）。单文件走现有 `POST /documents/{documentId}/rebuild`。全量重建走现有 `rebuild-all`。三种都会重跑第 3 步。
 
 旧 `SUCCESS` 且 `toc` 为 `null`：检索与 `read_document` 可用；`list_chunks` 返回「无目录，需重建」。补目录的唯一办法是重建。
 

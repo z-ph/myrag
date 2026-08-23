@@ -12,7 +12,6 @@ import type {
   DocumentVectorDetail,
   LoginRequest,
   LoginResponse,
-  RecoveryTriggerResponse,
   RuntimeSettings,
   ToolCallSse,
   ToolResultSse,
@@ -99,8 +98,8 @@ export const documentsApi = {
     unwrap(rpc.documents.uploads.active.$get({}, { headers: authHeaders() })),
   rebuildDocument: (documentId: string) =>
     unwrap(rpc.documents[':documentId'].rebuild.$post({ param: { documentId } }, { headers: authHeaders() })),
-  recoveryTrigger: () =>
-    unwrap(rpc.documents.uploads.recovery.$post({}, { headers: authHeaders() })),
+  recoverTasks: (taskIds: string[]) =>
+    unwrap(rpc.documents.uploads.recoveries.$post({ json: { taskIds } }, { headers: authHeaders() })),
   interruptTask: (taskId: string) =>
     unwrap(rpc.documents.uploads[':taskId'].interrupt.$post({ param: { taskId } }, { headers: authHeaders() })),
   removeTask: (taskId: string) =>

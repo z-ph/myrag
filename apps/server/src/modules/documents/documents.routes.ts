@@ -5,7 +5,8 @@ import {
   documentDeleteResponseSchema,
   documentListResponseSchema,
   documentVectorDetailSchema,
-  recoveryTriggerResponseSchema,
+  recoverTasksRequestSchema,
+  recoverTasksResponseSchema,
   rebuildAllResponseSchema,
 } from '@myrag/shared';
 import type { AppDeps } from '../../app-deps';
@@ -24,6 +25,7 @@ const activeTaskViewSchema = z.object({
   total: z.number(),
   completed: z.number(),
   failed: z.number(),
+  failRounds: z.number(),
   files: z.array(
     z.object({
       name: z.string(),
@@ -197,21 +199,25 @@ export function createDocumentsRoutes(deps: AppDeps) {
       .openapi(
         createRoute({
           method: 'post',
-          path: '/uploads/recovery',
-          description: '恢复全部异常任务（中断、失败、部分成功，仅管理员）',
+          path: '/uploads/recoveries',
+          description: '按 taskIds 恢复异常任务（中断、失败、部分成功，仅管理员）',
           security: bearerSecurity,
           middleware: [requireSuperAdmin],
+          request: {
+            body: { content: { 'application/json': { schema: recoverTasksRequestSchema } } },
+          },
           responses: {
             200: {
-              description: '触发结果',
-              content: { 'application/json': { schema: recoveryTriggerResponseSchema } },
+              description: '已入队的任务',
+              content: { 'application/json': { schema: recoverTasksResponseSchema } },
             },
             ...errorResponses,
           },
         }),
         async (c) => {
-          const triggeredTaskCount = await batchService.recoveryScan();
-          return c.json({ triggeredTaskCount });
+          const { taskIds } = c.req.valid('json');
+          const recoveredTaskIds = await batchService.recoverTasks(taskIds);
+          return c.json({ recoveredTaskIds });
         },
       )
 

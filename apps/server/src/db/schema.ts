@@ -118,6 +118,7 @@ export const batchTasks = pgTable(
     totalFiles: integer('total_files').notNull().default(0),
     successCount: integer('success_count').notNull().default(0),
     failureCount: integer('failure_count').notNull().default(0),
+    failRounds: integer('fail_rounds').notNull().default(0),
     errorMessage: text('error_message'),
     takenOver: boolean('taken_over').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),

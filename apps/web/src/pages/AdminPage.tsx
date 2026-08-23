@@ -3,6 +3,7 @@ import {
   App,
   Button,
   Card,
+  Checkbox,
   Col,
   Drawer,
   Empty,
@@ -311,6 +312,7 @@ type LaneTask = {
   total: number;
   completed: number;
   failed: number;
+  failRounds: number;
   files: { name: string; status: string; message: string }[];
   createdAt: string;
 };
@@ -319,10 +321,16 @@ function TaskLaneList({
   tasks,
   empty,
   action,
+  selectable,
+  selected,
+  onToggle,
 }: {
   tasks: LaneTask[];
   empty: string;
   action?: (task: LaneTask) => ReactNode;
+  selectable?: boolean;
+  selected?: string[];
+  onToggle?: (taskId: string, checked: boolean) => void;
 }) {
   if (tasks.length === 0) {
     return <Empty description={empty} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
@@ -337,13 +345,22 @@ function TaskLaneList({
           <div key={task.taskId} className="task-lane-item">
             <div className="task-lane-item-head">
               <Space size={6}>
+                {selectable ? (
+                  <Checkbox
+                    checked={selected?.includes(task.taskId)}
+                    onChange={(e) => onToggle?.(task.taskId, e.target.checked)}
+                  />
+                ) : null}
                 <Tag color={task.type === 'rebuild' ? 'purple' : 'blue'}>
                   {task.type === 'rebuild' ? '全量重建' : '上传'}
                 </Tag>
                 <span>{task.total} 个文件</span>
               </Space>
-              <Tag color={s.color}>{s.text}</Tag>
-              {action?.(task)}
+              <Space size={4}>
+                {task.failRounds > 0 ? <Tag color="error">失败 {task.failRounds} 次</Tag> : null}
+                <Tag color={s.color}>{s.text}</Tag>
+                {action?.(task)}
+              </Space>
             </div>
             <Progress
               percent={percent}
@@ -379,16 +396,18 @@ function TaskLanes() {
     },
   });
 
-  const recoveryMutation = useMutation({
-    mutationFn: () => documentsApi.recoveryTrigger(),
-    onSuccess: (r) => {
-      message.success(r.triggeredTaskCount > 0 ? `已触发 ${r.triggeredTaskCount} 个异常任务恢复` : '没有可恢复的异常任务');
-      setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] }), 1000);
+  const [selected, setSelected] = useState<string[]>([]);
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] });
+
+  const recoverMutation = useMutation({
+    mutationFn: (taskIds: string[]) => documentsApi.recoverTasks(taskIds),
+    onSuccess: (r, taskIds) => {
+      message.success(`已恢复 ${r.recoveredTaskIds.length} 个任务`);
+      setSelected((ids) => ids.filter((id) => !taskIds.includes(id)));
+      invalidate();
     },
     onError: (err: Error) => message.error(err.message),
   });
-
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] });
   const interruptMutation = useMutation({
     mutationFn: (taskId: string) => documentsApi.interruptTask(taskId),
     onSuccess: () => {
@@ -399,17 +418,18 @@ function TaskLanes() {
   });
   const removeMutation = useMutation({
     mutationFn: (taskId: string) => documentsApi.removeTask(taskId),
-    onSuccess: () => {
+    onSuccess: (_data, taskId) => {
       message.success('已删除');
+      setSelected((ids) => ids.filter((id) => id !== taskId));
       invalidate();
     },
     onError: (err: Error) => message.error(err.message),
   });
 
-
   const running = data?.running ?? [];
   const queued = data?.queued ?? [];
   const interrupted = data?.interrupted ?? [];
+  const visibleSelected = selected.filter((id) => interrupted.some((task) => task.taskId === id));
 
   return (
     <div className="task-lanes">
@@ -444,25 +464,49 @@ function TaskLanes() {
         title={`异常 ${isLoading ? '' : interrupted.length}`}
         loading={isLoading}
         extra={
-          <Button
-            size="small"
-            icon={<ReloadOutlined />}
-            loading={recoveryMutation.isPending}
-            onClick={() => recoveryMutation.mutate()}
-          >
-            恢复
-          </Button>
+          visibleSelected.length > 0 ? (
+            <Space size={8}>
+              <span>已选 {visibleSelected.length} 个</span>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={recoverMutation.isPending}
+                onClick={() => recoverMutation.mutate(visibleSelected)}
+              >
+                恢复所选
+              </Button>
+              <Button size="small" type="link" onClick={() => setSelected([])}>
+                取消选择
+              </Button>
+            </Space>
+          ) : null
         }
       >
         <TaskLaneList
           tasks={interrupted}
           empty="没有异常任务"
+          selectable
+          selected={visibleSelected}
+          onToggle={(taskId, checked) => {
+            setSelected((ids) => (checked ? [...ids, taskId] : ids.filter((id) => id !== taskId)));
+          }}
           action={(task) => (
-            <Popconfirm title="删除该异常任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
-              <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
-                删除
+            <Space size={0}>
+              <Button
+                size="small"
+                type="link"
+                icon={<ReloadOutlined />}
+                loading={recoverMutation.isPending}
+                onClick={() => recoverMutation.mutate([task.taskId])}
+              >
+                恢复
               </Button>
-            </Popconfirm>
+              <Popconfirm title="删除该异常任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
+                <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
+                  删除
+                </Button>
+              </Popconfirm>
+            </Space>
           )}
         />
       </Card>

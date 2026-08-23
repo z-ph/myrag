@@ -131,8 +131,12 @@ export const documentVectorDetailSchema = z.object({
   points: z.array(vectorPointItemSchema),
 });
 
-export const recoveryTriggerResponseSchema = z.object({
-  triggeredTaskCount: z.number(),
+export const recoverTasksRequestSchema = z.object({
+  taskIds: z.array(z.string().min(1).max(64)).min(1),
+});
+
+export const recoverTasksResponseSchema = z.object({
+  recoveredTaskIds: z.array(z.string()),
 });
 
 export const rebuildAllResponseSchema = z.object({
@@ -283,7 +287,8 @@ export type DocumentListItem = z.infer<typeof documentListItemSchema>;
 export type DocumentListResponse = z.infer<typeof documentListResponseSchema>;
 export type DocumentDeleteResponse = z.infer<typeof documentDeleteResponseSchema>;
 export type DocumentVectorDetail = z.infer<typeof documentVectorDetailSchema>;
-export type RecoveryTriggerResponse = z.infer<typeof recoveryTriggerResponseSchema>;
+export type RecoverTasksRequest = z.infer<typeof recoverTasksRequestSchema>;
+export type RecoverTasksResponse = z.infer<typeof recoverTasksResponseSchema>;
 export type RebuildAllResponse = z.infer<typeof rebuildAllResponseSchema>;
 export type ChunkUploadSession = z.infer<typeof chunkUploadSessionSchema>;
 export type SourceReference = z.infer<typeof sourceReferenceSchema>;

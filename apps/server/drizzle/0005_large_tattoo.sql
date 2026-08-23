@@ -1,0 +1,1 @@
+ALTER TABLE "batch_tasks" ADD COLUMN "fail_rounds" integer DEFAULT 0 NOT NULL;

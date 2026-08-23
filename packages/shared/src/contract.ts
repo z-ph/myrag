@@ -13,7 +13,7 @@ export type {
   DocumentListResponse,
   DocumentDeleteResponse,
   DocumentVectorDetail,
-  RecoveryTriggerResponse,
+  RecoverTasksResponse,
   RebuildAllResponse,
   ChunkUploadSession,
   SourceReference,

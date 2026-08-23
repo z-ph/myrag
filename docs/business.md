@@ -55,7 +55,7 @@
 | `DELETE /documents/{id}`、`GET /documents/{id}/vectors` | — | ❌ | ❌ | ✅ | ✅ |
 | `/upload-sessions/**`（分片上传） | — | ❌ | ❌ | ✅ | ✅ |
 | `POST /documents/uploads/rebuild-all`（全量重建） | — | ❌ | ❌ | ❌ | ✅ |
-| `POST /documents/uploads/recovery`（恢复异常任务：中断 / 失败 / 部分成功） | — | ❌ | ❌ | ❌ | ✅ |
+| `POST /documents/uploads/recoveries`（按 taskIds 恢复异常任务：中断 / 失败 / 部分成功） | — | ❌ | ❌ | ❌ | ✅ |
 | `POST /documents/uploads/{taskId}/interrupt`（中断进行中任务） | — | ❌ | ❌ | ❌ | ✅ |
 | `DELETE /documents/uploads/{taskId}`（取消排队或删除异常任务） | — | ❌ | ❌ | ❌ | ✅ |
 | `/admin/users/**`（RBAC 用户管理） | — | ❌ | ❌ | ❌ | ✅ |
@@ -70,7 +70,7 @@
 - 未登录：导航含「智能问答 / 文档库 / 我的（登录入口）」，前端静默签发访客 token 后走与登录一致的会话链路（会话落库、可恢复），文档库只读（无上传/删除按钮）。
 - `USER`：可登录会话问答，文档库只读。
 - `STAFF`：文档库出现上传/删除按钮；无管理面板与用户管理入口。
-- `SUPER_ADMIN`：全部导航可见（管理面板、用户管理），文档库另有「恢复任务 / 全量重建」。
+- `SUPER_ADMIN`：全部导航可见（管理面板、用户管理），文档库另有「全量重建」。异常任务在管理面板按条或勾选恢复。
 - 前端守卫只是体验层，**权限强制在服务端中间件**。
 
 ## 6. 变更须知

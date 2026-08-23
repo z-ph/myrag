@@ -44,7 +44,7 @@ RESTful 化的规则，全站统一执行：
 |---|---|---|
 | `POST /documents/batch-upload` | `POST /documents/uploads` | 创建批量上传任务 |
 | `GET /documents/batch-upload/{taskId}` | `GET /documents/uploads/{taskId}` | 查询任务状态 |
-| `POST /documents/batch-upload/recovery/trigger` | `POST /documents/uploads/recovery` | 集合级动作，去掉冗余 `trigger` |
+| `POST /documents/batch-upload/recovery/trigger` | `POST /documents/uploads/recoveries` | 集合级动作，body 为 `{ taskIds }`，无全量恢复 |
 | `POST /documents/batch-upload/rebuild-all` | `POST /documents/uploads/rebuild-all` | 集合级动作 |
 
 ### 分片上传（独立资源 `/upload-sessions`）
