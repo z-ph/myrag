@@ -21,7 +21,7 @@ docker-compose.yml  server + web + db-init（须先起独立仓 cwc-infra）
 
 ## 快速启动
 
-底座在独立仓 [cwc-infra](https://gdutsyjx.gdut.edu.cn/cwc/git/cwc-admin/cwc-infra.git)，不在本仓。
+底座在独立仓 [cwc-infra](https://gdutsyjx.gdut.edu.cn/cwc/git/cwc/cwc-infra.git)，不在本仓。
 
 ```bash
 # 1. 先起 data 栈（在 cwc-infra 仓目录）

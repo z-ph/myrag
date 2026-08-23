@@ -30,8 +30,8 @@ myrag 应用仓只保留：
 
 | 项 | 值 |
 |---|---|
-| 远程 | `https://gdutsyjx.gdut.edu.cn/cwc/git/cwc-admin/cwc-infra.git` |
-| 组织 | `cwc-admin`，与 `zph-rag` 同组 |
+| 远程 | `https://gdutsyjx.gdut.edu.cn/cwc/git/cwc/cwc-infra.git` |
+| 组织 | `cwc`（2026-08-23 由用户 `cwc-admin` 转入） |
 | 历史 | 新仓初始提交，无 filter-repo |
 | 本地工作副本 | `school/cwc-infra`（与 `myrag` 并列，不是 `school/infra`） |
 
@@ -126,7 +126,7 @@ myrag 根目录 `docker-compose.yml` 已按外部网络接入，抽走目录后�
 | 议题 | 裁定 |
 |---|---|
 | 独立方式 | 新 CWC 仓，干净快照 |
-| 仓名 | `cwc-admin/cwc-infra` |
+| 仓名 | `cwc/cwc-infra` |
 | data 与 LLM | 同一仓两个 compose |
 | myrag 引用 | 只留外部网络，无 submodule |
 | llm 网 | 保持注释 |
@@ -138,6 +138,6 @@ myrag 根目录 `docker-compose.yml` 已按外部网络接入，抽走目录后�
 
 ## 10. 实施时改动的位置
 
-- 新建：`cwc-admin/cwc-infra`（myrag 仓库外）
+- 新建：`cwc/cwc-infra`（myrag 仓库外）
 - 删除：`infra/`
 - 修改：`README.md`、`.env.example`

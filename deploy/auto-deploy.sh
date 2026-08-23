@@ -7,7 +7,7 @@
 #   1. 安装 git、docker + compose 插件
 #   2. 仓库凭据（HTTPS 私有仓库，任选其一）：
 #      - git config credential.helper store   # 首次手动 pull 时输入账号/token
-#      - git remote set-url origin git@<host>:cwc-admin/zph-rag.git   # SSH 部署密钥
+#      - git remote set-url origin git@<host>:cwc/zph-rag.git   # SSH 部署密钥
 #   3. 服务器 .env 按环境配置好（.env 被 gitignore，部署过程不会覆盖）
 #   4. systemctl enable --now myrag-auto-deploy.timer
 set -euo pipefail
