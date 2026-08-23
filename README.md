@@ -16,13 +16,20 @@ apps/server/      Hono + Drizzle + PostgreSQL + Qdrant + Redis（无状态化任
 apps/web/         React + antd + zustand + react-query（Vite）
 apps/e2e/         Playwright 端到端
 scripts/          mock-llm（本地 OpenAI 兼容模拟）、smoke.ts（接口冒烟）
-docker-compose.yml  postgres + qdrant + redis + server + web 全栈编排
+docker-compose.yml  server + web + db-init（须先起独立仓 cwc-infra）
 ```
 
 ## 快速启动
 
+底座在独立仓 [cwc-infra](https://gdutsyjx.gdut.edu.cn/cwc/git/cwc-admin/cwc-infra.git)，不在本仓。
+
 ```bash
-cp .env.example .env        # 配置 LLM 网关（OpenAI 兼容）、数据库密码等
+# 1. 先起 data 栈（在 cwc-infra 仓目录）
+cp .env.example .env
+docker compose up -d
+
+# 2. 再起本仓
+cp .env.example .env        # DB / MinIO / LLM 密钥须与 cwc-infra 对应变量一致
 docker compose up -d --build
 前端 http://localhost:5173（nginx 反代：/api/* → 后端，反代统一加前缀）
 后端 http://localhost:8080（无 /api 前缀） API 文档 http://localhost:8080/docs
@@ -33,7 +40,7 @@ docker compose up -d --build
 ### 本地开发
 
 ```bash
-docker compose up -d postgres qdrant redis minio   # 基础设施（redis 映射 6380 避开宿主 6379；minio 为必需，缺对象存储配置 server 拒绝启动）
+# 先在 cwc-infra 仓把 data 栈拉起（redis 映射 6380；minio 为必需）
 pnpm dev                                  # server :8080 + web :5174
 node scripts/mock-llm.ts                  # 无真实 LLM 时冒烟用（:9999）
 ```
