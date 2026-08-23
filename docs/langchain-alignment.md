@@ -2,7 +2,7 @@
 
 本页对照当前实现，说明仓库里实际用了哪些 LangChain 抽象。以 `apps/server/src/modules/rag/rag.service.ts` 为准，不以历史设计稿为准。
 
-问答不是固定「先检索再生成」。每轮用 `createAgent` 挂五个工具，模型决定是否调用、用什么参数、调用几次。
+问答不是固定「先检索再生成」。每轮用 `createAgent` 挂五个查看工具，模型决定是否调用、用什么参数、调用几次。查阅过的文档自动写入用户来源，不再单独 cite。
 
 ## 问答主路径
 
@@ -37,7 +37,7 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 | 生成 | `ChatOpenAI` | `streamEvents` 消费思考与正文；思考不回灌 |
 | 图片理解 | `withStructuredOutput` | `image.service.ts`：失败回退 `visionChat` + 本地 JSON 解析 |
 
-同轮多次工具调用按 `documentId:chunkIndex` 去重后写入来源；工具返回文本按 `contextBudget` 截断。
+`read_document` / `search_knowledge_base` 把块写入本轮 collector，按 `documentId` 去重后作为用户来源。正文不应再写「资料来源」。工具返回文本按 `contextBudget` 截断。
 
 `vectorize` 在 embed 前一次 `chatStructured` 写 `documents.toc` 与每块 `title`/`summary`。
 

@@ -81,9 +81,8 @@ function SourceList({ sources, onPreview }: { sources: SourceReference[]; onPrev
     <div className="source-row">
       <span className="source-label">来源</span>
       {sources.map((s, i) => (
-        <button key={i} type="button" className="source-chip" onClick={() => onPreview(s)} title={s.excerpt}>
-          {s.sourceType === 'IMAGE' ? '🖼' : '📄'} {s.filename}
-          {s.relevanceScore != null && <em>{Math.round(s.relevanceScore * 100)}%</em>}
+        <button key={i} type="button" className="source-link" onClick={() => onPreview(s)} title={s.excerpt || s.filename}>
+          {s.filename}
         </button>
       ))}
     </div>
@@ -104,10 +103,11 @@ function FollowUpChips({ questions, onAsk }: { questions: string[]; onAsk: (q: s
   );
 }
 
-/** 来源预览：拉取文档原文，按块渲染并高亮命中块 */
+/** 来源预览：拉取文档原文，按块渲染，滚到并高亮 cite 块 */
 function SourcePreviewModal({ source, onClose }: { source: SourceReference | null; onClose: () => void }) {
   const [content, setContent] = useState<DocumentContent | null>(null);
   const [loading, setLoading] = useState(false);
+  const hitRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setContent(null);
@@ -121,20 +121,29 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
     }
   }, [source]);
 
+  useEffect(() => {
+    if (content && source?.chunkIndex != null) {
+      hitRef.current?.scrollIntoView({ block: 'center' });
+    }
+  }, [content, source]);
+
   return (
     <Modal open={source != null} title={source?.filename} footer={null} onCancel={onClose} width={720} className="source-preview">
       {source && (
         <>
           <div className="source-preview-meta">
-            {source.sourceType === 'IMAGE' ? '🖼 图片来源' : '📄 文档来源'}
-            {source.relevanceScore != null && ` · 相关度 ${Math.round(source.relevanceScore * 100)}%`}
+            {source.sourceType === 'IMAGE' ? '图片来源' : '文档来源'}
           </div>
           {loading || !content ? (
             <Spin style={{ display: 'block', margin: '24px auto' }} />
           ) : (
             <div className="source-preview-doc">
               {content.chunks.map((c) => (
-                <div key={c.chunkIndex} className={`doc-chunk ${c.chunkIndex === source.chunkIndex ? 'doc-chunk-hit' : ''}`}>
+                <div
+                  key={c.chunkIndex}
+                  ref={c.chunkIndex === source.chunkIndex ? hitRef : undefined}
+                  className={`doc-chunk ${c.chunkIndex === source.chunkIndex ? 'doc-chunk-hit' : ''}`}
+                >
                   {c.text}
                 </div>
               ))}

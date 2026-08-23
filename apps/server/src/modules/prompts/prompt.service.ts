@@ -49,7 +49,7 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
         }
       }
 
-      // 对缺失的 key 插入默认值 + 写 version 1
+      // 对缺失的 key 插入默认值 + 写 version 1；旧默认全文等值则覆盖为新默认
       for (const key of PROMPT_KEYS) {
         if (!cache.has(key)) {
           const content = DEFAULT_PROMPTS[key];
@@ -65,6 +65,15 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
             updatedBy: 'system',
           }).onConflictDoNothing();
           cache.set(key, content);
+          continue;
+        }
+        const current = cache.get(key);
+        const stale =
+          current !== undefined &&
+          current !== DEFAULT_PROMPTS[key] &&
+          (current.includes('标注资料来源文件名') || current.includes('cite_sources'));
+        if (stale) {
+          await this.update(key, DEFAULT_PROMPTS[key], 'system');
         }
       }
 

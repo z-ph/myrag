@@ -11,7 +11,7 @@ import type {
   ToolResultSse,
 } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
-import { badRequest, notFound } from '../../lib/errors';
+import { badRequest, isAppError, notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { RedisStore } from '../../store/redis';
 import { RedisKeys } from '../../store/redis';
@@ -63,8 +63,7 @@ export interface StreamHandlers {
   onError(message: string): void;
 }
 
-/** generate() 实际消费的流式回调（StreamHandlers 的子集） */
-type GenerateHandlers = Pick<StreamHandlers, 'onDelta' | 'onReasoningDelta' | 'onToolCall' | 'onToolResult'>;
+type GenerateHandlers = Pick<StreamHandlers, 'onDelta' | 'onReasoningDelta' | 'onToolCall' | 'onToolResult' | 'onSources'>;
 
 export interface RagService {
   ask(input: AskInput): Promise<AskOutput>;
@@ -79,10 +78,21 @@ export interface RagService {
 export const SEARCH_TOOL_NAME = 'search_knowledge_base';
 export const LIST_DOCUMENTS_TOOL_NAME = 'list_documents';
 export const GET_DOCUMENT_TOOL_NAME = 'get_document';
-export const READ_DOCUMENT_TOOL_NAME = 'read_document';
 export const LIST_CHUNKS_TOOL_NAME = 'list_chunks';
-
+export const READ_DOCUMENT_TOOL_NAME = 'read_document';
 const READ_DOCUMENT_DEFAULT_CHUNKS = 8;
+
+/** Agent 填错 documentId 时回普通文本，不把 404 抛出工具层。 */
+export async function lookupOrMissing<T>(documentId: string, run: () => Promise<T>): Promise<T | string> {
+  try {
+    return await run();
+  } catch (err) {
+    if (isAppError(err) && err.status === 404) {
+      return `没有 id 为 ${documentId} 的文档。请先用 list_documents 核对 documentId。`;
+    }
+    throw err;
+  }
+}
 
 /** 工具名 → 前端展示文案 */
 export const TOOL_LABELS: Record<string, string> = {
@@ -131,13 +141,6 @@ export function createRagService(
     unsubscribe = null;
   };
 
-  /** 单次运行期间的检索收集（工具回写；跨多次工具调用去重） */
-  interface RetrievalCollector {
-    maxResults: number;
-    docs: ChunkDocument[];
-    seen: Set<string>;
-  }
-
   /**
    * agent loop 生成核心：检索（作为工具由模型调用）→ 思考/工具 → 最终回答。
    * 通过 streamEvents v3 的 messages / toolCalls 投影拿到思考、正文与工具生命周期。
@@ -148,16 +151,26 @@ export function createRagService(
     handlers: GenerateHandlers,
     signal?: AbortSignal,
   ): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[]; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
-    const collector: RetrievalCollector = {
+    const collector: { maxResults: number; docs: ChunkDocument[]; seen: Set<string> } = {
       maxResults: input.maxResults ?? settings.get().maxResults,
       docs: [],
       seen: new Set(),
     };
 
+    const remember = (docs: ChunkDocument[]) => {
+      let added = false;
+      for (const d of docs) {
+        const key = chunkKey(d.metadata);
+        if (collector.seen.has(key)) continue;
+        collector.seen.add(key);
+        collector.docs.push(d);
+        added = true;
+      }
+      if (added) handlers.onSources(toSourceReferences(collector.docs));
+    };
+
     /**
-     * 知识库检索工具：把 RagRetriever 暴露给 agent loop。
-     * 模型自行决定是否调用、以什么 query 调用、调用几次。
-     * 闭包捕获本次请求的局部 collector，与并发生成隔离。
+     * 知识库工具：查看结果同时写入用户来源，不再单独 cite。
      */
     const listDocuments = tool(
       async ({ filterByFileName }: { filterByFileName?: string }) => {
@@ -179,22 +192,23 @@ export function createRagService(
     );
 
     const getDocument = tool(
-      async ({ documentId }: { documentId: string }) => {
-        const doc = await documentService.get(documentId);
-        return JSON.stringify({
-          documentId: doc.documentId,
-          filename: doc.filename,
-          fileType: doc.fileType,
-          fileSize: doc.fileSize,
-          status: doc.status,
-          segmentCount: doc.segmentCount,
-          uploadTime: doc.uploadTime,
-        });
-      },
+      async ({ documentId }: { documentId: string }) =>
+        lookupOrMissing(documentId, async () => {
+          const doc = await documentService.get(documentId);
+          return JSON.stringify({
+            documentId: doc.documentId,
+            filename: doc.filename,
+            fileType: doc.fileType,
+            fileSize: doc.fileSize,
+            status: doc.status,
+            segmentCount: doc.segmentCount,
+            uploadTime: doc.uploadTime,
+          });
+        }),
       {
         name: GET_DOCUMENT_TOOL_NAME,
         description:
-          '卡片：按 documentId 取文件身份（文件名、类型、大小、状态、分块数、上传时间）。不含正文。要读内容用 read_document。',
+          '卡片：按 documentId 取文件身份（文件名、类型、大小、状态、分块数、上传时间）。不含正文。要读内容用 read_document。id 不存在时返回说明，可再 list_documents。',
         schema: z.object({
           documentId: z.string().describe('文档 id'),
         }),
@@ -202,16 +216,17 @@ export function createRagService(
     );
 
     const listChunks = tool(
-      async ({ documentId }: { documentId: string }) => {
-        const meta = await documentService.get(documentId);
-        const listed = await documentService.listChunks(documentId);
-        if (listed.chunks.length === 0) return `${meta.filename}：没有分块数据。`;
-        return formatListChunksText(meta.filename, listed.toc, listed.chunks);
-      },
+      async ({ documentId }: { documentId: string }) =>
+        lookupOrMissing(documentId, async () => {
+          const meta = await documentService.get(documentId);
+          const listed = await documentService.listChunks(documentId);
+          if (listed.chunks.length === 0) return `${meta.filename}：没有分块数据。`;
+          return formatListChunksText(meta.filename, listed.toc, listed.chunks);
+        }),
       {
         name: LIST_CHUNKS_TOOL_NAME,
         description:
-          '块目录：层级目录与每块标题、摘要，不含正文。先看目录再 read_document。',
+          '块目录：层级目录与每块标题、摘要，不含正文。先看目录再 read_document。id 不存在时返回说明。',
         schema: z.object({
           documentId: z.string().describe('文档 id'),
         }),
@@ -219,42 +234,41 @@ export function createRagService(
     );
 
     const readDocument = tool(
-      async ({ documentId, startChunk, maxChunks }: { documentId: string; startChunk?: number; maxChunks?: number }) => {
-        const meta = await documentService.get(documentId);
-        const { chunks } = await documentService.content(documentId);
-        const start = Math.max(0, startChunk ?? 0);
-        const take = Math.max(1, maxChunks ?? READ_DOCUMENT_DEFAULT_CHUNKS);
-        const slice = chunks.filter((c) => c.chunkIndex >= start).slice(0, take);
-        for (const c of slice) {
-          const key = chunkKey({ documentId, chunkIndex: c.chunkIndex });
-          if (collector.seen.has(key)) continue;
-          collector.seen.add(key);
-          collector.docs.push(
-            new Document({
-              pageContent: c.text,
-              metadata: {
-                documentId,
-                filename: meta.filename,
-                chunkIndex: c.chunkIndex,
-                sourceType: 'TEXT',
-                vectorScore: 0,
-                bm25Score: 0,
-                score: 0,
-              },
-            }),
+      async ({ documentId, startChunk, maxChunks }: { documentId: string; startChunk?: number; maxChunks?: number }) =>
+        lookupOrMissing(documentId, async () => {
+          const meta = await documentService.get(documentId);
+          const { chunks } = await documentService.content(documentId);
+          const start = Math.max(0, startChunk ?? 0);
+          const take = Math.max(1, maxChunks ?? READ_DOCUMENT_DEFAULT_CHUNKS);
+          const slice = chunks.filter((c) => c.chunkIndex >= start).slice(0, take);
+          remember(
+            slice.map(
+              (c) =>
+                new Document({
+                  pageContent: c.text,
+                  metadata: {
+                    documentId,
+                    filename: meta.filename,
+                    chunkIndex: c.chunkIndex,
+                    sourceType: 'TEXT',
+                    vectorScore: 0,
+                    bm25Score: 0,
+                    score: 0,
+                  },
+                }),
+            ),
           );
-        }
-        const body = slice
-          .map((c) => `[documentId=${documentId} | ${meta.filename} | chunk ${c.chunkIndex}]\n${c.text}`)
-          .join('\n\n');
-        const header = `${meta.filename} / ${meta.fileType} / 共 ${meta.segmentCount} 块 / 本段 chunk ${start}–${start + slice.length - 1}`;
-        if (!body) return `${header}\n没有更多正文。`;
-        return `${header}\n\n${body}`;
-      },
+          const body = slice
+            .map((c) => `[documentId=${documentId} | ${meta.filename} | chunk ${c.chunkIndex}]\n${c.text}`)
+            .join('\n\n');
+          const header = `${meta.filename} / ${meta.fileType} / 共 ${meta.segmentCount} 块 / 本段 chunk ${start}–${start + slice.length - 1}`;
+          if (!body) return `${header}\n没有更多正文。`;
+          return `${header}\n\n${body}`;
+        }),
       {
         name: READ_DOCUMENT_TOOL_NAME,
         description:
-          '读正文：按块返回指定文档原文，不做相关度检索。先用 list_chunks 看块目录，再按 startChunk/maxChunks 读需要的部分。默认从 0 起读 8 块。',
+          '读正文：按块返回指定文档原文，不做相关度检索。先用 list_chunks 看块目录，再按 startChunk/maxChunks 读需要的部分。默认从 0 起读 8 块。id 不存在时返回说明。',
         schema: z.object({
           documentId: z.string().describe('文档 id'),
           startChunk: z.number().int().min(0).optional().describe('起始块序号，默认 0'),
@@ -267,13 +281,7 @@ export function createRagService(
       async ({ query, documentIds }: { query: string; documentIds?: string[] }) => {
         const scope = documentIds?.filter(Boolean);
         const docs = await retriever.retrieve(query, collector.maxResults, scope && scope.length > 0 ? scope : undefined);
-        for (const d of docs) {
-          const key = chunkKey(d.metadata);
-          if (!collector.seen.has(key)) {
-            collector.seen.add(key);
-            collector.docs.push(d);
-          }
-        }
+        remember(docs);
         const { contextText } = packContext(docs, settings.get().contextBudget);
         return contextText ?? (scope && scope.length > 0 ? '指定文档范围内没有检索到相关资料。' : '知识库中没有检索到与该问题相关的资料。');
       },
@@ -287,6 +295,8 @@ export function createRagService(
         }),
       },
     );
+
+
 
     let imageUnderstanding: ImageUnderstandingResult | undefined;
     if (input.imageBase64) {
@@ -418,6 +428,7 @@ export function createRagService(
         onReasoningDelta: () => {},
         onToolCall: () => {},
         onToolResult: () => {},
+        onSources: () => {},
       });
       return {
         answer: result.answer,

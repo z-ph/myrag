@@ -453,13 +453,13 @@
   overflow-y: auto;
 }
 
-/* ── 来源引用（印章红胶囊） ───────────────────────────── */
+/* ── 来源引用（回答下方文档链接） ───────────────────────────── */
 .source-row {
   margin-top: 12px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 12px;
 }
 
 .source-label {
@@ -468,30 +468,23 @@
   margin-right: 2px;
 }
 
-.source-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
+.source-link {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 13px;
   font-family: var(--font-body);
   color: var(--seal);
-  background: var(--seal-soft);
-  border: none;
-  border-radius: 999px;
-  padding: 3px 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
-  transition: background 0.15s;
 }
 
-.source-chip:hover {
-  background: #f3dedc;
+.source-link:hover {
+  color: var(--ink);
 }
 
-.source-chip em {
-  font-style: normal;
-  color: #c98c87;
-  font-size: 11px;
-}
 
 /* 追问（反问）快捷提问 */
 .followup-row {

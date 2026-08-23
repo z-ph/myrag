@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/api';
+import { documentsApi } from '../src/api';
 import ChatPage from '../src/pages/ChatPage';
 import { useAuthStore } from '../src/store/auth';
 import { useChatStore, type ChatMessage } from '../src/store/chat';
@@ -92,6 +93,7 @@ describe('ChatPage assistant extras', () => {
               sourceType: 'TEXT',
               filename: '差旅费管理办法.pdf',
               excerpt: '住宿费限额',
+              relevanceScore: 0.88,
             },
           ],
         }),
@@ -100,7 +102,41 @@ describe('ChatPage assistant extras', () => {
     mount();
     expect(screen.getByRole('button', { name: '复制' })).toBeTruthy();
     expect(screen.getByText('来源')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '差旅费管理办法.pdf' })).toBeTruthy();
+    expect(screen.queryByText('88%')).toBeNull();
     expect(screen.getByText('追问')).toBeTruthy();
     expect(screen.getByRole('button', { name: '「差旅费管理办法」还规定了哪些相关内容？' })).toBeTruthy();
+  });
+
+  it('点击来源后预览滚到命中块', async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    vi.mocked(documentsApi.content).mockResolvedValue({
+      documentId: 'd1',
+      filename: '差旅费管理办法.pdf',
+      chunks: [
+        { chunkIndex: 0, text: '封面页' },
+        { chunkIndex: 2, text: '住宿费限额五百元' },
+      ],
+    });
+    useChatStore.setState({
+      messages: [
+        assistant({
+          sources: [
+            {
+              sourceType: 'TEXT',
+              filename: '差旅费管理办法.pdf',
+              documentId: 'd1',
+              chunkIndex: 2,
+              excerpt: '住宿费限额',
+            },
+          ],
+        }),
+      ],
+    });
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: '差旅费管理办法.pdf' }));
+    expect(await screen.findByText('住宿费限额五百元')).toBeTruthy();
+    expect(scroll).toHaveBeenCalled();
   });
 });
