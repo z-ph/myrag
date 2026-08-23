@@ -16,9 +16,7 @@ export interface BatchService {
   getTask(taskId: string): Promise<BatchTask>;
   /** 未完成任务按车道分组：活跃中 / 排队中 / 异常（中断、失败、部分成功） */
   listActive(): Promise<ActiveTaskLanes>;
-  /** 单文件入队：job name = process-single，jobId = documentId（幂等） */
-  enqueueSingle(documentId: string): Promise<void>;
-  /** 全量重建入队：每个文档一个 process-single job，jobId = rebuild:taskId:documentId */
+  /** 重建入队：每个文档一个 process-single job，jobId = rebuild:taskId:documentId */
   enqueueRebuild(taskId: string, documentIds: string[]): Promise<void>;
   /** 启动本实例的任务 worker（BullMQ 消费） */
   startWorker(): void;
@@ -122,10 +120,6 @@ export function summarizeTaskOutcome(fileStatuses: string[]): {
   return { status, success, failure };
 }
 
-function inferType(taskId: string): 'upload' | 'rebuild' {
-  return taskId.startsWith('rebuild') ? 'rebuild' : 'upload';
-}
-
 function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batchFileResults.$inferSelect[]): ActiveTaskView {
   const statusMap: Record<string, ActiveTaskView['status']> = {
     PENDING: 'pending',
@@ -143,7 +137,7 @@ function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batch
   };
   return {
     taskId: row.taskId,
-    type: inferType(row.taskId),
+    type: row.type === 'rebuild' ? 'rebuild' : 'upload',
     status: statusMap[row.status] ?? 'pending',
     total: row.totalFiles,
     completed: row.successCount,
@@ -259,13 +253,13 @@ async function processTaskFiles(
 const QUEUE_NAME = 'batch';
 const QUEUE_PREFIX = 'myrag';
 
-type QueueJobData = { taskId: string } | { documentId: string };
+type QueueJobData = { taskId: string } | { documentId: string; taskId?: string };
 
-/** 全量重建：每个文档一个 process-single job，jobId 带 taskId 保证幂等 */
+/** 重建任务的单文件 job：jobId 带 taskId 保证幂等，data 显式携带 taskId */
 export function rebuildSingleJobs(taskId: string, documentIds: string[]) {
   return documentIds.map((documentId) => ({
     name: 'process-single' as const,
-    data: { documentId },
+    data: { documentId, taskId },
     opts: { jobId: `rebuild:${taskId}:${documentId}` },
   }));
 }
@@ -303,11 +297,6 @@ export function createBatchService(
     await queue.add('process', { taskId }, { jobId: taskId });
   }
 
-  /** 单文件入队：jobId = documentId，重复入队为空操作 */
-  async function enqueueSingle(documentId: string): Promise<void> {
-    await queue.add('process-single', { documentId }, { jobId: documentId });
-  }
-
   async function dropJobsForTask(taskId: string): Promise<void> {
     await queue.remove(taskId).catch(() => undefined);
     const jobs = await queue.getJobs(['waiting', 'delayed', 'active']);
@@ -318,7 +307,7 @@ export function createBatchService(
     );
   }
 
-  /** 全量重建入队：每个文档独立 process-single，同时写 batchFileResults 逐文件跟踪 */
+  /** 重建入队：每个文档独立 process-single，同时写 batchFileResults 逐文件跟踪 */
   async function enqueueRebuild(taskId: string, documentIds: string[]): Promise<void> {
     if (documentIds.length === 0) return;
     // 查文档真实文件名
@@ -353,11 +342,7 @@ export function createBatchService(
       .from(batchFileResults)
       .where(and(eq(batchFileResults.taskId, taskId), inArray(batchFileResults.status, ['PENDING', 'PROCESSING'])));
     const pendingIds = pending.map((r) => r.documentId).filter(Boolean) as string[];
-    const jobs = pendingIds.map((documentId) => ({
-      name: 'process-single' as const,
-      data: { documentId },
-      opts: { jobId: `rebuild:${taskId}:${documentId}` },
-    }));
+    const jobs = rebuildSingleJobs(taskId, pendingIds);
     if (jobs.length === 0) return;
     await queue.addBulk(jobs);
   }
@@ -416,8 +401,6 @@ export function createBatchService(
       return this.getTask(taskId);
     },
 
-    enqueueSingle,
-
     enqueueRebuild,
 
     async getTask(taskId) {
@@ -458,14 +441,10 @@ export function createBatchService(
         QUEUE_NAME,
         async (job) => {
           if (job.name === 'process-single') {
-            const documentId = 'documentId' in job.data ? job.data.documentId : '';
-            const isRebuild = job.id?.startsWith('rebuild:');
-
-            let batchTaskId: string | null = null;
-            if (isRebuild && job.id) {
-              const parts = job.id.split(':');
-              if (parts.length >= 2) batchTaskId = parts[1] ?? null;
-            }
+            if (!('documentId' in job.data)) return;
+            const documentId = job.data.documentId;
+            // taskId 由入队方显式放在 data 里，不再从 jobId 字符串里拆
+            const batchTaskId = job.data.taskId ?? null;
 
             // 标记单文件 PROCESSING + 批任务 PROCESSING
             if (batchTaskId) {
@@ -485,26 +464,26 @@ export function createBatchService(
                 const timer = setTimeout(() => reject(new Error('处理超时（5 分钟）')), JOB_TIMEOUT_MS);
                 timer.unref?.();
               });
-              if (isRebuild) {
-                await Promise.race([processService.reprocessStored(documentId, 'system'), timeout]);
-              } else {
-                const [doc] = await db.select().from(documents).where(eq(documents.documentId, documentId)).limit(1);
-                if (!doc) {
-                  logger.error(`[batch] 单文件任务文档不存在: ${documentId || '?'}`);
-                  return;
-                }
-                await Promise.race([processService.processDocumentRow(doc), timeout]);
-              }
+              // reprocessStored 先清旧向量再处理；失败不抛异常，必须看返回值
+              const result = await Promise.race([processService.reprocessStored(documentId, 'system'), timeout]);
 
               if (batchTaskId) {
                 const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, batchTaskId)).limit(1);
                 if (live?.status === 'INTERRUPTED') return;
                 await db
                   .update(batchFileResults)
-                  .set({ status: 'SUCCESS' })
+                  .set({
+                    status: result.success ? 'SUCCESS' : 'FAILED',
+                    message: result.message.slice(0, 500),
+                    errorMessage: result.success ? null : result.message,
+                    segmentCount: result.segmentCount,
+                    embeddingCount: result.vectorCount,
+                  })
                   .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
                 await finalizeBatchTask(batchTaskId);
               }
+              // 处理失败要让 job 失败，否则异常文件在队列侧无任何痕迹
+              if (!result.success) throw new Error(result.message);
             } catch (err) {
               const message = err instanceof Error ? err.message.slice(0, 500) : String(err);
               if (batchTaskId) {
@@ -518,7 +497,7 @@ export function createBatchService(
             }
             return;
           }
-          if ('taskId' in job.data) {
+          if (!('documentId' in job.data)) {
             await processTaskFiles(db, processService, cfg, job.data.taskId);
           }
         },
@@ -590,7 +569,7 @@ export function createBatchService(
           .set({ status: 'PENDING', updatedAt: new Date(), completedAt: null })
           .where(eq(batchTasks.taskId, task.taskId));
         await dropJobsForTask(task.taskId);
-        if (task.taskId.startsWith('rebuild-')) {
+        if (task.type === 'rebuild') {
           if (docIds.length > 0) {
             await db
               .update(documents)

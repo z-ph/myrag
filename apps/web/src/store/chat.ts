@@ -153,6 +153,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               args: tc.args,
               output: tc.output,
               status: 'done' as const,
+              atOffset: tc.atOffset,
             })),
             status: m.status ?? 'COMPLETED',
           })),

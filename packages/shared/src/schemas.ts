@@ -187,6 +187,8 @@ export const toolCallRecordSchema = z.object({
   name: z.string(),
   args: z.record(z.string(), z.unknown()),
   output: z.string(),
+  /** 工具调用发生时回答正文的累计长度，用于刷新后仍按发生顺序穿插渲染 */
+  atOffset: z.number().int().nonnegative().optional(),
 });
 export type ToolCallRecord = z.infer<typeof toolCallRecordSchema>;
 

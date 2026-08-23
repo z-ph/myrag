@@ -98,7 +98,7 @@ describe('rebuildAll', () => {
 
     expect(taskId).toMatch(/^rebuild-/);
     expect(qdrant.rebuildCollection).not.toHaveBeenCalled();
-    expect(db.inserts).toEqual([{ taskId, status: 'PENDING', totalFiles: 2 }]);
+    expect(db.inserts).toEqual([{ taskId, type: 'rebuild', status: 'PENDING', totalFiles: 2 }]);
     expect(db.updates.every((u) => u.status === 'PENDING' && u.vectorCount === 0 && u.segmentCount === 0)).toBe(true);
     expect(enqueueRebuild).toHaveBeenCalledWith(taskId, ['doc-1', 'doc-2']);
     expect(getBuffer).not.toHaveBeenCalled();
@@ -111,16 +111,28 @@ describe('rebuildAll', () => {
 
     expect(taskId).toMatch(/^rebuild-/);
     expect(qdrant.rebuildCollection).not.toHaveBeenCalled();
-    expect(db.inserts).toEqual([{ taskId, status: 'PENDING', totalFiles: 0 }]);
+    expect(db.inserts).toEqual([{ taskId, type: 'rebuild', status: 'PENDING', totalFiles: 0 }]);
     expect(enqueueRebuild).toHaveBeenCalledWith(taskId, []);
   });
 });
 
+describe('rebuildSingle', () => {
+  it('单文件重建也建任务：一个 rebuild 任务只含该文档', async () => {
+    const { service, db, enqueueRebuild } = createService([]);
+
+    const taskId = await service.rebuildSingle('doc-1');
+
+    expect(taskId).toMatch(/^rebuild-/);
+    expect(db.inserts).toEqual([{ taskId, type: 'rebuild', status: 'PENDING', totalFiles: 1 }]);
+    expect(enqueueRebuild).toHaveBeenCalledWith(taskId, ['doc-1']);
+  });
+});
+
 describe('rebuildSingleJobs', () => {
-  it('为每个文档生成幂等的 process-single job', () => {
+  it('为每个文档生成幂等的 process-single job，data 显式携带 taskId', () => {
     expect(rebuildSingleJobs('rebuild-abc', ['doc-1', 'doc-2'])).toEqual([
-      { name: 'process-single', data: { documentId: 'doc-1' }, opts: { jobId: 'rebuild:rebuild-abc:doc-1' } },
-      { name: 'process-single', data: { documentId: 'doc-2' }, opts: { jobId: 'rebuild:rebuild-abc:doc-2' } },
+      { name: 'process-single', data: { documentId: 'doc-1', taskId: 'rebuild-abc' }, opts: { jobId: 'rebuild:rebuild-abc:doc-1' } },
+      { name: 'process-single', data: { documentId: 'doc-2', taskId: 'rebuild-abc' }, opts: { jobId: 'rebuild:rebuild-abc:doc-2' } },
     ]);
   });
 });

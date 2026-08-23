@@ -357,11 +357,13 @@ export function createRagService(
             const id = c.callId;
             const name = c.name;
             const args = (c.input ?? {}) as Record<string, unknown>;
+            // 记录调用发生时正文已累计的长度，供历史消息重建「正文/工具」穿插顺序
+            const atOffset = answer.length;
             handlers.onToolCall({ id, name, args });
             const out = await c.output;
             const output = typeof out === 'string' ? out : JSON.stringify(out);
             handlers.onToolResult({ id, name, output });
-            toolCalls.push({ id, name, args, output });
+            toolCalls.push({ id, name, args, output, atOffset });
           }
         })(),
       ]);

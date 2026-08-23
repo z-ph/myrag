@@ -307,19 +307,19 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/{documentId}/rebuild',
-          description: '单文件重建向量索引（清除旧向量，重新处理）',
+          description: '单文件重建向量索引（建任务异步入队，清除旧向量后重新处理）',
           security: bearerSecurity,
           middleware: [requireStaff],
           request: { params: documentIdParam },
           responses: {
-            200: { description: '已触发', content: { 'application/json': { schema: z.object({ message: z.string() }) } } },
+            200: { description: '已触发', content: { 'application/json': { schema: z.object({ message: z.string(), taskId: z.string() }) } } },
             ...errorResponses,
           },
         }),
         async (c) => {
           const { documentId } = c.req.valid('param');
-          await batchService.enqueueSingle(documentId);
-          return c.json({ message: '已触发重建' });
+          const taskId = await processService.rebuildSingle(documentId);
+          return c.json({ message: '已触发重建', taskId });
         },
       )
 

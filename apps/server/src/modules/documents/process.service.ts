@@ -39,6 +39,8 @@ export interface ProcessService {
   processDocumentRow(doc: DocumentRow): Promise<ProcessResult>;
   /** 依据 documents 行重处理（全量重建用） */
   reprocessStored(documentId: string, operator: string): Promise<ProcessResult>;
+  /** 单文件重建：创建任务并异步入队，返回任务 ID */
+  rebuildSingle(documentId: string): Promise<string>;
   /** 全量重建：入队后立即返回任务 ID，不逐个处理文档 */
   rebuildAll(operator: string): Promise<string>;
 }
@@ -288,6 +290,27 @@ export function createProcessService(
     return doc;
   }
 
+  /** 重建任务：建 batch_tasks 行（type=rebuild）→ 文档置 PENDING → 逐文档入队 */
+  async function enqueueRebuildTask(documentIds: string[]): Promise<string> {
+    const taskId = genId('rebuild');
+    await db.insert(batchTasks).values({
+      taskId,
+      type: 'rebuild',
+      status: 'PENDING',
+      totalFiles: documentIds.length,
+    });
+    // 不再先清空整个 Qdrant 集合（一旦后续 worker 全部失败，向量库就空了）。
+    // reprocessStored 路径会逐文档清旧向量再写新向量。
+    if (documentIds.length > 0) {
+      await db
+        .update(documents)
+        .set({ status: 'PENDING', vectorCount: 0, segmentCount: 0 })
+        .where(inArray(documents.documentId, documentIds));
+    }
+    await enqueueRebuild(taskId, documentIds);
+    return taskId;
+  }
+
   return {
     async processBuffer(input) {
       const doc = await createPendingDocument(input);
@@ -311,29 +334,18 @@ export function createProcessService(
       return processDocumentRow(doc);
     },
 
+    async rebuildSingle(documentId) {
+      const taskId = await enqueueRebuildTask([documentId]);
+      logger.info(`[rebuild] 单文件重建已入队: ${taskId}，文档 ${documentId}`);
+      return taskId;
+    },
+
     async rebuildAll(_operator) {
-      const taskId = genId('rebuild');
       const docs = await db
-        .select()
+        .select({ documentId: documents.documentId })
         .from(documents)
         .where(and(eq(documents.deleted, false), eq(documents.storageMode, 'FULL_INDEX')));
-      await db.insert(batchTasks).values({
-        taskId,
-        status: 'PENDING',
-        totalFiles: docs.length,
-      });
-      // 不再先清空整个 Qdrant 集合（一旦后续 worker 全部失败，向量库就空了）。
-      // processDocumentRow → reprocessStored 路径会逐文档清旧向量再写新向量。
-      if (docs.length > 0) {
-        await db
-          .update(documents)
-          .set({ status: 'PENDING', vectorCount: 0, segmentCount: 0 })
-          .where(inArray(documents.id, docs.map((doc) => doc.id)));
-      }
-      await enqueueRebuild(
-        taskId,
-        docs.map((doc) => doc.documentId),
-      );
+      const taskId = await enqueueRebuildTask(docs.map((doc) => doc.documentId));
       logger.info(`[rebuild] 全量重建已入队: ${taskId}，共 ${docs.length} 个文档`);
       return taskId;
     },

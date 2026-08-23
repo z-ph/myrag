@@ -114,6 +114,8 @@ export const batchTasks = pgTable(
   {
     id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     taskId: varchar('task_id', { length: 64 }).notNull(),
+    /** 任务类型：upload（批量上传）/ rebuild（重建索引），不再靠 taskId 前缀推断 */
+    type: varchar('type', { length: 16 }).notNull().default('upload'),
     status: varchar('status', { length: 32 }).notNull().default('PENDING'),
     totalFiles: integer('total_files').notNull().default(0),
     successCount: integer('success_count').notNull().default(0),
