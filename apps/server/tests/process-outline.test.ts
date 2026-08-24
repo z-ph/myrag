@@ -167,3 +167,49 @@ describe('process outline step', () => {
     expect(db.inserts).toHaveLength(0);
   });
 });
+
+describe('onProgress 阶段进度序列', () => {
+  it('首阶段 parse，百分比单调不减，含 embed，成功前到达 write≥95', async () => {
+    const llm = {
+      chatStructured: vi.fn().mockResolvedValue({
+        toc: [{ title: '总则', startChunk: 0, endChunk: 0 }],
+        chunks: [{ chunkIndex: 0, title: '第一条 适用范围', summary: '本办法适用于全校' }],
+      }),
+      embed: vi.fn().mockResolvedValue([Array(8).fill(0.1)]),
+    } as unknown as LlmClient;
+    const { service, doc } = createService(llm);
+    const calls: Array<{ stage: string; percent: number }> = [];
+    const result = await service.processDocumentRow(doc, (stage, percent) => {
+      calls.push({ stage, percent });
+    });
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0]?.stage).toBe('parse');
+    const stages = calls.map((c) => c.stage);
+    expect(stages).toContain('chunk');
+    expect(stages).toContain('outline');
+    expect(stages).toContain('embed');
+    expect(stages).toContain('write');
+    // 单调不减
+    for (let i = 1; i < calls.length; i++) {
+      expect(calls[i]!.percent).toBeGreaterThanOrEqual(calls[i - 1]!.percent);
+    }
+    // 成功前最后一个阶段 write 到达 ≥95
+    const last = calls[calls.length - 1]!;
+    expect(last.stage).toBe('write');
+    expect(last.percent).toBeGreaterThanOrEqual(95);
+  });
+
+  it('未传 onProgress 时不抛错（透传可选）', async () => {
+    const llm = {
+      chatStructured: vi.fn().mockResolvedValue({
+        toc: [{ title: '总则', startChunk: 0, endChunk: 0 }],
+        chunks: [{ chunkIndex: 0, title: '第一条 适用范围', summary: '本办法适用于全校' }],
+      }),
+      embed: vi.fn().mockResolvedValue([Array(8).fill(0.1)]),
+    } as unknown as LlmClient;
+    const { service, doc } = createService(llm);
+    const result = await service.processDocumentRow(doc);
+    expect(result.status).toBe('SUCCESS');
+  });
+});

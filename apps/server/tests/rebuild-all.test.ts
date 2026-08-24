@@ -90,34 +90,51 @@ function createService(docs: DocumentRow[], enqueueRebuild = vi.fn().mockResolve
 }
 
 describe('rebuildAll', () => {
-  it('入队后立即返回 taskId，不逐个处理文档', async () => {
+  it('建任务集 + 每文档一个任务，逐文档入队，返回 setId', async () => {
     const docs = [makeDoc({ id: 1, documentId: 'doc-1' }), makeDoc({ id: 2, documentId: 'doc-2' })];
     const { service, db, qdrant, getBuffer, enqueueRebuild } = createService(docs);
 
-    const taskId = await service.rebuildAll('admin');
+    const setId = await service.rebuildAll('admin');
 
-    expect(taskId).toMatch(/^rebuild-/);
+    expect(setId).toMatch(/^set-/);
     expect(qdrant.rebuildCollection).not.toHaveBeenCalled();
-    expect(db.inserts).toEqual([{ taskId, type: 'rebuild', status: 'PENDING', totalFiles: 2 }]);
+    // 第一条 insert 是集合行，其后每文档一条任务行（type=rebuild、挂 setId、totalFiles=1）
+    const [setRow0, ...taskRows] = db.inserts as Array<Record<string, unknown>>;
+    const setRow = setRow0 as Record<string, unknown> | undefined;
+    if (!setRow) throw new Error('missing set row');
+    expect(setRow).toMatchObject({ setId, type: 'rebuild', operator: 'admin' });
+    expect(setRow.completedAt).toBeUndefined();
+    expect(taskRows).toHaveLength(2);
+    for (const row of taskRows) {
+      expect(row).toMatchObject({ setId, type: 'rebuild', status: 'PENDING', totalFiles: 1 });
+    }
+    // 每个任务只带自己的文档
+    expect(enqueueRebuild).toHaveBeenNthCalledWith(1, taskRows[0]?.taskId, ['doc-1']);
+    expect(enqueueRebuild).toHaveBeenNthCalledWith(2, taskRows[1]?.taskId, ['doc-2']);
+    // 文档置 PENDING 并清计数
     expect(db.updates.every((u) => u.status === 'PENDING' && u.vectorCount === 0 && u.segmentCount === 0)).toBe(true);
-    expect(enqueueRebuild).toHaveBeenCalledWith(taskId, ['doc-1', 'doc-2']);
     expect(getBuffer).not.toHaveBeenCalled();
   });
 
-  it('没有 FULL_INDEX 文档时仍入队并返回 taskId', async () => {
+  it('没有 FULL_INDEX 文档时集合直接完成、不建任务', async () => {
     const { service, db, qdrant, enqueueRebuild } = createService([]);
 
-    const taskId = await service.rebuildAll('admin');
+    const setId = await service.rebuildAll('admin');
 
-    expect(taskId).toMatch(/^rebuild-/);
+    expect(setId).toMatch(/^set-/);
     expect(qdrant.rebuildCollection).not.toHaveBeenCalled();
-    expect(db.inserts).toEqual([{ taskId, type: 'rebuild', status: 'PENDING', totalFiles: 0 }]);
-    expect(enqueueRebuild).toHaveBeenCalledWith(taskId, []);
+    const [setRow0] = db.inserts as Array<Record<string, unknown>>;
+    const setRow = setRow0 as Record<string, unknown> | undefined;
+    if (!setRow) throw new Error('missing set row');
+    expect(setRow).toMatchObject({ setId, type: 'rebuild' });
+    expect(setRow.completedAt).toBeInstanceOf(Date);
+    expect(db.inserts).toHaveLength(1);
+    expect(enqueueRebuild).not.toHaveBeenCalled();
   });
 });
 
 describe('rebuildSingle', () => {
-  it('单文件重建也建任务：一个 rebuild 任务只含该文档', async () => {
+  it('单文件重建也建任务：一个 rebuild 任务只含该文档，不挂集合', async () => {
     const { service, db, enqueueRebuild } = createService([]);
 
     const taskId = await service.rebuildSingle('doc-1');

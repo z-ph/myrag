@@ -92,6 +92,8 @@ export const documentsApi = {
     ),
   batchUpload: (files: File[]) =>
     unwrap(rpc.documents.uploads.$post({ form: { files } }, { headers: authHeaders() })),
+  createTaskSet: (type: 'upload' | 'rebuild') =>
+    unwrap(rpc.documents['task-sets'].$post({ json: { type } }, { headers: authHeaders() })),
   batchTask: (taskId: string) =>
     unwrap(rpc.documents.uploads[':taskId'].$get({ param: { taskId } }, { headers: authHeaders() })),
   listActiveTasks: () =>
@@ -122,10 +124,10 @@ export const documentsApi = {
     a.click();
     URL.revokeObjectURL(url);
   },
-  chunkedInit: (filename: string, totalChunks: number, totalSize: number) =>
+  chunkedInit: (filename: string, totalChunks: number, totalSize: number, setId?: string) =>
     unwrap(
       rpc['upload-sessions'].$post(
-        { form: { filename, totalChunks, totalSize } },
+        { form: setId ? { filename, totalChunks, totalSize, setId } : { filename, totalChunks, totalSize } },
         { headers: authHeaders() },
       ),
     ),

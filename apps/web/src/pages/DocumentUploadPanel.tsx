@@ -101,10 +101,10 @@ export function DocumentUploadPanel({
     });
   };
 
-  /** 分片上传单个文件 */
-  async function uploadFileChunked(file: File): Promise<void> {
+  /** 分片上传单个文件；多文件批次传入 setId 归组为任务集 */
+  async function uploadFileChunked(file: File, setId?: string): Promise<void> {
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
-    const session = await documentsApi.chunkedInit(file.name, totalChunks, file.size);
+    const session = await documentsApi.chunkedInit(file.name, totalChunks, file.size, setId);
 
     for (let i = 0; i < totalChunks; i++) {
       const start = i * CHUNK_SIZE;
@@ -128,10 +128,23 @@ export function DocumentUploadPanel({
     }
     setFileStates(states);
 
+    // 多文件批次：先建任务集，所有文件的处理任务归组到同一集合
+    let setId: string | undefined;
+    if (selectedFiles.length > 1) {
+      try {
+        setId = (await documentsApi.createTaskSet('upload')).setId;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '创建任务集失败';
+        message.error(msg);
+        setUploading(false);
+        return;
+      }
+    }
+
     for (const file of selectedFiles) {
       try {
         patchFileState(file, { status: 'uploading', progress: 0 });
-        await uploadFileChunked(file);
+        await uploadFileChunked(file, setId);
         patchFileState(file, { status: 'done', progress: 100 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : '上传失败';

@@ -109,11 +109,28 @@ export const documentChunks = pgTable(
 );
 
 // ---------- 批量任务 ----------
+/** 任务集：多文件上传/全量重建时把 N 个单文件任务归组；状态由成员任务派生，不落地 */
+export const taskSets = pgTable(
+  'task_sets',
+  {
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+    setId: varchar('set_id', { length: 64 }).notNull(),
+    /** 集合类型：upload / rebuild */
+    type: varchar('type', { length: 16 }).notNull(),
+    operator: varchar('operator', { length: 64 }).notNull().default(''),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    completedAt: timestamp('completed_at'),
+  },
+  (t) => [uniqueIndex('uq_task_sets_set_id').on(t.setId)],
+);
+
 export const batchTasks = pgTable(
   'batch_tasks',
   {
     id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     taskId: varchar('task_id', { length: 64 }).notNull(),
+    /** 所属任务集；单文件任务为 null */
+    setId: varchar('set_id', { length: 64 }),
     /** 任务类型：upload（批量上传）/ rebuild（重建索引），不再靠 taskId 前缀推断 */
     type: varchar('type', { length: 16 }).notNull().default('upload'),
     status: varchar('status', { length: 32 }).notNull().default('PENDING'),
@@ -130,6 +147,7 @@ export const batchTasks = pgTable(
   (t) => [
     uniqueIndex('uq_batch_tasks_task_id').on(t.taskId),
     index('idx_batch_tasks_status').on(t.status),
+    index('idx_batch_tasks_set_id').on(t.setId),
   ],
 );
 
@@ -145,6 +163,10 @@ export const batchFileResults = pgTable(
     stagedPath: varchar('staged_path', { length: 512 }).notNull(),
     filename: varchar('filename', { length: 255 }).notNull(),
     status: varchar('status', { length: 32 }).notNull(),
+    /** 单文件处理进度（0-100），仅 PROCESSING 期间有意义 */
+    progress: integer('progress').notNull().default(0),
+    /** 当前处理阶段：parse/chunk/outline/embed/write；失败后保留用于定位死在哪一步 */
+    stage: varchar('stage', { length: 32 }),
     message: varchar('message', { length: 512 }),
     errorMessage: text('error_message'),
     embeddingCount: integer('embedding_count').default(0),
@@ -161,6 +183,8 @@ export const uploadSessions = pgTable(
     id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
     uploadSessionId: varchar('upload_session_id', { length: 64 }).notNull(),
     taskId: varchar('task_id', { length: 64 }),
+    /** 多文件上传时归属的任务集 */
+    setId: varchar('set_id', { length: 64 }),
     userId: varchar('user_id', { length: 64 }).notNull(),
     originalFilename: varchar('original_filename', { length: 255 }).notNull(),
     totalChunks: integer('total_chunks').notNull(),
@@ -274,6 +298,8 @@ export type DocumentChunkRow = typeof documentChunks.$inferSelect;
 export type NewDocumentChunkRow = typeof documentChunks.$inferInsert;
 export type BatchTaskRow = typeof batchTasks.$inferSelect;
 export type NewBatchTaskRow = typeof batchTasks.$inferInsert;
+export type TaskSetRow = typeof taskSets.$inferSelect;
+export type NewTaskSetRow = typeof taskSets.$inferInsert;
 export type BatchFileResultRow = typeof batchFileResults.$inferSelect;
 export type NewBatchFileResultRow = typeof batchFileResults.$inferInsert;
 export type UploadSessionRow = typeof uploadSessions.$inferSelect;

@@ -5,16 +5,22 @@ import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import type { ServerConfig } from '@myrag/shared';
 import type { BatchTask, TaskStatus } from '@myrag/shared';
 import type { Db } from '../../db';
-import { batchFileResults, batchTasks, documents } from '../../db/schema';
-import type { ProcessService } from '../documents/process.service';
+import { batchFileResults, batchTasks, documents, taskSets } from '../../db/schema';
+import type { ProcessService, ProcessStage } from '../documents/process.service';
 import { genId, logger } from '../../lib/util';
 import { badRequest } from '../../lib/errors';
 
 export interface BatchService {
-  /** 创建批量任务并入队（任意实例 worker 均可拾取） */
-  createTask(files: { filename: string; buffer: Buffer }[], userId: string): Promise<BatchTask>;
+  /** 创建任务集（多文件上传/全量重建归组用），返回集合 ID */
+  createTaskSet(type: 'upload' | 'rebuild', operator: string): Promise<string>;
+  /** 创建任务并入队：一个文件一个任务；多文件时归组到 setId（未传则自建 upload 集合） */
+  createTask(
+    files: { filename: string; buffer: Buffer }[],
+    userId: string,
+    setId?: string,
+  ): Promise<{ setId?: string; taskIds: string[] }>;
   getTask(taskId: string): Promise<BatchTask>;
-  /** 未完成任务按车道分组：活跃中 / 排队中 / 异常（中断、失败、部分成功） */
+  /** 未完成任务按车道分组：活跃中 / 排队中 / 异常（中断、失败、部分成功）；集合成员归组显示 */
   listActive(): Promise<ActiveTaskLanes>;
   /** 重建入队：每个文档一个 process-single job，jobId = rebuild:taskId:documentId */
   enqueueRebuild(taskId: string, documentIds: string[]): Promise<void>;
@@ -57,6 +63,10 @@ export interface ActiveTaskFileView {
   name: string;
   status: 'pending' | 'processing' | 'success' | 'failed';
   message: string;
+  /** 处理进度 0-100（仅 processing 有意义） */
+  progress: number;
+  /** 当前/最后处理阶段；失败时保留用于定位 */
+  stage?: string;
 }
 
 export interface ActiveTaskView {
@@ -70,6 +80,22 @@ export interface ActiveTaskView {
   files: ActiveTaskFileView[];
   createdAt: string;
 }
+
+/** 车道条目：独立任务，或一个任务集（含本车道成员任务，聚合为全集合口径） */
+export type LaneItem =
+  | ({ kind: 'task' } & ActiveTaskView)
+  | {
+      kind: 'set';
+      setId: string;
+      type: 'upload' | 'rebuild';
+      /** 全集合口径：成员总数 / 成功 / 异常 / 未终态 */
+      total: number;
+      success: number;
+      failed: number;
+      remaining: number;
+      createdAt: string;
+      tasks: ActiveTaskView[];
+    };
 
 export type TaskLane = 'running' | 'queued' | 'interrupted';
 
@@ -97,9 +123,9 @@ export function nextFailRounds(current: number, nextStatus: string): number {
 }
 
 export interface ActiveTaskLanes {
-  running: ActiveTaskView[];
-  queued: ActiveTaskView[];
-  interrupted: ActiveTaskView[];
+  running: LaneItem[];
+  queued: LaneItem[];
+  interrupted: LaneItem[];
 }
 
 /** 车道只看任务状态：排队一直排队；异常 = 尝试过但未成功 */
@@ -147,9 +173,64 @@ function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batch
       name: r.filename,
       status: fileStatusMap[r.status] ?? 'pending',
       message: r.message ?? r.errorMessage ?? '',
+      progress: r.progress,
+      stage: r.stage ?? undefined,
     })),
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+export interface LaneTaskEntry {
+  task: typeof batchTasks.$inferSelect;
+  results: typeof batchFileResults.$inferSelect[];
+}
+
+/**
+ * 车道分类 + 任务集归组：
+ * - 无 setId 的任务直接成为 task 项
+ * - 有 setId 的任务按集合归组；集合在每条有（未终态）成员的车道出现一次，
+ *   tasks 只含该车道成员，头部聚合为全集合口径
+ */
+export function groupLaneItems(entries: LaneTaskEntry[]): ActiveTaskLanes {
+  const lanes: ActiveTaskLanes = { running: [], queued: [], interrupted: [] };
+  const isListed = (status: string) => (LISTED_TASK_STATUSES as readonly string[]).includes(status);
+  const bySet = new Map<string, LaneTaskEntry[]>();
+  for (const entry of entries) {
+    if (!entry.task.setId) {
+      if (!isListed(entry.task.status)) continue;
+      lanes[classifyTaskLane(entry.task.status)].push({ kind: 'task', ...toActiveView(entry.task, entry.results) });
+      continue;
+    }
+    const list = bySet.get(entry.task.setId) ?? [];
+    list.push(entry);
+    bySet.set(entry.task.setId, list);
+  }
+  for (const [setId, members] of bySet) {
+    const total = members.length;
+    const success = members.filter((m) => m.task.status === 'SUCCESS').length;
+    const failed = members.filter((m) => (EXCEPTION_LANE_STATUSES as readonly string[]).includes(m.task.status)).length;
+    const createdAt = members.map((m) => m.task.createdAt).reduce((a, b) => (a < b ? a : b));
+    const type: 'upload' | 'rebuild' = members[0]?.task.type === 'rebuild' ? 'rebuild' : 'upload';
+    for (const lane of ['running', 'queued', 'interrupted'] as const) {
+      const laneMembers = members.filter((m) => isListed(m.task.status) && classifyTaskLane(m.task.status) === lane);
+      if (laneMembers.length === 0) continue;
+      lanes[lane].push({
+        kind: 'set',
+        setId,
+        type,
+        total,
+        success,
+        failed,
+        remaining: total - success - failed,
+        createdAt: createdAt.toISOString(),
+        tasks: laneMembers.map((m) => toActiveView(m.task, m.results)),
+      });
+    }
+  }
+  for (const lane of ['running', 'queued', 'interrupted'] as const) {
+    lanes[lane].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  return lanes;
 }
 
 /** 处理单个任务（幂等：仅处理 PENDING/PROCESSING 的文件；INTERRUPTED 立即停） */
@@ -191,6 +272,17 @@ async function processTaskFiles(
           .where(eq(batchFileResults.id, result.id));
         continue;
       }
+      // 捞起即置 PROCESSING + 进度归零，处理过程按阶段回报进度
+      await db
+        .update(batchFileResults)
+        .set({ status: 'PROCESSING', progress: 0, stage: null })
+        .where(eq(batchFileResults.id, result.id));
+      const onProgress = async (stage: ProcessStage, percent: number) => {
+        await db
+          .update(batchFileResults)
+          .set({ stage, progress: percent })
+          .where(eq(batchFileResults.id, result.id));
+      };
       let outcome;
       try {
         outcome = await processService.processBuffer({
@@ -198,6 +290,7 @@ async function processTaskFiles(
           originalFilename: result.filename,
           buffer,
           batchTaskId: taskId,
+          onProgress,
         });
       } catch (err) {
         outcome = {
@@ -219,6 +312,8 @@ async function processTaskFiles(
           errorMessage: outcome.success ? null : outcome.message,
           segmentCount: outcome.segmentCount,
           embeddingCount: outcome.vectorCount,
+          // 成功则进度封顶、阶段清空；失败保留 stage/progress 便于定位死在哪一步
+          ...(outcome.success ? { progress: 100, stage: null } : {}),
         })
         .where(eq(batchFileResults.id, result.id));
     }
@@ -247,7 +342,21 @@ async function processTaskFiles(
       updatedAt: new Date(),
     })
     .where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
+  await markSetCompletedIfDone(db, taskId);
   logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failure})`);
+}
+
+/** 任务进入终态后：若所属集合已无未终态成员，写集合完成时间 */
+async function markSetCompletedIfDone(db: Db, taskId: string): Promise<void> {
+  const [task] = await db.select({ setId: batchTasks.setId }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+  if (!task?.setId) return;
+  const open = await db
+    .select({ status: batchTasks.status })
+    .from(batchTasks)
+    .where(and(eq(batchTasks.setId, task.setId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
+  if (open.length === 0) {
+    await db.update(taskSets).set({ completedAt: new Date() }).where(eq(taskSets.setId, task.setId));
+  }
 }
 /** BullMQ 队列名（name 不允许含冒号；Redis key 由 prefix:name 拼成 myrag:batch:*） */
 const QUEUE_NAME = 'batch';
@@ -374,18 +483,34 @@ export function createBatchService(
     };
     if (allDone) updates.completedAt = new Date();
     await db.update(batchTasks).set(updates).where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
+    if (allDone) await markSetCompletedIfDone(db, taskId);
   }
 
   return {
-    async createTask(files, userId) {
+    async createTaskSet(type, operator) {
+      const setId = genId('set');
+      await db.insert(taskSets).values({ setId, type, operator });
+      return setId;
+    },
+
+    async createTask(files, userId, setId) {
       if (files.length === 0) throw badRequest('没有可上传的文件');
-      const taskId = genId('task');
-      await db.insert(batchTasks).values({
-        taskId,
-        status: 'PENDING',
-        totalFiles: files.length,
-      });
+      // 一个文件一个任务；多文件归组到集合（未指定则自建 upload 集合）
+      let effectiveSetId = setId ?? null;
+      if (files.length > 1 && !effectiveSetId) {
+        effectiveSetId = genId('set');
+        await db.insert(taskSets).values({ setId: effectiveSetId, type: 'upload', operator: userId });
+      }
+      const taskIds: string[] = [];
       for (const file of files) {
+        const taskId = genId('task');
+        await db.insert(batchTasks).values({
+          taskId,
+          setId: effectiveSetId,
+          type: 'upload',
+          status: 'PENDING',
+          totalFiles: 1,
+        });
         const stagedPath = join(cfg.dataDir, 'batch', taskId, file.filename);
         await mkdir(dirname(stagedPath), { recursive: true });
         await writeFile(stagedPath, file.buffer);
@@ -396,9 +521,10 @@ export function createBatchService(
           userId,
           stagedPath,
         });
+        await enqueue(taskId);
+        taskIds.push(taskId);
       }
-      await enqueue(taskId);
-      return this.getTask(taskId);
+      return { setId: effectiveSetId ?? undefined, taskIds };
     },
 
     enqueueRebuild,
@@ -415,24 +541,28 @@ export function createBatchService(
     },
 
     async listActive() {
-      const lanes: ActiveTaskLanes = { running: [], queued: [], interrupted: [] };
+      // 未完成任务（车道候选）
       const activeTasks = await db
         .select()
         .from(batchTasks)
         .where(inArray(batchTasks.status, [...LISTED_TASK_STATUSES]))
         .orderBy(desc(batchTasks.createdAt));
-      if (activeTasks.length === 0) return lanes;
-      const taskIds = activeTasks.map((t) => t.taskId);
+      if (activeTasks.length === 0) return { running: [], queued: [], interrupted: [] };
+      // 涉及集合的，把全体成员（含已 SUCCESS 的）捞出来做聚合
+      const setIds = [...new Set(activeTasks.map((t) => t.setId).filter(Boolean))] as string[];
+      const setMembers =
+        setIds.length === 0 ? [] : await db.select().from(batchTasks).where(inArray(batchTasks.setId, setIds));
+      const byId = new Map(activeTasks.map((t) => [t.taskId, t]));
+      for (const member of setMembers) byId.set(member.taskId, member);
+      const tasks = [...byId.values()];
       const allResults = await db
         .select()
         .from(batchFileResults)
-        .where(inArray(batchFileResults.taskId, taskIds))
+        .where(inArray(batchFileResults.taskId, tasks.map((t) => t.taskId)))
         .orderBy(desc(batchFileResults.id));
-      for (const task of activeTasks) {
-        const view = toActiveView(task, allResults.filter((r) => r.taskId === task.taskId));
-        lanes[classifyTaskLane(task.status)].push(view);
-      }
-      return lanes;
+      return groupLaneItems(
+        tasks.map((task) => ({ task, results: allResults.filter((r) => r.taskId === task.taskId) })),
+      );
     },
 
     startWorker() {
@@ -446,17 +576,26 @@ export function createBatchService(
             // taskId 由入队方显式放在 data 里，不再从 jobId 字符串里拆
             const batchTaskId = job.data.taskId ?? null;
 
-            // 标记单文件 PROCESSING + 批任务 PROCESSING
+            // 标记单文件 PROCESSING + 批任务 PROCESSING（进度归零）
             if (batchTaskId) {
               await db
                 .update(batchFileResults)
-                .set({ status: 'PROCESSING' })
+                .set({ status: 'PROCESSING', progress: 0, stage: null })
                 .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
               await db
                 .update(batchTasks)
                 .set({ status: 'PROCESSING', updatedAt: new Date() })
                 .where(and(eq(batchTasks.taskId, batchTaskId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
             }
+
+            const onProgress = batchTaskId
+              ? async (stage: ProcessStage, percent: number) => {
+                  await db
+                    .update(batchFileResults)
+                    .set({ stage, progress: percent })
+                    .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
+                }
+              : undefined;
 
             try {
               // 单任务超时：5 分钟，从开始消费计时
@@ -465,7 +604,7 @@ export function createBatchService(
                 timer.unref?.();
               });
               // reprocessStored 先清旧向量再处理；失败不抛异常，必须看返回值
-              const result = await Promise.race([processService.reprocessStored(documentId, 'system'), timeout]);
+              const result = await Promise.race([processService.reprocessStored(documentId, 'system', onProgress), timeout]);
 
               if (batchTaskId) {
                 const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, batchTaskId)).limit(1);
@@ -478,6 +617,8 @@ export function createBatchService(
                     errorMessage: result.success ? null : result.message,
                     segmentCount: result.segmentCount,
                     embeddingCount: result.vectorCount,
+                    // 成功则进度封顶、阶段清空；失败保留 stage/progress 便于定位
+                    ...(result.success ? { progress: 100, stage: null } : {}),
                   })
                   .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
                 await finalizeBatchTask(batchTaskId);
@@ -504,7 +645,8 @@ export function createBatchService(
         {
           connection,
           prefix: QUEUE_PREFIX,
-          concurrency: 1,
+          // 任务颗粒度 = 单文件，并行度由 worker 并发承担（原 processTaskFiles 内部池兼容存量多文件任务）
+          concurrency: cfg.batchConcurrency,
         },
       );
       worker.on('error', (err) => logger.error('[batch] worker 异常:', err));
@@ -525,7 +667,7 @@ export function createBatchService(
         .where(eq(batchTasks.taskId, taskId));
       await db
         .update(batchFileResults)
-        .set({ status: 'PENDING' })
+        .set({ status: 'PENDING', progress: 0, stage: null })
         .where(and(eq(batchFileResults.taskId, taskId), eq(batchFileResults.status, 'PROCESSING')));
       await dropJobsForTask(taskId);
     },
@@ -555,7 +697,7 @@ export function createBatchService(
         if (!task) continue;
         await db
           .update(batchFileResults)
-          .set({ status: 'PENDING', errorMessage: null, message: null })
+          .set({ status: 'PENDING', errorMessage: null, message: null, progress: 0, stage: null })
           .where(
             and(eq(batchFileResults.taskId, task.taskId), inArray(batchFileResults.status, ['FAILED', 'PROCESSING'])),
           );
@@ -579,6 +721,10 @@ export function createBatchService(
           await enqueueRebuild(task.taskId, docIds);
         } else {
           await enqueue(task.taskId);
+        }
+        // 成员被恢复后集合重新处于未完状态
+        if (task.setId) {
+          await db.update(taskSets).set({ completedAt: null }).where(eq(taskSets.setId, task.setId));
         }
       }
       return recoverable;

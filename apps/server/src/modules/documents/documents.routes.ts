@@ -18,6 +18,14 @@ import { DEFAULTS, FILE_TYPES } from '@myrag/shared';
 const documentIdParam = z.object({ documentId: z.string().min(1).max(64) });
 const taskIdParam = z.object({ taskId: z.string().min(1).max(64) });
 
+const activeTaskFileSchema = z.object({
+  name: z.string(),
+  status: z.enum(['pending', 'processing', 'success', 'failed']),
+  message: z.string(),
+  progress: z.number(),
+  stage: z.string().optional(),
+});
+
 const activeTaskViewSchema = z.object({
   taskId: z.string(),
   type: z.enum(['upload', 'rebuild']),
@@ -26,15 +34,25 @@ const activeTaskViewSchema = z.object({
   completed: z.number(),
   failed: z.number(),
   failRounds: z.number(),
-  files: z.array(
-    z.object({
-      name: z.string(),
-      status: z.enum(['pending', 'processing', 'success', 'failed']),
-      message: z.string(),
-    }),
-  ),
+  files: z.array(activeTaskFileSchema),
   createdAt: z.string(),
 });
+
+/** 车道条目：独立任务（kind=task）或任务集（kind=set，聚合为全集合口径，tasks 仅含本车道成员） */
+const laneItemSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('task') }).extend(activeTaskViewSchema.shape),
+  z.object({
+    kind: z.literal('set'),
+    setId: z.string(),
+    type: z.enum(['upload', 'rebuild']),
+    total: z.number(),
+    success: z.number(),
+    failed: z.number(),
+    remaining: z.number(),
+    createdAt: z.string(),
+    tasks: z.array(activeTaskViewSchema),
+  }),
+]);
 
 const binaryResponse = {
   description: '文件二进制流',
@@ -117,14 +135,21 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/uploads',
-          description: '批量上传文档（创建批量任务，最多 50 个，异步处理）',
+          description: '批量上传文档（一个文件一个任务；多文件自动归组为任务集，异步处理）',
           security: bearerSecurity,
           middleware: [requireStaff],
           request: {
             body: { content: { 'multipart/form-data': { schema: z.object({ files: z.array(z.unknown().openapi({ type: "string", format: "binary" })) }) } } },
           },
           responses: {
-            201: { description: '任务状态', content: { 'application/json': { schema: batchTaskSchema } } },
+            201: {
+              description: '任务已创建：多文件归组到 setId，taskIds 为逐文件任务',
+              content: {
+                'application/json': {
+                  schema: z.object({ setId: z.string().optional(), taskIds: z.array(z.string()) }),
+                },
+              },
+            },
             ...errorResponses,
           },
         }),
@@ -138,13 +163,37 @@ export function createDocumentsRoutes(deps: AppDeps) {
           if (files.length > DEFAULTS.batchUploadMaxFiles) {
             throw badRequest(`单次最多上传 ${DEFAULTS.batchUploadMaxFiles} 个文件`);
           }
-          const task = await batchService.createTask(
+          const created = await batchService.createTask(
             await Promise.all(
               files.map(async (f) => ({ filename: f.name, buffer: Buffer.from(await f.arrayBuffer()) })),
             ),
             auth.username,
           );
-          return c.json(task, 201);
+          return c.json(created, 201);
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'post',
+          path: '/task-sets',
+          description: '创建任务集（多文件上传前端先建集合，再把各分片会话挂进去）',
+          security: bearerSecurity,
+          middleware: [requireStaff],
+          request: {
+            body: {
+              content: { 'application/json': { schema: z.object({ type: z.enum(['upload', 'rebuild']) }) } },
+            },
+          },
+          responses: {
+            201: { description: '集合 ID', content: { 'application/json': { schema: z.object({ setId: z.string() }) } } },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          const { type } = c.req.valid('json');
+          const setId = await batchService.createTaskSet(type, c.get('auth').username);
+          return c.json({ setId }, 201);
         },
       )
 
@@ -161,9 +210,9 @@ export function createDocumentsRoutes(deps: AppDeps) {
               content: {
                 'application/json': {
                   schema: z.object({
-                    running: z.array(activeTaskViewSchema),
-                    queued: z.array(activeTaskViewSchema),
-                    interrupted: z.array(activeTaskViewSchema),
+                    running: z.array(laneItemSchema),
+                    queued: z.array(laneItemSchema),
+                    interrupted: z.array(laneItemSchema),
                   }),
                 },
               },
@@ -263,7 +312,7 @@ export function createDocumentsRoutes(deps: AppDeps) {
         createRoute({
           method: 'post',
           path: '/uploads/rebuild-all',
-          description: '全量重建向量索引（仅管理员，清空向量库并重新分片向量入库）',
+          description: '全量重建向量索引（仅管理员，建任务集：每个文档一个任务，逐文档清旧向量重新入库）',
           security: bearerSecurity,
           middleware: [requireSuperAdmin],
           responses: {
@@ -275,8 +324,8 @@ export function createDocumentsRoutes(deps: AppDeps) {
           },
         }),
         async (c) => {
-          const taskId = await processService.rebuildAll(c.get('auth').username);
-          return c.json({ taskId });
+          const setId = await processService.rebuildAll(c.get('auth').username);
+          return c.json({ setId });
         },
       )
 

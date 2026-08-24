@@ -112,7 +112,11 @@ export async function parsePptx(buffer: Buffer): Promise<string> {
 }
 
 /** PDF 扫描件：用 pdf-parse 的 getScreenshot 逐页渲染为 PNG，再逐页发视觉模型 OCR */
-export async function parseScannedPdf(buffer: Buffer, llm: LlmClient): Promise<string> {
+export async function parseScannedPdf(
+  buffer: Buffer,
+  llm: LlmClient,
+  onPage?: (done: number, total: number) => void | Promise<void>,
+): Promise<string> {
   let screenshots;
   try {
     const parser = new PDFParse({ data: new Uint8Array(buffer) });
@@ -127,8 +131,9 @@ export async function parseScannedPdf(buffer: Buffer, llm: LlmClient): Promise<s
   }
 
   const pages: string[] = [];
-  for (const page of screenshots.pages) {
-    if (page.data.length === 0) continue;
+  const ocrPages = screenshots.pages.filter((p) => p.data.length > 0);
+  let done = 0;
+  for (const page of ocrPages) {
     const base64 = Buffer.from(page.data).toString('base64');
     try {
       const text = await llm.visionChat(
@@ -141,6 +146,8 @@ export async function parseScannedPdf(buffer: Buffer, llm: LlmClient): Promise<s
       if (err instanceof Error && err.message.includes('模型服务')) throw err;
       throw new ParseError(`PDF 第 ${page.pageNumber} 页 OCR 失败`, err);
     }
+    done += 1;
+    await onPage?.(done, ocrPages.length);
   }
   return pages.join('\n\n');
 }
@@ -162,11 +169,12 @@ export async function parseImage(buffer: Buffer, llm: LlmClient): Promise<string
   }
 }
 
-/** 按文件类型路由解析（图片与 PDF 扫描件需要 llm 做 OCR） */
+/** 按文件类型路由解析（图片与 PDF 扫描件需要 llm 做 OCR；onOcrPage 逐页报进度） */
 export async function parseDocument(
   fileType: FileType,
   buffer: Buffer,
   llm: LlmClient,
+  onOcrPage?: (done: number, total: number) => void | Promise<void>,
 ): Promise<{ text: string; ocrModel?: string; ocrDurationMs?: number }> {
   const start = Date.now();
   switch (fileType) {
@@ -175,7 +183,7 @@ export async function parseDocument(
     case 'PDF': {
       const { text, isScanned } = await parsePdf(buffer);
       if (!isScanned) return { text };
-      const ocrText = await parseScannedPdf(buffer, llm);
+      const ocrText = await parseScannedPdf(buffer, llm, onOcrPage);
       return { text: ocrText, ocrModel: 'vision', ocrDurationMs: Date.now() - start };
     }
     case 'DOCUMENT': {

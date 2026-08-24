@@ -140,7 +140,7 @@ export const recoverTasksResponseSchema = z.object({
 });
 
 export const rebuildAllResponseSchema = z.object({
-  taskId: z.string(),
+  setId: z.string(),
 });
 
 /** 访客会话清理触发结果 */

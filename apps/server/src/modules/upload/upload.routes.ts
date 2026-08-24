@@ -27,6 +27,8 @@ export function createUploadRoutes(deps: AppDeps) {
                     filename: z.string().min(1).max(255),
                     totalChunks: z.coerce.number().int().min(1).max(10_000),
                     totalSize: z.coerce.number().int().positive(),
+                    /** 多文件上传时归属的任务集 */
+                    setId: z.string().min(1).max(64).optional(),
                   }),
                 },
               },

@@ -403,16 +403,17 @@ body {
 }
 
 .task-lanes {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
   margin-top: 16px;
 }
 
 .task-lane .ant-card-body {
-  height: 280px;
+  padding: 0 16px 16px;
+}
+
+.task-lane .ant-tabs-body-holder {
+  /* 有限高度：视口比例 + 上下限，内容超出滚动，不无限拉长页面 */
+  height: clamp(240px, 40vh, 480px);
   overflow: auto;
-  padding: 12px 16px;
 }
 
 .task-lane-item {
@@ -444,6 +445,29 @@ body {
 
 .task-lane-file.is-failed {
   color: var(--seal);
+}
+
+.task-lane-selectbar {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+/* 任务集成员：嵌套在集合卡片内的紧凑任务块 */
+.task-set-member {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-2, #fafafa);
+}
+
+.task-lane-set {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
 }
 
 @media (max-width: 800px) {
@@ -484,11 +508,7 @@ body {
     max-width: none;
   }
 
-  .task-lanes {
-    grid-template-columns: 1fr;
-  }
-
-  .task-lane .ant-card-body {
-    height: 220px;
+  .task-lane .ant-tabs-body-holder {
+    height: clamp(200px, 40vh, 360px);
   }
 }

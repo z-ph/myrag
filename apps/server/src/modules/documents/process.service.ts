@@ -4,7 +4,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { DocumentStatus, ServerConfig, FileType, SettingsService } from '@myrag/shared';
 import { DEFAULTS } from '@myrag/shared';
 import type { Db } from '../../db';
-import { batchTasks, documents, documentChunks, type DocumentRow } from '../../db/schema';
+import { batchTasks, documents, documentChunks, taskSets, type DocumentRow } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
@@ -15,11 +15,17 @@ import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
 import { conflict, badRequest } from '../../lib/errors';
 
+/** 处理阶段：parse 解析（含 OCR）/ chunk 分块 / outline 目录分析 / embed 向量化 / write 写入 */
+export type ProcessStage = 'parse' | 'chunk' | 'outline' | 'embed' | 'write';
+/** 阶段进度上报：percent 为整体 0-100 */
+export type ProgressReporter = (stage: ProcessStage, percent: number) => void | Promise<void>;
+
 export interface ProcessInput {
   userId: string;
   originalFilename: string;
   buffer: Buffer;
   batchTaskId?: string;
+  onProgress?: ProgressReporter;
 }
 
 export interface ProcessResult {
@@ -36,16 +42,16 @@ export interface ProcessService {
   /** 处理单文件（上传/批量/重建共用），写库并返回结果 */
   processBuffer(input: ProcessInput): Promise<ProcessResult>;
   /** 单个已分片向量入库文档的解析→分块→向量化（worker / 重建共用） */
-  processDocumentRow(doc: DocumentRow): Promise<ProcessResult>;
-  /** 依据 documents 行重处理（全量重建用） */
-  reprocessStored(documentId: string, operator: string): Promise<ProcessResult>;
+  processDocumentRow(doc: DocumentRow, onProgress?: ProgressReporter): Promise<ProcessResult>;
+  /** 依据 documents 行重处理（重建 worker 用） */
+  reprocessStored(documentId: string, operator: string, onProgress?: ProgressReporter): Promise<ProcessResult>;
   /** 单文件重建：创建任务并异步入队，返回任务 ID */
   rebuildSingle(documentId: string): Promise<string>;
-  /** 全量重建：入队后立即返回任务 ID，不逐个处理文档 */
+  /** 全量重建：建任务集 + 每文档一个任务，入队后立即返回集合 ID */
   rebuildAll(operator: string): Promise<string>;
 }
 
-/** 全量重建入队：每个文档一个 process-single job */
+/** 重建入队：每个文档一个 process-single job */
 export type EnqueueRebuild = (taskId: string, documentIds: string[]) => Promise<void>;
 
 /** 按扩展名推断文档大类 */
@@ -89,20 +95,28 @@ export function createProcessService(
     filePath: string,
     originalFilename: string,
     buffer: Buffer,
+    onProgress?: ProgressReporter,
   ): Promise<{ segmentCount: number; vectorCount: number }> {
-    // 1. 解析
-    const { text, ocrModel, ocrDurationMs } = await parseDocument(fileType, buffer, llm);
+    const report = (stage: ProcessStage, percent: number) => onProgress?.(stage, percent);
+    // 1. 解析（OCR 场景按页推进 5→30）
+    await report('parse', 5);
+    const { text, ocrModel, ocrDurationMs } = await parseDocument(fileType, buffer, llm, (done, total) =>
+      report('parse', 5 + Math.round((25 * done) / Math.max(total, 1))),
+    );
     const cleanText = text.replace(/\u0000/g, '').trim();
     if (!cleanText) {
       throw new ParseError('未能从文档中提取到文本内容');
     }
+    await report('parse', 30);
 
     // 2. 分块（参数来自动态设置，可运行时调整）
     const s = settings.get();
     const chunks = chunkText(cleanText, s.chunkSize, s.chunkOverlap, s.chunkKeywordsTopN);
     if (chunks.length === 0) throw new ParseError('未能从文档中提取到文本内容');
+    await report('chunk', 35);
 
     // 3. 目录分析（embed 之前；失败不得写向量）
+    await report('outline', 40);
     let outline;
     try {
       outline = await analyzeDocumentOutline(
@@ -117,14 +131,16 @@ export function createProcessService(
       throw new OutlineError(detail);
     }
     const titleByIndex = new Map(outline.chunks.map((c) => [c.chunkIndex, c]));
+    await report('outline', 55);
 
-    // 4. 向量化（分批，批次上限可配）
+    // 4. 向量化（分批，批次上限可配；按批推进 55→90）
     const documentTime = extractDocumentTime(cleanText);
     const documentKeywords = extractKeywords(cleanText);
     const vectors: number[][] = [];
     for (let i = 0; i < chunks.length; i += s.embedBatchSize) {
       const batch = chunks.slice(i, i + s.embedBatchSize);
       vectors.push(...(await llm.embed(batch.map((c) => c.text))));
+      await report('embed', 55 + Math.round((35 * (i + batch.length)) / chunks.length));
     }
 
     // 5. 写 Qdrant（point ID 必须是整数或 UUID）
@@ -179,10 +195,11 @@ export function createProcessService(
         .where(eq(documents.documentId, documentId));
     }
 
+    await report('write', 95);
     return { segmentCount: chunks.length, vectorCount: points.length };
   }
 
-  async function processDocumentRow(doc: DocumentRow): Promise<ProcessResult> {
+  async function processDocumentRow(doc: DocumentRow, onProgress?: ProgressReporter): Promise<ProcessResult> {
     const [fresh] = await db
       .select()
       .from(documents)
@@ -208,6 +225,7 @@ export function createProcessService(
         fresh.filePath,
         fresh.originalFilename,
         buffer,
+        onProgress,
       );
       await db
         .update(documents)
@@ -314,12 +332,12 @@ export function createProcessService(
   return {
     async processBuffer(input) {
       const doc = await createPendingDocument(input);
-      return processDocumentRow(doc);
+      return processDocumentRow(doc, input.onProgress);
     },
 
     processDocumentRow,
 
-    async reprocessStored(documentId) {
+    async reprocessStored(documentId, _operator, onProgress) {
       const [doc] = await db
         .select()
         .from(documents)
@@ -331,7 +349,7 @@ export function createProcessService(
       // 清除旧向量与快照，重新处理
       await qdrant.deleteByDocument(documentId);
       await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
-      return processDocumentRow(doc);
+      return processDocumentRow(doc, onProgress);
     },
 
     async rebuildSingle(documentId) {
@@ -340,14 +358,41 @@ export function createProcessService(
       return taskId;
     },
 
-    async rebuildAll(_operator) {
+    async rebuildAll(operator) {
       const docs = await db
         .select({ documentId: documents.documentId })
         .from(documents)
         .where(and(eq(documents.deleted, false), eq(documents.storageMode, 'FULL_INDEX')));
-      const taskId = await enqueueRebuildTask(docs.map((doc) => doc.documentId));
-      logger.info(`[rebuild] 全量重建已入队: ${taskId}，共 ${docs.length} 个文档`);
-      return taskId;
+      const setId = genId('set');
+      await db.insert(taskSets).values({
+        setId,
+        type: 'rebuild',
+        operator,
+        // 没有文档的集合立即完成，车道永远不会显示它
+        ...(docs.length === 0 ? { completedAt: new Date() } : {}),
+      });
+      // 不再先清空整个 Qdrant 集合（一旦后续 worker 全部失败，向量库就空了）。
+      // reprocessStored 路径会逐文档清旧向量再写新向量。
+      if (docs.length > 0) {
+        await db
+          .update(documents)
+          .set({ status: 'PENDING', vectorCount: 0, segmentCount: 0 })
+          .where(inArray(documents.documentId, docs.map((doc) => doc.documentId)));
+      }
+      // 每个文档一个独立任务：单点失败只影响自己，可单独恢复
+      for (const doc of docs) {
+        const taskId = genId('rebuild');
+        await db.insert(batchTasks).values({
+          taskId,
+          setId,
+          type: 'rebuild',
+          status: 'PENDING',
+          totalFiles: 1,
+        });
+        await enqueueRebuild(taskId, [doc.documentId]);
+      }
+      logger.info(`[rebuild] 全量重建已入队: 集合 ${setId}，共 ${docs.length} 个任务`);
+      return setId;
     },
   };
 }

@@ -10,7 +10,7 @@ import type { ProcessService } from '../documents/process.service';
 import type { BatchService } from './batch.service';
 
 export interface ChunkedService {
-  initSession(input: { filename: string; totalChunks: number; totalSize: number }, userId: string): Promise<ChunkUploadSession>;
+  initSession(input: { filename: string; totalChunks: number; totalSize: number; setId?: string }, userId: string): Promise<ChunkUploadSession>;
   uploadPart(sessionId: string, chunkIndex: number, buffer: Buffer, userId: string): Promise<ChunkUploadSession>;
   complete(sessionId: string, userId: string): Promise<ChunkUploadSession>;
   getSession(sessionId: string): Promise<ChunkUploadSession>;
@@ -56,6 +56,7 @@ export function createChunkedService(
       await mkdir(chunkDir(uploadSessionId), { recursive: true });
       await db.insert(uploadSessions).values({
         uploadSessionId,
+        setId: input.setId ?? null,
         userId,
         originalFilename: input.filename,
         totalChunks: input.totalChunks,
@@ -120,12 +121,12 @@ export function createChunkedService(
         .set({ status: 'PROCESSING' })
         .where(eq(uploadSessions.uploadSessionId, sessionId));
 
-      // 接入批量处理（单文件任务）
+      // 接入批量处理（单文件任务，可挂到多文件上传的任务集）
       const buffer = await readFile(mergedPath);
-      const task = await batchService.createTask([{ filename: row.originalFilename, buffer }], userId);
+      const { taskIds } = await batchService.createTask([{ filename: row.originalFilename, buffer }], userId, row.setId ?? undefined);
       await db
         .update(uploadSessions)
-        .set({ taskId: task.taskId, status: 'SUCCESS', completedAt: new Date() })
+        .set({ taskId: taskIds[0], status: 'SUCCESS', completedAt: new Date() })
         .where(eq(uploadSessions.uploadSessionId, sessionId));
       // 清理分片目录（保留 merged 已被读取）
       void rm(chunkDir(sessionId), { recursive: true, force: true }).catch(() => {});
