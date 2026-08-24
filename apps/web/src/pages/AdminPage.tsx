@@ -4,24 +4,25 @@ import {
   Button,
   Card,
   Checkbox,
-  Col,
   Drawer,
   Empty,
   Input,
   InputNumber,
   List,
   Popconfirm,
-  Progress,
-  Row,
   Space,
   Spin,
-  Statistic,
   Switch,
   Tabs,
   Tag,
   Typography,
 } from 'antd';
-import { DeleteOutlined, FileTextOutlined, HistoryOutlined, ReloadOutlined, StopOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  HistoryOutlined,
+  ReloadOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentsApi, maintenanceApi, promptsApi, settingsApi, usersApi } from '../api';
 import { runDocumentBatch } from './documentBatch';
@@ -33,6 +34,443 @@ const PROMPT_LABELS: Record<string, string> = {
   'vision.system': '图片理解',
 };
 
+const STAGE_LABEL: Record<string, string> = {
+  parse: '解析',
+  chunk: '分块',
+  embed: '向量化',
+  write: '入库',
+};
+
+/** 阶段对应的真实单元名（OCR 页 / 分块 / 向量点） */
+const STAGE_UNIT: Record<string, string> = {
+  parse: '页',
+  chunk: '块',
+  embed: '块',
+  write: '点',
+};
+
+const TASK_STATUS_TAG: Record<string, { color: string; text: string }> = {
+  pending: { color: 'default', text: '排队中' },
+  processing: { color: 'processing', text: '处理中' },
+  interrupted: { color: 'warning', text: '已中断' },
+  done: { color: 'success', text: '完成' },
+  failed: { color: 'error', text: '失败' },
+  partial: { color: 'warning', text: '部分成功' },
+};
+
+type LaneFile = {
+  name: string;
+  status: 'pending' | 'processing' | 'success' | 'failed';
+  message: string;
+  progress: number;
+  stage?: string;
+  stageDone?: number;
+  stageTotal?: number;
+};
+
+type LaneTask = {
+  taskId: string;
+  type: 'upload' | 'rebuild';
+  status: string;
+  total: number;
+  completed: number;
+  failed: number;
+  failRounds: number;
+  files: LaneFile[];
+  createdAt: string;
+};
+
+type LaneItem =
+  | ({ kind: 'task' } & LaneTask)
+  | {
+      kind: 'set';
+      setId: string;
+      type: 'upload' | 'rebuild';
+      total: number;
+      success: number;
+      failed: number;
+      remaining: number;
+      createdAt: string;
+      tasks: LaneTask[];
+    };
+
+type Lanes = { running: LaneItem[]; queued: LaneItem[]; interrupted: LaneItem[] };
+
+function typeTag(type: 'upload' | 'rebuild') {
+  return <Tag color={type === 'rebuild' ? 'purple' : 'blue'}>{type === 'rebuild' ? '全量重建' : '上传'}</Tag>;
+}
+
+/** 单任务真实进度：文件级聚合（处理中按各自真实 progress，终态按 100） */
+function taskPercent(task: LaneTask): number {
+  if (task.files.length > 0) {
+    const sum = task.files.reduce(
+      (acc, f) => acc + (f.status === 'success' || f.status === 'failed' ? 100 : f.progress),
+      0,
+    );
+    return Math.min(100, Math.round(sum / task.files.length));
+  }
+  return task.total > 0 ? Math.round(((task.completed + task.failed) / task.total) * 100) : 0;
+}
+
+function ProgressTrack({ percent, tone }: { percent: number; tone?: 'done' | 'error' }) {
+  const cls = tone === 'done' ? 'is-done' : tone === 'error' ? 'is-error' : '';
+  return (
+    <div className="progress-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+      <div className={`progress-fill ${cls}`} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+    </div>
+  );
+}
+
+/** 文件行：真实单元计数（第 X/Y 页 · X/Y 块 · X/Y 点）+ 进度；失败给出定位与原因 */
+function FileRow({ file }: { file: LaneFile }) {
+  const stageLabel = file.stage ? STAGE_LABEL[file.stage] ?? file.stage : '';
+  const unit = file.stage ? STAGE_UNIT[file.stage] ?? '' : '';
+  const hasUnits = file.stageDone != null && file.stageTotal != null && file.stageTotal > 0;
+  const unitText = hasUnits ? `${file.stageDone}/${file.stageTotal} ${unit}` : '';
+
+  let stateText = '';
+  if (file.status === 'processing') stateText = stageLabel ? `${stageLabel}中` : '处理中';
+  else if (file.status === 'success') stateText = '完成';
+  else if (file.status === 'failed') stateText = `失败于${stageLabel || '处理'}`;
+  else stateText = '等待';
+
+  return (
+    <div className={file.status === 'failed' ? 'ledger-file is-failed' : 'ledger-file'}>
+      <div className="ledger-file-top">
+        <span className="ledger-file-name" title={file.name}>
+          {file.name}
+        </span>
+        <span className="ledger-file-state">
+          {stateText}
+          {unitText ? <span className="units"> · {unitText}</span> : null}
+          {file.status === 'processing' ? <span className="units"> · {file.progress}%</span> : null}
+        </span>
+      </div>
+      {file.status === 'processing' ? <ProgressTrack percent={file.progress} /> : null}
+      {file.status === 'failed' && file.message ? <div className="ledger-file-msg">{file.message}</div> : null}
+    </div>
+  );
+}
+
+interface LaneListProps {
+  action?: (task: LaneTask) => ReactNode;
+  selectable?: boolean;
+  selected?: string[];
+  onToggle?: (taskId: string, checked: boolean) => void;
+}
+
+function TaskBlock({
+  task,
+  action,
+  selectable,
+  selected,
+  onToggle,
+  nested,
+}: { task: LaneTask; nested?: boolean } & LaneListProps) {
+  const percent = taskPercent(task);
+  const s = TASK_STATUS_TAG[task.status] ?? { color: 'default', text: task.status };
+  return (
+    <div className={nested ? 'ledger-member' : 'ledger-entry'}>
+      <div className="ledger-entry-head">
+        <div className="ledger-entry-title">
+          {selectable ? (
+            <Checkbox
+              checked={selected?.includes(task.taskId)}
+              onChange={(e) => onToggle?.(task.taskId, e.target.checked)}
+            />
+          ) : null}
+          {typeTag(task.type)}
+          <span className="ledger-entry-count">{task.total} 个文件</span>
+        </div>
+        <div className="ledger-entry-actions">
+          <Space size={4}>
+            {task.failRounds > 0 ? <Tag color="error">重试 {task.failRounds} 次</Tag> : null}
+            <Tag color={s.color}>{s.text}</Tag>
+            {action?.(task)}
+          </Space>
+        </div>
+      </div>
+      <ProgressTrack
+        percent={percent}
+        tone={task.status === 'failed' ? 'error' : task.status === 'done' ? 'done' : undefined}
+      />
+      <div className="ledger-entry-meta">
+        成功 {task.completed} · 失败 {task.failed} · {new Date(task.createdAt).toLocaleString('zh-CN')}
+      </div>
+      {task.files.map((file) => (
+        <FileRow key={file.name} file={file} />
+      ))}
+    </div>
+  );
+}
+
+function SetBlock({ item, ...rest }: { item: Extract<LaneItem, { kind: 'set' }> } & LaneListProps) {
+  const raw =
+    item.total > 0
+      ? ((item.success + item.failed) * 100 + item.tasks.reduce((s, t) => s + taskPercent(t), 0)) / item.total
+      : 0;
+  const totalPercent = Math.min(100, Math.round(raw));
+  const laneMemberIds = item.tasks.map((t) => t.taskId);
+  const selectedMemberCount = laneMemberIds.filter((id) => rest.selected?.includes(id)).length;
+  const allChecked = laneMemberIds.length > 0 && selectedMemberCount === laneMemberIds.length;
+  const someChecked = selectedMemberCount > 0 && !allChecked;
+  return (
+    <div className="ledger-entry ledger-set">
+      <div className="ledger-entry-head">
+        <div className="ledger-entry-title">
+          {rest.selectable && laneMemberIds.length > 0 ? (
+            <Checkbox
+              checked={allChecked}
+              indeterminate={someChecked}
+              onChange={(e) => {
+                for (const id of laneMemberIds) rest.onToggle?.(id, e.target.checked);
+              }}
+            />
+          ) : null}
+          {typeTag(item.type)}
+          <span className="ledger-entry-count">任务集 · 共 {item.total} 个任务</span>
+        </div>
+        {rest.selectable && laneMemberIds.length > 0 ? (
+          <span className="ledger-entry-meta" style={{ marginTop: 0 }}>
+            已选 {selectedMemberCount}/{laneMemberIds.length}
+          </span>
+        ) : null}
+      </div>
+      <ProgressTrack
+        percent={totalPercent}
+        tone={item.failed > 0 ? 'error' : totalPercent === 100 ? 'done' : undefined}
+      />
+      <div className="ledger-entry-meta">
+        成功 {item.success} · 失败 {item.failed} · 剩余 {item.remaining} ·{' '}
+        {new Date(item.createdAt).toLocaleString('zh-CN')}
+      </div>
+      {item.tasks.map((task) => (
+        <TaskBlock key={task.taskId} task={task} nested {...rest} />
+      ))}
+    </div>
+  );
+}
+
+function TaskLaneList({ items, empty, ...rest }: { items: LaneItem[]; empty: string } & LaneListProps) {
+  if (items.length === 0) {
+    return <Empty description={empty} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+  return (
+    <>
+      {items.map((item) =>
+        item.kind === 'set' ? (
+          <SetBlock key={item.setId} item={item} {...rest} />
+        ) : (
+          <TaskBlock key={item.taskId} task={item} {...rest} />
+        ),
+      )}
+    </>
+  );
+}
+
+function TaskLanes({ lanes, loading, refresh }: { lanes?: Lanes; loading: boolean; refresh: () => void }) {
+  const { message } = App.useApp();
+  const [selected, setSelected] = useState<string[]>([]);
+
+  const recoverMutation = useMutation({
+    mutationFn: (taskIds: string[]) => documentsApi.recoverTasks(taskIds),
+    onSuccess: (r, taskIds) => {
+      message.success(`已恢复 ${r.recoveredTaskIds.length} 个任务`);
+      setSelected((ids) => ids.filter((id) => !taskIds.includes(id)));
+      refresh();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+  const interruptMutation = useMutation({
+    mutationFn: (taskId: string) => documentsApi.interruptTask(taskId),
+    onSuccess: () => {
+      message.success('已中断');
+      refresh();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+  const removeMutation = useMutation({
+    mutationFn: (taskId: string) => documentsApi.removeTask(taskId),
+    onSuccess: (_data, taskId) => {
+      message.success('已删除');
+      setSelected((ids) => ids.filter((id) => id !== taskId));
+      refresh();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+  const removeManyMutation = useMutation({
+    mutationFn: (taskIds: string[]) => runDocumentBatch(taskIds, (id) => documentsApi.removeTask(id)),
+    onSuccess: (r, taskIds) => {
+      if (r.failed.length === 0) message.success(`已删除 ${r.succeeded.length} 个任务`);
+      else message.warning(`已删除 ${r.succeeded.length} / ${taskIds.length} 个，失败：${r.firstError}`);
+      setSelected((ids) => ids.filter((id) => !r.succeeded.includes(id)));
+      refresh();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const running = lanes?.running ?? [];
+  const queued = lanes?.queued ?? [];
+  const interrupted = lanes?.interrupted ?? [];
+  const interruptedIds = new Set(
+    interrupted.flatMap((item) => (item.kind === 'set' ? item.tasks.map((t) => t.taskId) : [item.taskId])),
+  );
+  const visibleSelected = selected.filter((id) => interruptedIds.has(id));
+
+  return (
+    <Card className="task-lane" loading={loading}>
+      <Tabs
+        defaultActiveKey="running"
+        items={[
+          {
+            key: 'running',
+            label: `活跃中 ${running.length}`,
+            children: (
+              <TaskLaneList
+                items={running}
+                empty="没有正在处理的任务"
+                action={(task) => (
+                  <Popconfirm title="中断该任务？" onConfirm={() => interruptMutation.mutate(task.taskId)}>
+                    <Button size="small" type="link" icon={<StopOutlined />} loading={interruptMutation.isPending}>
+                      中断
+                    </Button>
+                  </Popconfirm>
+                )}
+              />
+            ),
+          },
+          {
+            key: 'queued',
+            label: `排队中 ${queued.length}`,
+            children: (
+              <TaskLaneList
+                items={queued}
+                empty="没有排队任务"
+                action={(task) => (
+                  <Popconfirm title="取消并删除该排队任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
+                    <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
+                      取消
+                    </Button>
+                  </Popconfirm>
+                )}
+              />
+            ),
+          },
+          {
+            key: 'interrupted',
+            label: `异常 ${interrupted.length}`,
+            children: (
+              <>
+                {visibleSelected.length > 0 ? (
+                  <div className="ledger-selectbar">
+                    <Space size={8}>
+                      <span>已选 {visibleSelected.length} 个</span>
+                      <Button
+                        size="small"
+                        icon={<ReloadOutlined />}
+                        loading={recoverMutation.isPending}
+                        onClick={() => recoverMutation.mutate(visibleSelected)}
+                      >
+                        恢复所选
+                      </Button>
+                      <Popconfirm
+                        title={`删除所选 ${visibleSelected.length} 个异常任务？`}
+                        onConfirm={() => removeManyMutation.mutate(visibleSelected)}
+                      >
+                        <Button size="small" danger icon={<DeleteOutlined />} loading={removeManyMutation.isPending}>
+                          删除所选
+                        </Button>
+                      </Popconfirm>
+                      <Button size="small" type="link" onClick={() => setSelected([])}>
+                        取消选择
+                      </Button>
+                    </Space>
+                  </div>
+                ) : null}
+                <TaskLaneList
+                  items={interrupted}
+                  empty="没有异常任务"
+                  selectable
+                  selected={visibleSelected}
+                  onToggle={(taskId, checked) => {
+                    setSelected((ids) => (checked ? [...ids, taskId] : ids.filter((id) => id !== taskId)));
+                  }}
+                  action={(task) => (
+                    <Space size={0}>
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<ReloadOutlined />}
+                        loading={recoverMutation.isPending}
+                        onClick={() => recoverMutation.mutate([task.taskId])}
+                      >
+                        恢复
+                      </Button>
+                      <Popconfirm title="删除该异常任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
+                        <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
+                          删除
+                        </Button>
+                      </Popconfirm>
+                    </Space>
+                  )}
+                />
+              </>
+            ),
+          },
+        ]}
+      />
+    </Card>
+  );
+}
+
+function OverviewStrip({ lanes }: { lanes?: Lanes }) {
+  const { data: docs } = useQuery({ queryKey: ['documents'], queryFn: () => documentsApi.list() });
+  const { data: users } = useQuery({ queryKey: ['users'], queryFn: () => usersApi.list() });
+
+  const docList = docs?.documents ?? [];
+  const processing = docList.filter((d) => d.status === 'PENDING' || d.status === 'PROCESSING').length;
+  const failed = docList.filter((d) => d.status === 'FAILED').length;
+  const totalChunks = docList.reduce((sum, d) => sum + (d.segmentCount ?? 0), 0);
+  const totalVectors = docList.reduce((sum, d) => sum + (d.vectorCount ?? 0), 0);
+  const pendingTasks = (lanes?.running.length ?? 0) + (lanes?.queued.length ?? 0) + (lanes?.interrupted.length ?? 0);
+
+  return (
+    <div className="admin-overview">
+      <div className="admin-overview-cell">
+        <div className="admin-metric-label">知识库文档</div>
+        <div className="admin-metric-value">{docs?.total ?? 0}</div>
+        <div className="admin-metric-note">
+          处理中 {processing}
+          {failed > 0 ? ` · 失败 ${failed}` : ''}
+        </div>
+      </div>
+      <div className="admin-overview-cell">
+        <div className="admin-metric-label">向量分块</div>
+        <div className="admin-metric-value">{totalChunks}</div>
+        <div className="admin-metric-note">向量点 {totalVectors}</div>
+      </div>
+      <div className="admin-overview-cell">
+        <div className="admin-metric-label">用户账号</div>
+        <div className="admin-metric-value">{users?.length ?? 0}</div>
+        <div className="admin-metric-note">
+          管理员 {(users ?? []).filter((u) => u.role === 'SUPER_ADMIN').length} · 文档管理员{' '}
+          {(users ?? []).filter((u) => u.role === 'STAFF').length} · 普通{' '}
+          {(users ?? []).filter((u) => u.role === 'USER').length}
+        </div>
+      </div>
+      <div className="admin-overview-cell">
+        <div className="admin-metric-label">待处理任务</div>
+        <div className="admin-metric-value">{pendingTasks}</div>
+        <div className="admin-metric-note">
+          活跃 {lanes?.running.length ?? 0} · 排队 {lanes?.queued.length ?? 0} · 异常{' '}
+          {lanes?.interrupted.length ?? 0}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 全量重建已移到文档库（SUPER_ADMIN 专属动作），管理面板只负责异常任务恢复 */
 function GuestCleanupCard() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
@@ -48,8 +486,7 @@ function GuestCleanupCard() {
   }, [settings]);
 
   const saveMutation = useMutation({
-    mutationFn: () =>
-      settingsApi.update({ guestCleanupEnabled: enabled ? 1 : 0, guestRetentionDays: days }),
+    mutationFn: () => settingsApi.update({ guestCleanupEnabled: enabled ? 1 : 0, guestRetentionDays: days }),
     onSuccess: () => {
       message.success('已保存');
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
@@ -65,26 +502,24 @@ function GuestCleanupCard() {
   });
 
   return (
-    <Card title="访客会话清理">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div>
-          定时清理（每小时执行）
-          <Switch checked={enabled} onChange={setEnabled} style={{ marginLeft: 12 }} />
-        </div>
-        <div>
-          保留天数
-          <InputNumber min={1} max={365} value={days} onChange={(v) => setDays(v ?? 7)} style={{ marginLeft: 12 }} />
-          <span style={{ color: '#999', fontSize: 12, marginLeft: 8 }}>超期的访客会话与消息将被删除</span>
-        </div>
-        <Space>
-          <Button type="primary" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>
-            保存设置
-          </Button>
-          <Popconfirm title="立即清理超期访客会话？" onConfirm={() => cleanupMutation.mutate()}>
-            <Button loading={cleanupMutation.isPending}>立即清理</Button>
-          </Popconfirm>
-        </Space>
+    <Card title="访客会话清理" className="setting-card">
+      <div className="setting-row">
+        <span className="setting-label">定时清理（每小时执行）</span>
+        <Switch checked={enabled} onChange={setEnabled} />
       </div>
+      <div className="setting-row">
+        <span className="setting-label">保留天数</span>
+        <InputNumber min={1} max={365} value={days} onChange={(v) => setDays(v ?? 7)} style={{ width: 120 }} />
+      </div>
+      <div className="setting-hint">超期的访客会话与消息将被删除</div>
+      <Space>
+        <Button type="primary" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>
+          保存设置
+        </Button>
+        <Popconfirm title="立即清理超期访客会话？" onConfirm={() => cleanupMutation.mutate()}>
+          <Button loading={cleanupMutation.isPending}>立即清理</Button>
+        </Popconfirm>
+      </Space>
     </Card>
   );
 }
@@ -109,7 +544,7 @@ function SuggestionsCard() {
   });
 
   return (
-    <Card title="对话建议问题" style={{ marginTop: 16 }}>
+    <Card title="对话建议问题" className="setting-card">
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 0 }}>
         对话页空状态展示的快捷提问，每行一条，最多 20 条；留空则使用内置默认。
       </Typography.Paragraph>
@@ -176,24 +611,19 @@ function PromptsCard() {
   });
 
   return (
-    <Card title="提示词管理" style={{ marginTop: 16 }}>
+    <Card title="提示词管理" className="setting-card prompts-wide">
       {isLoading ? (
         <Spin />
       ) : (
-        <Row gutter={16}>
-          <Col span={6}>
+        <div className="prompts-layout">
+          <div className="prompts-list">
             <List
               size="small"
               dataSource={prompts ?? []}
               renderItem={(p) => (
                 <List.Item
                   onClick={() => setSelectedKey(p.key)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '8px 12px',
-                    background: p.key === selectedKey ? '#eef0f4' : undefined,
-                    borderRadius: 6,
-                  }}
+                  className={`prompts-item${p.key === selectedKey ? ' is-active' : ''}`}
                 >
                   <div>
                     <div>{PROMPT_LABELS[p.key] ?? p.key}</div>
@@ -204,8 +634,8 @@ function PromptsCard() {
                 </List.Item>
               )}
             />
-          </Col>
-          <Col span={18}>
+          </div>
+          <div className="prompts-editor">
             {selected ? (
               <>
                 <Input.TextArea
@@ -214,15 +644,12 @@ function PromptsCard() {
                   rows={10}
                   style={{ fontFamily: 'monospace' }}
                 />
-                <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="prompts-foot">
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     最近更新 {new Date(selected.updatedAt).toLocaleString('zh-CN')} · {selected.updatedBy}
                   </Typography.Text>
                   <Space>
-                    <Button
-                      icon={<HistoryOutlined />}
-                      onClick={() => setVersionsOpen(true)}
-                    >
+                    <Button icon={<HistoryOutlined />} onClick={() => setVersionsOpen(true)}>
                       版本历史
                     </Button>
                     <Popconfirm title="重置为内置默认提示词？" onConfirm={() => resetMutation.mutate(selected.key)}>
@@ -242,12 +669,12 @@ function PromptsCard() {
             ) : (
               <Empty description="暂无提示词" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
-          </Col>
-        </Row>
+          </div>
+        </div>
       )}
 
       <Drawer
-        title={`版本历史 — ${selected ? (PROMPT_LABELS[selected.key] ?? selected.key) : ''}`}
+        title={`版本历史 — ${selected ? PROMPT_LABELS[selected.key] ?? selected.key : ''}`}
         open={versionsOpen}
         onClose={() => setVersionsOpen(false)}
         size={560}
@@ -298,220 +725,9 @@ function PromptsCard() {
   );
 }
 
-const TASK_STATUS_TAG: Record<string, { color: string; text: string }> = {
-  pending: { color: 'default', text: '等待' },
-  processing: { color: 'processing', text: '处理中' },
-  interrupted: { color: 'warning', text: '中断' },
-  done: { color: 'success', text: '完成' },
-  failed: { color: 'error', text: '失败' },
-  partial: { color: 'warning', text: '部分成功' },
-};
-
-/** 处理阶段展示名（对应服务端 batch_file_results.stage） */
-const STAGE_LABEL: Record<string, string> = {
-  parse: '解析',
-  chunk: '分块',
-  embed: '向量化',
-  write: '写入向量库',
-};
-
-type LaneFile = { name: string; status: string; message: string; progress: number; stage?: string };
-
-type LaneTask = {
-  taskId: string;
-  type: 'upload' | 'rebuild';
-  status: string;
-  total: number;
-  completed: number;
-  failed: number;
-  failRounds: number;
-  files: LaneFile[];
-  createdAt: string;
-};
-
-/** 车道条目：独立任务（task）或任务集（set，聚合为全集合口径，tasks 仅含当前车道成员） */
-type LaneItem =
-  | ({ kind: 'task' } & LaneTask)
-  | {
-      kind: 'set';
-      setId: string;
-      type: 'upload' | 'rebuild';
-      total: number;
-      success: number;
-      failed: number;
-      remaining: number;
-      createdAt: string;
-      tasks: LaneTask[];
-    };
-
-function typeTag(type: 'upload' | 'rebuild') {
-  return (
-    <Tag color={type === 'rebuild' ? 'purple' : 'blue'}>{type === 'rebuild' ? '全量重建' : '上传'}</Tag>
-  );
-}
-
-/** 文件行：处理中显示阶段+百分比，失败显示「失败于某阶段」 */
-function FileRow({ file }: { file: LaneFile }) {
-  let suffix = '';
-  if (file.status === 'processing') {
-    suffix = ` — ${file.stage ? (STAGE_LABEL[file.stage] ?? file.stage) : '处理中'} ${file.progress}%`;
-  } else if (file.status === 'failed') {
-    const where = file.stage ? ` — 失败于${STAGE_LABEL[file.stage] ?? file.stage}` : '';
-    suffix = file.message ? `${where}：${file.message}` : where;
-  }
-  return (
-    <div className={file.status === 'failed' ? 'task-lane-file is-failed' : 'task-lane-file'}>
-      {file.name}
-      {suffix}
-    </div>
-  );
-}
-
-interface LaneListProps {
-  action?: (task: LaneTask) => ReactNode;
-  selectable?: boolean;
-  selected?: string[];
-  onToggle?: (taskId: string, checked: boolean) => void;
-}
-
-/** 单任务块：独立任务或集合成员（nested 时为紧凑嵌套样式） */
-function TaskBlock({
-  task,
-  action,
-  selectable,
-  selected,
-  onToggle,
-  nested,
-}: { task: LaneTask; nested?: boolean } & LaneListProps) {
-  // 进度取文件级聚合：处理中按各自 progress 摊入，终态按 0/100 计
-  const percent =
-    task.files.length > 0
-      ? Math.round(
-          task.files.reduce(
-            (sum, f) => sum + (f.status === 'success' ? 100 : f.status === 'failed' ? 100 : f.progress),
-            0,
-          ) / task.files.length,
-        )
-      : task.total > 0
-        ? Math.round(((task.completed + task.failed) / task.total) * 100)
-        : 0;
-  const s = TASK_STATUS_TAG[task.status] ?? { color: 'default', text: task.status };
-  return (
-    <div className={nested ? 'task-set-member' : 'task-lane-item'}>
-      <div className="task-lane-item-head">
-        <Space size={6}>
-          {selectable ? (
-            <Checkbox
-              checked={selected?.includes(task.taskId)}
-              onChange={(e) => onToggle?.(task.taskId, e.target.checked)}
-            />
-          ) : null}
-          {typeTag(task.type)}
-          <span>{task.total} 个文件</span>
-        </Space>
-        <Space size={4}>
-          {task.failRounds > 0 ? <Tag color="error">失败 {task.failRounds} 次</Tag> : null}
-          <Tag color={s.color}>{s.text}</Tag>
-          {action?.(task)}
-        </Space>
-      </div>
-      <Progress
-        percent={percent}
-        size="small"
-        status={task.status === 'failed' ? 'exception' : task.status === 'done' ? 'success' : 'active'}
-      />
-      <div className="task-lane-item-meta">
-        成功 {task.completed} · 失败 {task.failed} · {new Date(task.createdAt).toLocaleString('zh-CN')}
-      </div>
-      {task.files.map((file) => (
-        <FileRow key={file.name} file={file} />
-      ))}
-    </div>
-  );
-}
-
-function SetBlock({ item, ...rest }: { item: Extract<LaneItem, { kind: 'set' }> } & LaneListProps) {
-  // 成员进度：终态按 100 计，处理中按文件级 progress 均摊
-  const memberPercent = (task: LaneTask) => {
-    if (task.files.length === 0) return task.status === 'done' || task.status === 'failed' ? 100 : 0;
-    return (
-      task.files.reduce(
-        (sum, f) => sum + (f.status === 'success' || f.status === 'failed' ? 100 : f.progress),
-        0,
-      ) / task.files.length
-    );
-  };
-  // 集合总进度 = 终态成员 *100 + 处理中成员的实时进度，均摊到全集合
-  const raw =
-    item.total > 0 ? ((item.success + item.failed) * 100 + item.tasks.reduce((s, t) => s + memberPercent(t), 0)) / item.total : 0;
-  const totalPercent = Math.min(100, Math.round(raw));
-  const laneMemberIds = item.tasks.map((t) => t.taskId);
-  const selectedMemberCount = laneMemberIds.filter((id) => rest.selected?.includes(id)).length;
-  const allChecked = laneMemberIds.length > 0 && selectedMemberCount === laneMemberIds.length;
-  const someChecked = selectedMemberCount > 0 && !allChecked;
-  return (
-    <div className="task-lane-item task-lane-set">
-      <div className="task-lane-item-head">
-        <Space size={6}>
-          {rest.selectable && laneMemberIds.length > 0 ? (
-            <Checkbox
-              checked={allChecked}
-              indeterminate={someChecked}
-              onChange={(e) => {
-                for (const id of laneMemberIds) rest.onToggle?.(id, e.target.checked);
-              }}
-            />
-          ) : null}
-          {typeTag(item.type)}
-          <span>任务集 · 共 {item.total} 个任务</span>
-        </Space>
-        {rest.selectable && laneMemberIds.length > 0 ? (
-          <span className="task-lane-item-meta">
-            已选 {selectedMemberCount}/{laneMemberIds.length}
-          </span>
-        ) : null}
-      </div>
-      <Progress
-        percent={totalPercent}
-        size="small"
-        status={item.failed > 0 ? 'exception' : totalPercent === 100 ? 'success' : 'active'}
-      />
-      <div className="task-lane-item-meta">
-        成功 {item.success} · 失败 {item.failed} · 剩余 {item.remaining} ·{' '}
-        {new Date(item.createdAt).toLocaleString('zh-CN')}
-      </div>
-      {item.tasks.map((task) => (
-        <TaskBlock key={task.taskId} task={task} nested {...rest} />
-      ))}
-    </div>
-  );
-}
-
-function TaskLaneList({
-  items,
-  empty,
-  ...rest
-}: { items: LaneItem[]; empty: string } & LaneListProps) {
-  if (items.length === 0) {
-    return <Empty description={empty} image={Empty.PRESENTED_IMAGE_SIMPLE} />;
-  }
-  return (
-    <>
-      {items.map((item) =>
-        item.kind === 'set' ? (
-          <SetBlock key={item.setId} item={item} {...rest} />
-        ) : (
-          <TaskBlock key={item.taskId} task={item} {...rest} />
-        ),
-      )}
-    </>
-  );
-}
-
-function TaskLanes() {
-  const { message } = App.useApp();
+export default function AdminPage() {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data: lanes, isLoading: lanesLoading } = useQuery({
     queryKey: ['active-tasks'],
     queryFn: () => documentsApi.listActiveTasks(),
     refetchInterval: (query) => {
@@ -521,254 +737,36 @@ function TaskLanes() {
     },
   });
 
-  const [selected, setSelected] = useState<string[]>([]);
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] });
-
-  const recoverMutation = useMutation({
-    mutationFn: (taskIds: string[]) => documentsApi.recoverTasks(taskIds),
-    onSuccess: (r, taskIds) => {
-      message.success(`已恢复 ${r.recoveredTaskIds.length} 个任务`);
-      setSelected((ids) => ids.filter((id) => !taskIds.includes(id)));
-      invalidate();
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-  const interruptMutation = useMutation({
-    mutationFn: (taskId: string) => documentsApi.interruptTask(taskId),
-    onSuccess: () => {
-      message.success('已中断');
-      invalidate();
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-  const removeMutation = useMutation({
-    mutationFn: (taskId: string) => documentsApi.removeTask(taskId),
-    onSuccess: (_data, taskId) => {
-      message.success('已删除');
-      setSelected((ids) => ids.filter((id) => id !== taskId));
-      invalidate();
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-  const removeManyMutation = useMutation({
-    mutationFn: (taskIds: string[]) => runDocumentBatch(taskIds, (id) => documentsApi.removeTask(id)),
-    onSuccess: (r, taskIds) => {
-      if (r.failed.length === 0) message.success(`已删除 ${r.succeeded.length} 个任务`);
-      else message.warning(`已删除 ${r.succeeded.length} / ${taskIds.length} 个，失败：${r.firstError}`);
-      setSelected((ids) => ids.filter((id) => !r.succeeded.includes(id)));
-      invalidate();
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  const running = data?.running ?? [];
-  const queued = data?.queued ?? [];
-  const interrupted = data?.interrupted ?? [];
-  /** 异常车道里仍在展示的任务 id（含任务集成员） */
-  const interruptedIds = new Set(
-    interrupted.flatMap((item) => (item.kind === 'set' ? item.tasks.map((t) => t.taskId) : [item.taskId])),
-  );
-  const visibleSelected = selected.filter((id) => interruptedIds.has(id));
-
-  return (
-    <Card className="task-lane" loading={isLoading}>
-      <Tabs
-        defaultActiveKey="running"
-        items={[
-          {
-            key: 'running',
-            label: `活跃中 ${isLoading ? '' : running.length}`,
-            children: (
-              <TaskLaneList
-                items={running}
-                empty="没有正在处理的任务"
-                action={(task) => (
-                  <Popconfirm title="中断该任务？" onConfirm={() => interruptMutation.mutate(task.taskId)}>
-                    <Button size="small" type="link" icon={<StopOutlined />} loading={interruptMutation.isPending}>
-                      中断
-                    </Button>
-                  </Popconfirm>
-                )}
-              />
-            ),
-          },
-          {
-            key: 'queued',
-            label: `排队中 ${isLoading ? '' : queued.length}`,
-            children: (
-              <TaskLaneList
-                items={queued}
-                empty="没有排队任务"
-                action={(task) => (
-                  <Popconfirm title="取消并删除该排队任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
-                    <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
-                      取消
-                    </Button>
-                  </Popconfirm>
-                )}
-              />
-            ),
-          },
-          {
-            key: 'interrupted',
-            label: `异常 ${isLoading ? '' : interrupted.length}`,
-            children: (
-              <>
-                {visibleSelected.length > 0 ? (
-                  <div className="task-lane-selectbar">
-                    <Space size={8}>
-                      <span>已选 {visibleSelected.length} 个</span>
-                      <Button
-                        size="small"
-                        icon={<ReloadOutlined />}
-                        loading={recoverMutation.isPending}
-                        onClick={() => recoverMutation.mutate(visibleSelected)}
-                      >
-                        恢复所选
-                      </Button>
-                      <Popconfirm
-                        title={`删除所选 ${visibleSelected.length} 个异常任务？`}
-                        onConfirm={() => removeManyMutation.mutate(visibleSelected)}
-                      >
-                        <Button size="small" danger icon={<DeleteOutlined />} loading={removeManyMutation.isPending}>
-                          删除所选
-                        </Button>
-                      </Popconfirm>
-                      <Button size="small" type="link" onClick={() => setSelected([])}>
-                        取消选择
-                      </Button>
-                    </Space>
-                  </div>
-                ) : null}
-                <TaskLaneList
-                  items={interrupted}
-                  empty="没有异常任务"
-                  selectable
-                  selected={visibleSelected}
-                  onToggle={(taskId, checked) => {
-                    setSelected((ids) => (checked ? [...ids, taskId] : ids.filter((id) => id !== taskId)));
-                  }}
-                  action={(task) => (
-                    <Space size={0}>
-                      <Button
-                        size="small"
-                        type="link"
-                        icon={<ReloadOutlined />}
-                        loading={recoverMutation.isPending}
-                        onClick={() => recoverMutation.mutate([task.taskId])}
-                      >
-                        恢复
-                      </Button>
-                      <Popconfirm title="删除该异常任务？" onConfirm={() => removeMutation.mutate(task.taskId)}>
-                        <Button size="small" type="link" danger icon={<DeleteOutlined />} loading={removeMutation.isPending}>
-                          删除
-                        </Button>
-                      </Popconfirm>
-                    </Space>
-                  )}
-                />
-              </>
-            ),
-          },
-        ]}
-      />
-    </Card>
-  );
-}
-
-/** 全量重建 */
-function RecoveryRebuildCard() {
-  const { message } = App.useApp();
-  const queryClient = useQueryClient();
-
-  const rebuildMutation = useMutation({
-    mutationFn: () => documentsApi.rebuildAll(),
-    onSuccess: (r) => {
-      message.success(`全量重建已启动（任务集 ${r.setId}）`);
-      setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] }), 1000);
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  return (
-    <Card title="向量索引维护">
-      <Popconfirm
-        title="全量重建向量索引？"
-        description="每个文档一个独立任务，逐文档重建；失败可在任务中心单独恢复。"
-        onConfirm={() => rebuildMutation.mutate()}
-      >
-        <Button danger icon={<ThunderboltOutlined />} loading={rebuildMutation.isPending}>
-          全量重建
-        </Button>
-      </Popconfirm>
-      <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-        更换 embedding 模型后使用。逐文档重建，单个失败不影响其它文档，未成功任务在上方「异常」恢复或删除。
-      </Typography.Text>
-    </Card>
-  );
-}
-
-export default function AdminPage() {
-  const { data: docs } = useQuery({ queryKey: ['documents'], queryFn: () => documentsApi.list() });
-  const { data: users } = useQuery({ queryKey: ['users'], queryFn: () => usersApi.list() });
-
-  const docList = docs?.documents ?? [];
-  const processing = docList.filter((d) => d.status === 'PENDING' || d.status === 'PROCESSING').length;
-  const failed = docList.filter((d) => d.status === 'FAILED').length;
-  const totalChunks = docList.reduce((sum, d) => sum + (d.segmentCount ?? 0), 0);
-  const totalVectors = docList.reduce((sum, d) => sum + (d.vectorCount ?? 0), 0);
-
   return (
     <div className="page">
       <div className="page-header">
         <h1>管理面板</h1>
-        <p>系统运行概览、向量索引维护与提示词管理。</p>
+        <p>系统运行概览、任务处理与运行时设置。</p>
       </div>
-      <Row gutter={16}>
-        <Col span={6}>
-          <Card>
-            <Statistic title="知识库文档" value={docs?.total ?? 0} prefix={<FileTextOutlined />} />
-            <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-              处理中 {processing}{failed > 0 && ` · 失败 ${failed}`}
-            </div>
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic title="向量分块" value={totalChunks} />
-            <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-              向量点 {totalVectors}
-            </div>
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic title="用户账号" value={users?.length ?? 0} prefix={<TeamOutlined />} />
-            <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-              管理员 {(users ?? []).filter((u) => u.role === 'SUPER_ADMIN').length} · 文档管理员 {(users ?? []).filter((u) => u.role === 'STAFF').length} · 普通 {(users ?? []).filter((u) => u.role === 'USER').length}
-            </div>
-          </Card>
-        </Col>
-        <Col span={6}>
+
+      <OverviewStrip lanes={lanes} />
+
+      <section className="admin-section">
+        <div className="admin-section-head">
+          <h2 className="admin-section-title">处理台账</h2>
+        </div>
+        <TaskLanes
+          lanes={lanes}
+          loading={lanesLoading}
+          refresh={() => void queryClient.invalidateQueries({ queryKey: ['active-tasks'] })}
+        />
+      </section>
+
+      <section className="admin-section">
+        <div className="admin-section-head">
+          <h2 className="admin-section-title">运行时设置</h2>
+        </div>
+        <div className="settings-grid">
           <GuestCleanupCard />
-        </Col>
-      </Row>
-      <TaskLanes />
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={24}>
-          <RecoveryRebuildCard />
-        </Col>
-      </Row>
-      <PromptsCard />
-      <SuggestionsCard />
-      <Card title="运维说明" style={{ marginTop: 16 }}>
-        <ul style={{ lineHeight: 2 }}>
-          <li>文档上传后异步处理：解析 → 分块 → 向量化 → 分片向量入库，可在文档库查看状态。</li>
-          <li>单文件重建在文档库操作列，全量重建在上方向量索引维护。</li>
-          <li>用户管理：创建账号、启停、重置密码（初始密码为用户名）。</li>
-          <li>访客会话由系统签发 token 并落库，按保留天数定时清理；提示词改动即时生效并保留版本。</li>
-        </ul>
-      </Card>
+          <SuggestionsCard />
+          <PromptsCard />
+        </div>
+      </section>
     </div>
   );
 }
