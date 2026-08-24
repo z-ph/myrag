@@ -267,6 +267,11 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
 export function assertServerConfig(cfg: ServerConfig): void {
   if (!cfg.llmBaseUrl) throw new Error('LLM_BASE_URL 未配置（OpenAI 兼容接口地址）');
   if (!cfg.llmApiKey) throw new Error('LLM_API_KEY 未配置');
+  // 模型名不做任何默认兜底：配错/漏配直接拒绝启动，避免静默打到不存在的模型
+  if (!cfg.llmChatModel) throw new Error('LLM_CHAT_MODEL 未配置');
+  if (!cfg.llmEmbeddingModel) throw new Error('LLM_EMBEDDING_MODEL 未配置');
+  if (!cfg.llmVisionModel) throw new Error('LLM_VISION_MODEL 未配置');
+  if (!cfg.llmOcrModel) throw new Error('LLM_OCR_MODEL 未配置');
   if (cfg.jwtSecret === 'dev-secret-change-me' && process.env.NODE_ENV === 'production') {
     throw new Error('生产环境必须配置 JWT_SECRET');
   }
