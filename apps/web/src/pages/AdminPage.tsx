@@ -31,6 +31,8 @@ import { runDocumentBatch } from './documentBatch';
 const PROMPT_LABELS: Record<string, string> = {
   'qa.system': '知识库问答（登录用户）',
   'qa.systemGuest': '知识库问答（访客）',
+  'qa.rewrite': '问题改写（快速模式）',
+  'qa.systemFast': '知识库问答·快速模式',
   'vision.system': '图片理解',
 };
 

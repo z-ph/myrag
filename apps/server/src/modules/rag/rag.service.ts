@@ -4,6 +4,7 @@ import type {
   ServerConfig,
   ContextMessage,
   ImageUnderstandingResult,
+  QaMode,
   SourceReference,
   SettingsService,
   ToolCallRecord,
@@ -11,14 +12,19 @@ import type {
   ToolResultSse,
 } from '@myrag/shared';
 import type { LlmClient } from '../../llm/client';
+import { stripThink } from '../../llm/client';
 import { badRequest, isAppError, notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
 import type { RedisStore } from '../../store/redis';
 import { RedisKeys } from '../../store/redis';
+import type { ObjectStorage } from '../../store/object-storage';
 import type { ConversationService } from './conversation.service';
+import { CHAT_IMAGE_PREFIX } from './conversation.service';
 import type { ImageService } from './image.service';
 import type { RagRetriever } from './retrieval.service';
 import { Document } from '@langchain/core/documents';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import type { ChatOpenAI } from '@langchain/openai';
 import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from './chunk';
 import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
@@ -29,8 +35,12 @@ export interface AskInput {
   conversationId: string;
   maxResults?: number;
   useKnowledgeBase?: boolean;
+  /** 问答模式：deep 深度检索（默认）/ fast 固定管线无工具 */
+  mode?: QaMode;
   /** 图片问答（base64 JPEG） */
   imageBase64?: string;
+  /** 用户上传的原图（供持久化到对象存储，历史回看用） */
+  imageFile?: { data: Buffer; contentType: string; filename: string };
   /** 登录用户（匿名问答不传） */
   userId?: string;
   /** 是否匿名问答（决定 system prompt 选择） */
@@ -101,6 +111,90 @@ export const QA_AGENT_RECURSION_LIMIT = 80;
 /** 单轮问答允许的工具调用次数。到顶后拦截，让模型基于已有资料作答。 */
 export const QA_AGENT_TOOL_RUN_LIMIT = 10;
 
+/**
+ * 快速模式第一步：问题改写。结合历史对话补全指代，产出独立检索式。
+ * 非流式单次调用；失败时回退原问题，不阻塞问答主链路。
+ */
+export async function rewriteQuery(
+  chatModel: ChatOpenAI,
+  systemPrompt: string,
+  question: string,
+  recap: string,
+): Promise<string> {
+  try {
+    chatModel.temperature = 0;
+    const user = recap ? `历史对话：\n${recap}\n\n当前问题：${question}` : question;
+    const res = await chatModel.invoke([new SystemMessage(systemPrompt), new HumanMessage(user)]);
+    const rewritten = typeof res.content === 'string' ? stripThink(res.content).trim() : '';
+    return rewritten || question;
+  } catch (err) {
+    logger.warn('[rag] 问题改写失败，回退原问题:', err);
+    return question;
+  }
+}
+
+/** streamEvents v3 投影的最小消费接口（深度/快速两条链路共用） */
+interface AgentStreamProjection {
+  messages: AsyncIterable<{
+    reasoning: AsyncIterable<string>;
+    text: AsyncIterable<string>;
+  }>;
+  toolCalls?: AsyncIterable<{
+    callId: string;
+    name: string;
+    input?: unknown;
+    output: Promise<unknown> | unknown;
+  }>;
+}
+
+/** 消费 agent 流：累计思考与正文，转发工具生命周期事件 */
+async function consumeAgentStream(
+  stream: AgentStreamProjection,
+  handlers: GenerateHandlers,
+): Promise<{ answer: string; reasoning: string }> {
+  let reasoning = '';
+  let answer = '';
+  const toolCalls: ToolCallRecord[] = [];
+  await Promise.all([
+    (async () => {
+      for await (const m of stream.messages) {
+        for await (const d of m.reasoning) {
+          reasoning += d;
+          handlers.onReasoningDelta(d);
+        }
+        for await (const d of m.text) {
+          if (d) {
+            answer += d;
+            handlers.onDelta(d);
+          }
+        }
+      }
+    })(),
+    (async () => {
+      for await (const c of stream.toolCalls ?? []) {
+        const id = c.callId;
+        const name = c.name;
+        const args = (c.input ?? {}) as Record<string, unknown>;
+        // 记录调用发生时正文已累计的长度，供历史消息重建「正文/工具」穿插顺序
+        const atOffset = answer.length;
+        handlers.onToolCall({ id, name, args });
+        const out = await c.output;
+        const output = typeof out === 'string' ? out : JSON.stringify(out);
+        handlers.onToolResult({ id, name, output });
+        toolCalls.push({ id, name, args, output, atOffset });
+      }
+    })(),
+  ]);
+  return { answer, reasoning };
+}
+
+/** 图片 MIME → 扩展名（仅接受的三种图片类型） */
+const IMAGE_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/bmp': 'bmp',
+};
+
 export function createRagService(
   llm: LlmClient,
   retriever: RagRetriever,
@@ -111,7 +205,26 @@ export function createRagService(
   settings: SettingsService,
   promptService: PromptService,
   documentService: DocumentService,
+  /** 会话图片持久化（可选：缺省时不落图，仅影响历史回看） */
+  objectStorage?: ObjectStorage,
 ): RagService {
+  /**
+   * 把用户上传的原图存入对象存储，返回存储 key。
+   * 失败只告警不阻塞问答主链路（视觉理解已基于内存数据完成）。
+   */
+  async function persistChatImage(conversationId: string, imageFile?: AskInput['imageFile']): Promise<string | undefined> {
+    if (!imageFile || !objectStorage) return undefined;
+    const ext = IMAGE_EXT[imageFile.contentType] ?? 'png';
+    const key = `${CHAT_IMAGE_PREFIX}/${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    try {
+      await objectStorage.put(key, imageFile.data, imageFile.contentType);
+      return key;
+    } catch (err) {
+      logger.warn(`[rag] 会话图片保存失败（不影响本轮回答）: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+  }
+
   /** conversationId → 本实例进行中的生成控制器 */
   const activeGenerations = new Map<string, AbortController>();
 
@@ -267,36 +380,9 @@ export function createRagService(
     const toolCalls: ToolCallRecord[] = [];
 
     try {
-      await Promise.all([
-        (async () => {
-          for await (const m of stream.messages) {
-            for await (const d of m.reasoning) {
-              reasoning += d;
-              handlers.onReasoningDelta(d);
-            }
-            for await (const d of m.text) {
-              if (d) {
-                answer += d;
-                handlers.onDelta(d);
-              }
-            }
-          }
-        })(),
-        (async () => {
-          for await (const c of stream.toolCalls) {
-            const id = c.callId;
-            const name = c.name;
-            const args = (c.input ?? {}) as Record<string, unknown>;
-            // 记录调用发生时正文已累计的长度，供历史消息重建「正文/工具」穿插顺序
-            const atOffset = answer.length;
-            handlers.onToolCall({ id, name, args });
-            const out = await c.output;
-            const output = typeof out === 'string' ? out : JSON.stringify(out);
-            handlers.onToolResult({ id, name, output });
-            toolCalls.push({ id, name, args, output, atOffset });
-          }
-        })(),
-      ]);
+      const collected = await consumeAgentStream(stream, handlers);
+      answer = collected.answer;
+      reasoning = collected.reasoning;
     } catch (err) {
       if (
         !(err instanceof Error) ||
@@ -320,6 +406,71 @@ export function createRagService(
     };
   }
 
+  /**
+   * 快速模式生成核心：写死的固定管线，无工具调用——
+   * 问题改写 → 混合检索一次 → 片段塞入上下文 → 无工具 agent 单次直答。
+   * 复用无工具 agent 的流式投影（与 useKnowledgeBase=false 的深度链路同一消费路径）。
+   */
+  async function generateFast(
+    input: AskInput,
+    history: ContextMessage[],
+    handlers: GenerateHandlers,
+    signal?: AbortSignal,
+  ): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[]; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
+    let imageUnderstanding: ImageUnderstandingResult | undefined;
+    if (input.imageBase64) {
+      imageUnderstanding = await imageService.understand(input.question, input.imageBase64);
+    }
+
+    const s = settings.get();
+    let question = input.question;
+    if (imageUnderstanding) {
+      const img = `【图片理解】\n摘要：${imageUnderstanding.imageSummary ?? ''}\nOCR：${imageUnderstanding.ocrText ?? ''}\n关键实体：${(imageUnderstanding.keyEntities ?? []).join('、')}\n针对问题：${imageUnderstanding.questionFocusedSummary ?? ''}`;
+      question = `${question}\n\n${img}`;
+    }
+
+    // 固定管线：改写 → 检索 → 打包上下文（关闭知识库时跳过，直接回答）
+    let contextBlock: string | undefined;
+    let fastDocs: ChunkDocument[] = [];
+    if (input.useKnowledgeBase !== false) {
+      const recapForRewrite = foldHistoryRecap(history, s.memoryWindow);
+      const searchQuery = await rewriteQuery(
+        llm.chatModel,
+        promptService.get('qa.rewrite'),
+        question,
+        recapForRewrite,
+      );
+      fastDocs = await retriever.retrieve(searchQuery, input.maxResults ?? s.maxResults);
+      handlers.onSources(toSourceReferences(fastDocs));
+      contextBlock = packContext(fastDocs, s.contextBudget).contextText ?? undefined;
+    }
+
+    llm.chatModel.temperature = s.llmChatTemperature;
+    const systemPrompt = promptService.get(input.anonymous ? 'qa.systemGuest' : 'qa.systemFast');
+    // 无工具：createAgent 退化为单次模型调用，流式消费与深度模式同一条代码路径
+    const agent = createAgent({ model: llm.chatModel, tools: [], systemPrompt });
+
+    const parts: string[] = [];
+    const recap = foldHistoryRecap(history, s.memoryWindow);
+    if (recap) parts.push(`历史对话回顾：\n${recap}`);
+    if (contextBlock) parts.push(`【知识库资料】\n${contextBlock}`);
+    parts.push(`问题：${question}`);
+
+    const stream = await agent.streamEvents(
+      { messages: [{ role: 'user', content: parts.join('\n\n') }] },
+      { version: 'v3', signal, recursionLimit: 8 },
+    );
+    const { answer, reasoning } = await consumeAgentStream(stream, handlers);
+
+    return {
+      answer: answer.trim(),
+      reasoning,
+      toolCalls: [],
+      sources: toSourceReferences(fastDocs),
+      imageUnderstanding,
+    };
+  }
+
   /** 登录用户：持久化消息并执行生成 */
   async function generatePersisted(
     input: AskInput,
@@ -330,10 +481,15 @@ export function createRagService(
     await conversationService.ensure(input.conversationId, input.userId, input.question);
     const detail = await conversationService.getDetail(input.conversationId, input.userId, settings.get().memoryWindow);
     const history: ContextMessage[] = detail.recentMessages.map((m) => ({ role: m.role, content: m.content }));
-    await conversationService.appendMessage(input.conversationId, 'USER', input.question);
+    // 用户原图先落对象存储，消息里记 key：刷新/重开会话仍可回看图片
+    const imageKey = await persistChatImage(input.conversationId, input.imageFile);
+    await conversationService.appendMessage(input.conversationId, 'USER', input.question, 'COMPLETED', imageKey);
     await conversationService.appendMessage(input.conversationId, 'ASSISTANT', '', 'GENERATING');
     try {
-      const result = await generate(input, history, handlers, signal);
+      const result =
+        input.mode === 'fast'
+          ? await generateFast(input, history, handlers, signal)
+          : await generate(input, history, handlers, signal);
       // 持久化 AI 回答、思考、工具轨迹与来源：content 供多轮历史回灌，其余仅展示
       await conversationService.markMessage(
         input.conversationId,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Switch, Tooltip } from 'antd';
+import { Avatar, Button, Drawer, Empty, Image, Input, List, message, Modal, Popconfirm, Segmented, Spin, Switch, Tooltip } from 'antd';
 import {
   BookOutlined,
   CheckOutlined,
@@ -424,8 +424,17 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
     return (
       <div className="msg-row msg-user">
         <div className="msg-body">
-          {msg.imageUrl && <img src={msg.imageUrl} alt="用户图片" className="msg-image" />}
-          <div className="user-bubble">{msg.content}</div>
+          {/* antd Image：点击可放大预览 */}
+          {msg.imageUrl && (
+            <Image
+              src={msg.imageUrl}
+              alt="用户图片"
+              className="msg-image"
+              width={180}
+              style={{ borderRadius: 10, objectFit: 'cover' }}
+            />
+          )}
+          {msg.content.trim() && <div className="user-bubble">{msg.content}</div>}
           <MessageCopyButton text={msg.content} />
 
         </div>
@@ -461,6 +470,8 @@ export default function ChatPage() {
     deleteConversation,
     sendMessage,
     stopGeneration,
+    mode,
+    setMode,
   } = useChatStore();
 
   const [input, setInput] = useState('');
@@ -519,7 +530,10 @@ export default function ChatPage() {
 
   const handlePickImage = (file: File | undefined) => {
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/bmp'].includes(file.type)) return;
+    if (!['image/jpeg', 'image/png', 'image/bmp'].includes(file.type)) {
+      message.warning('仅支持 JPG / PNG / BMP 图片');
+      return;
+    }
     setImage(file);
     setImagePreview(URL.createObjectURL(file));
   };
@@ -656,6 +670,16 @@ export default function ChatPage() {
         <div className="composer-tip">
           <span>回答基于知识库检索，可点击来源查看引用片段</span>
           <span className="composer-dev">
+            <Segmented
+              size="small"
+              value={mode}
+              aria-label="问答模式"
+              onChange={(v) => setMode(v as import('@myrag/shared').QaMode)}
+              options={[
+                { label: '深度检索', value: 'deep' },
+                { label: '快速回答', value: 'fast' },
+              ]}
+            />
             开发者模式
             <Switch size="small" checked={devMode} onChange={setDevMode} />
           </span>

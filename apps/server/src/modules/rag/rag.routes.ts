@@ -10,34 +10,55 @@ import { encodeSse } from '@myrag/shared';
 const convParam = z.object({ conversationId: z.string().min(1).max(128) });
 
 const messageFormSchema = z.object({
-  question: z.string().min(1, '问题不能为空').max(4000),
+  /** 问题文本；与图片二选一，纯图片发送时可传空字符串 */
+  question: z.string().max(4000),
   maxResults: z.coerce.number().int().min(1).max(20).optional(),
   useKnowledgeBase: z
     .string()
     .optional()
     .transform((v) => (v === undefined ? true : !['false', '0'].includes(v.toLowerCase()))),
+  /** 问答模式：deep=agent 深度检索（默认）；fast=固定管线直答，无工具调用 */
+  mode: z
+    .enum(['deep', 'fast'])
+    .optional()
+    .transform((v) => v ?? 'deep'),
   stream: z
     .string()
     .optional()
     .transform((v) => ['true', '1'].includes((v ?? '').toLowerCase())),
 });
 
+/** 图片 MIME → 扩展名（与 rag.service IMAGE_EXT 保持一致的接受范围） */
+const IMAGE_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/bmp': 'bmp',
+};
+
 /** 解析 multipart 表单（消息创建统一入口） */
 async function parseMessageForm(c: Context<AppVariables>) {
   const body = await c.req.parseBody();
-  const file = body['file'];
+  // 图片字段兼容两个名字：OpenAPI 文档声明 file；web 客户端历史发送 image
+  const uploaded = body['file'] ?? body['image'];
   let imageBase64: string | undefined;
-  if (file instanceof File) {
-    imageBase64 = Buffer.from(await file.arrayBuffer()).toString('base64');
+  let imageFile: { data: Buffer; contentType: string; filename: string } | undefined;
+  if (uploaded instanceof File) {
+    const data = Buffer.from(await uploaded.arrayBuffer());
+    imageBase64 = data.toString('base64');
+    imageFile = { data, contentType: uploaded.type || 'image/png', filename: uploaded.name || 'image' };
   }
   const parsed = messageFormSchema.safeParse({
     question: body['question'],
     maxResults: body['maxResults'],
     useKnowledgeBase: body['useKnowledgeBase'],
+    mode: body['mode'],
     stream: body['stream'],
   });
   if (!parsed.success) throw badRequest('请求参数错误');
-  return { ...parsed.data, imageBase64 };
+  const question = parsed.data.question.trim();
+  // 问题与图片不能同时为空；纯图片发送时补默认问题，让视觉理解有明确指令
+  if (!question && !imageBase64) throw badRequest('请求参数错误');
+  return { ...parsed.data, question: question || '请分析这张图片', imageBase64, imageFile };
 }
 
 /** 会话域（挂载 /conversations，需登录，会话懒创建） */
@@ -51,7 +72,7 @@ export function createConversationRoutes(deps: AppDeps) {
           method: 'post',
           path: '/{conversationId}/messages',
           description:
-            '发送消息（创建消息资源）：同步返回回答；表单 stream=true 时返回 SSE 事件流（multipart：question，可选 maxResults/useKnowledgeBase/file）',
+            '发送消息（创建消息资源）：同步返回回答；表单 stream=true 时返回 SSE 事件流（multipart：question 与图片字段 file 二选一，纯图片时 question 传空自动按「请分析这张图片」处理，可选 maxResults/useKnowledgeBase/mode；mode=deep 深度检索 agent，mode=fast 固定管线无工具）',
           security: bearerSecurity,
           middleware: [requireAuth],
           request: {

@@ -234,21 +234,24 @@ async function readSseStream(res: Response, handlers: AskStreamHandlers): Promis
 function buildMessageForm(params: {
   question: string;
   maxResults?: number;
+  mode?: import('@myrag/shared').QaMode;
   image?: File;
   stream?: boolean;
-}): { question: string; maxResults?: number; stream?: string; image?: File } {
+}): { question: string; maxResults?: number; mode?: import('@myrag/shared').QaMode; stream?: string; file?: File } {
   return {
     question: params.question,
     maxResults: params.maxResults,
+    mode: params.mode,
     stream: params.stream ? 'true' : undefined,
-    image: params.image,
+    // 字段名与 OpenAPI 契约一致：file（服务端也兼容历史字段名 image）
+    file: params.image,
   };
 }
 
 export const ragApi = {
   /** 流式问答（SSE，stream=true；登录与访客统一入口） */
   async askStream(
-    params: { question: string; conversationId: string; maxResults?: number; image?: File },
+    params: { question: string; conversationId: string; maxResults?: number; mode?: import('@myrag/shared').QaMode; image?: File },
     handlers: AskStreamHandlers,
     signal?: AbortSignal,
   ): Promise<void> {

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { SourceReference } from '@myrag/shared';
+import type { QaMode, SourceReference } from '@myrag/shared';
 import { ragApi } from '../api';
 import { message } from 'antd';
 
@@ -50,6 +50,7 @@ export interface ConversationMeta {
 }
 
 const CURRENT_KEY = 'myrag-current-conv';
+const MODE_KEY = 'myrag-qa-mode';
 
 function genId(): string {
   return `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -69,6 +70,9 @@ interface ChatState {
   historyMetas: ConversationMeta[];
   /** 从文档库带来的引用，进聊天页后挂在输入框上，不自动发送 */
   pendingDocRef: { documentId: string; filename: string } | null;
+  /** 问答模式：deep 深度检索（默认）/ fast 快速直答，本地持久化 */
+  mode: QaMode;
+  setMode(mode: QaMode): void;
   currentConversationId(): string;
   /** 从服务端拉取会话列表（失败不阻塞聊天） */
   refreshConversations(): Promise<void>;
@@ -96,6 +100,12 @@ export const useChatStore = create<ChatState>((set, get) => {
     isLoadingHistory: false,
     historyMetas: [],
     pendingDocRef: null,
+    mode: localStorage.getItem(MODE_KEY) === 'fast' ? 'fast' : 'deep',
+
+    setMode(mode) {
+      localStorage.setItem(MODE_KEY, mode);
+      set({ mode });
+    },
 
     currentConversationId() {
       const { conversationId } = get();
@@ -175,7 +185,8 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     async sendMessage(question, image) {
       const text = question.trim();
-      if (!text || get().isGenerating) return;
+      // 纯图片发送（无文字）同样有效：服务端会补「请分析这张图片」
+      if ((!text && !image) || get().isGenerating) return;
 
       const conversationId = get().currentConversationId();
       const userMsg: ChatMessage = {
@@ -235,7 +246,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       try {
         await ragApi.askStream(
-          { question: text, conversationId, maxResults: 5, image },
+          { question: text, conversationId, maxResults: 5, mode: get().mode, image },
           {
             onStart() {},
             onDelta(content) {
