@@ -13,7 +13,7 @@ import {
   Tooltip,
   type TableProps,
 } from 'antd';
-import { CloseOutlined, CloudUploadOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, RetweetOutlined } from '@ant-design/icons';
+import { CloseOutlined, CloudUploadOutlined, CommentOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, FilterOutlined, RetweetOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DocumentContent, DocumentListItem, FileType } from '@myrag/shared';
 import { FILE_TYPES } from '@myrag/shared';
@@ -196,6 +196,7 @@ export default function DocumentsPage() {
   const [fileType, setFileType] = useState<FileType | ''>(() => parseFileType(searchParams.get('type')));
   const [statusFilter, setStatusFilter] = useState<StatusFilter | ''>(() => parseStatus(searchParams.get('status')));
   const [year, setYear] = useState<number | ''>(() => parseYear(searchParams.get('year')));
+  const [filtersOpen, setFiltersOpen] = useState(() => Boolean(keyword || fileType || statusFilter || year));
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
@@ -291,8 +292,18 @@ export default function DocumentsPage() {
     },
   });
 
+  const rebuildAllMutation = useMutation({
+    mutationFn: () => documentsApi.rebuildAll(),
+    onSuccess: (r) => {
+      message.success(`全量重建已启动（任务集 ${r.setId}）`);
+      invalidate();
+    },
+    onError: (err: Error) => reportError(err),
+  });
+
   const batchBusy = deleteManyMutation.isPending || rebuildManyMutation.isPending;
   batchBusyRef.current = batchBusy;
+  const activeFilterCount = (keyword ? 1 : 0) + (fileType ? 1 : 0) + (statusFilter ? 1 : 0) + (year !== '' ? 1 : 0);
 
   const confirmDeleteMany = (ids: string[]) => {
     modal.confirm({
@@ -428,65 +439,87 @@ export default function DocumentsPage() {
       </div>
       <div className="page-card docs-toolbar">
         <Space size={12} wrap>
-          <Input.Search
-            className="docs-search"
-            value={draft}
-            allowClear
-            disabled={batchBusy}
-            placeholder="按文件名或正文搜索"
-            aria-label="按文件名或正文搜索"
-            onChange={(e) => setDraft(e.target.value)}
-            onSearch={commitSearch}
-          />
-          <Select
-            allowClear
-            placeholder="类型"
-            aria-label="按类型筛选"
-            value={fileType || undefined}
-            style={{ width: 112 }}
-            disabled={batchBusy}
-            options={FILE_TYPES.map((t) => ({ value: t, label: FILE_TYPE_LABEL[t] ?? t }))}
-            onChange={(v) => {
-              if (batchBusy) return;
-              const next = parseFileType(v ?? null);
-              setFileType(next);
-              writeParams({ q: keyword, type: next, status: statusFilter, year: year === '' ? '' : String(year) });
-            }}
-          />
-          <Select
-            allowClear
-            placeholder="状态"
-            aria-label="按状态筛选"
-            value={statusFilter || undefined}
-            style={{ width: 120 }}
-            disabled={batchBusy}
-            options={STATUS_FILTERS.map((s) => ({ value: s, label: STATUS_TAG[s]?.text ?? s }))}
-            onChange={(v) => {
-              if (batchBusy) return;
-              const next = parseStatus(v ?? null);
-              setStatusFilter(next);
-              writeParams({ q: keyword, type: fileType, status: next, year: year === '' ? '' : String(year) });
-            }}
-          />
-          <Select
-            allowClear
-            placeholder="上传年份"
-            aria-label="按上传年份筛选"
-            value={year === '' ? undefined : year}
-            style={{ width: 128 }}
-            disabled={batchBusy}
-            options={YEAR_OPTIONS.map((y) => ({ value: y, label: `${y} 年` }))}
-            onChange={(v) => {
-              if (batchBusy) return;
-              const next = typeof v === 'number' ? v : parseYear(v == null ? null : String(v));
-              setYear(next);
-              writeParams({ q: keyword, type: fileType, status: statusFilter, year: next === '' ? '' : String(next) });
-            }}
-          />
+          <Button
+            icon={<FilterOutlined />}
+            aria-expanded={filtersOpen}
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            搜索 / 筛选{activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}
+          </Button>
+          {filtersOpen && (
+            <>
+              <Input.Search
+                className="docs-search"
+                value={draft}
+                allowClear
+                disabled={batchBusy}
+                placeholder="按文件名或正文搜索"
+                aria-label="按文件名或正文搜索"
+                onChange={(e) => setDraft(e.target.value)}
+                onSearch={commitSearch}
+              />
+              <Select
+                allowClear
+                placeholder="类型"
+                aria-label="按类型筛选"
+                value={fileType || undefined}
+                style={{ width: 112 }}
+                disabled={batchBusy}
+                options={FILE_TYPES.map((t) => ({ value: t, label: FILE_TYPE_LABEL[t] ?? t }))}
+                onChange={(v) => {
+                  if (batchBusy) return;
+                  const next = parseFileType(v ?? null);
+                  setFileType(next);
+                  writeParams({ q: keyword, type: next, status: statusFilter, year: year === '' ? '' : String(year) });
+                }}
+              />
+              <Select
+                allowClear
+                placeholder="状态"
+                aria-label="按状态筛选"
+                value={statusFilter || undefined}
+                style={{ width: 120 }}
+                disabled={batchBusy}
+                options={STATUS_FILTERS.map((s) => ({ value: s, label: STATUS_TAG[s]?.text ?? s }))}
+                onChange={(v) => {
+                  if (batchBusy) return;
+                  const next = parseStatus(v ?? null);
+                  setStatusFilter(next);
+                  writeParams({ q: keyword, type: fileType, status: next, year: year === '' ? '' : String(year) });
+                }}
+              />
+              <Select
+                allowClear
+                placeholder="上传年份"
+                aria-label="按上传年份筛选"
+                value={year === '' ? undefined : year}
+                style={{ width: 128 }}
+                disabled={batchBusy}
+                options={YEAR_OPTIONS.map((y) => ({ value: y, label: `${y} 年` }))}
+                onChange={(v) => {
+                  if (batchBusy) return;
+                  const next = typeof v === 'number' ? v : parseYear(v == null ? null : String(v));
+                  setYear(next);
+                  writeParams({ q: keyword, type: fileType, status: statusFilter, year: next === '' ? '' : String(next) });
+                }}
+              />
+            </>
+          )}
           {isManager && (
             <Button type="primary" icon={<CloudUploadOutlined />} disabled={batchBusy} onClick={() => setUploadOpen(true)}>
               上传文档
             </Button>
+          )}
+          {isSuperAdmin && (
+            <Popconfirm
+              title="全量重建向量索引？"
+              description="所有文档逐一重建，失败可在管理面板「异常」恢复。"
+              onConfirm={() => rebuildAllMutation.mutate()}
+            >
+              <Button danger icon={<ThunderboltOutlined />} loading={rebuildAllMutation.isPending}>
+                全量重建
+              </Button>
+            </Popconfirm>
           )}
         </Space>
         {isManager && selectedRowKeys.length > 0 && (
