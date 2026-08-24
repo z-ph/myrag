@@ -96,8 +96,14 @@ type LaneItem =
 
 type Lanes = { running: LaneItem[]; queued: LaneItem[]; interrupted: LaneItem[] };
 
-function typeTag(type: 'upload' | 'rebuild') {
-  return <Tag color={type === 'rebuild' ? 'purple' : 'blue'}>{type === 'rebuild' ? '全量重建' : '上传'}</Tag>;
+/**
+ * 任务类型标签。rebuild 分两种口径：
+ * - 独立任务（无集合）= 单篇重建（文档库行操作触发）
+ * - 集合成员/集合头 = 全量重建（文档库「全量重建」触发的任务集）
+ */
+function typeTag(type: 'upload' | 'rebuild', scope: 'single' | 'all') {
+  if (type === 'upload') return <Tag color="blue">上传</Tag>;
+  return <Tag color="purple">{scope === 'all' ? '全量重建' : '单篇重建'}</Tag>;
 }
 
 /** 单任务真实进度：文件级聚合（处理中按各自真实 progress，终态按 100） */
@@ -179,7 +185,8 @@ function TaskBlock({
               onChange={(e) => onToggle?.(task.taskId, e.target.checked)}
             />
           ) : null}
-          {typeTag(task.type)}
+          {/* 集合成员不重复打类型标签，集合头已标明全量重建 */}
+          {!nested && typeTag(task.type, 'single')}
           <span className="ledger-entry-count">{task.total} 个文件</span>
         </div>
         <div className="ledger-entry-actions">
@@ -227,7 +234,7 @@ function SetBlock({ item, ...rest }: { item: Extract<LaneItem, { kind: 'set' }> 
               }}
             />
           ) : null}
-          {typeTag(item.type)}
+          {typeTag(item.type, 'all')}
           <span className="ledger-entry-count">任务集 · 共 {item.total} 个任务</span>
         </div>
         {rest.selectable && laneMemberIds.length > 0 ? (

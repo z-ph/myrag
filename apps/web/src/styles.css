@@ -562,28 +562,33 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.ledger-set {
-  margin-bottom: 4px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+/* 集合不是盒子：与条目同层，靠缩进和发丝线分层，杜绝卡片套卡片 */
+.ledger-set > .ledger-entry-title {
+  min-width: 0;
 }
 
 .ledger-member {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fafafb;
+  margin-top: 12px;
 }
 
-/* 文件行（台账明细） */
+/* 成员之间用发丝线分隔（首个成员紧随集合头，不加分隔线） */
+.ledger-member + .ledger-member {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.ledger-member .progress-track,
+.ledger-member .ledger-file {
+  margin-left: 14px;
+}
+
+.ledger-member .ledger-entry-meta {
+  margin-left: 14px;
+}
+
+/* 文件行是台账明细行，不是卡片：无边框无底色，挂在所属任务之下 */
 .ledger-file {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fbfbfc;
+  margin-top: 8px;
 }
 
 .ledger-file-top {
