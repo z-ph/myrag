@@ -6,7 +6,8 @@ import type { ServerConfig } from '@myrag/shared';
 import type { BatchTask, TaskStatus } from '@myrag/shared';
 import type { Db } from '../../db';
 import { batchFileResults, batchTasks, documents, taskSets } from '../../db/schema';
-import type { ProcessService, ProcessStage } from '../documents/process.service';
+import type { ProcessResult, ProcessService } from '../documents/process.service';
+import type { ProgressReporter } from '../documents/progress';
 import { genId, logger } from '../../lib/util';
 import { badRequest } from '../../lib/errors';
 
@@ -63,10 +64,14 @@ export interface ActiveTaskFileView {
   name: string;
   status: 'pending' | 'processing' | 'success' | 'failed';
   message: string;
-  /** 处理进度 0-100（仅 processing 有意义） */
+  /** 处理进度 0-100（加权真实进度，仅 processing 有意义） */
   progress: number;
   /** 当前/最后处理阶段；失败时保留用于定位 */
   stage?: string;
+  /** 当前阶段真实单元：已完成数（OCR 页数 / 向量化块数 / 写入点数） */
+  stageDone?: number;
+  /** 当前阶段真实单元：总数 */
+  stageTotal?: number;
 }
 
 export interface ActiveTaskView {
@@ -175,6 +180,8 @@ function toActiveView(row: typeof batchTasks.$inferSelect, results: typeof batch
       message: r.message ?? r.errorMessage ?? '',
       progress: r.progress,
       stage: r.stage ?? undefined,
+      stageDone: r.stageDone ?? undefined,
+      stageTotal: r.stageTotal ?? undefined,
     })),
     createdAt: row.createdAt.toISOString(),
   };
@@ -233,7 +240,181 @@ export function groupLaneItems(entries: LaneTaskEntry[]): ActiveTaskLanes {
   return lanes;
 }
 
-/** 处理单个任务（幂等：仅处理 PENDING/PROCESSING 的文件；INTERRUPTED 立即停） */
+/** 单文件来源：上传走暂存文件，重建走对象存储里的已入库文档 */
+type FileSource =
+  | { kind: 'staged'; path: string; userId: string }
+  | { kind: 'stored'; documentId: string };
+
+/** 重建单文件超时（毫秒） */
+const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
+
+function failOutcome(filename: string, err: unknown): ProcessResult {
+  return {
+    documentId: '',
+    originalFilename: filename,
+    success: false,
+    message: err instanceof Error ? err.message : '处理失败',
+    status: 'FAILED',
+    segmentCount: 0,
+    vectorCount: 0,
+  };
+}
+
+function timeoutAfter(ms: number): Promise<never> {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error('处理超时（5 分钟）')), ms);
+    timer.unref?.();
+  });
+}
+
+/** 任务进入终态后：若所属集合已无未终态成员，写集合完成时间 */
+async function markSetCompletedIfDone(db: Db, taskId: string): Promise<void> {
+  const [task] = await db.select({ setId: batchTasks.setId }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+  if (!task?.setId) return;
+  const open = await db
+    .select({ status: batchTasks.status })
+    .from(batchTasks)
+    .where(and(eq(batchTasks.setId, task.setId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
+  if (open.length === 0) {
+    await db.update(taskSets).set({ completedAt: new Date() }).where(eq(taskSets.setId, task.setId));
+  }
+}
+
+/** 汇总 batchFileResults 更新 batchTasks 进度与终态（上传 / 重建共用） */
+async function finalizeBatchTask(db: Db, taskId: string): Promise<void> {
+  const [current] = await db
+    .select({ status: batchTasks.status, failRounds: batchTasks.failRounds })
+    .from(batchTasks)
+    .where(eq(batchTasks.taskId, taskId))
+    .limit(1);
+  if (!current || current.status === 'INTERRUPTED') return;
+  const results = await db
+    .select({ status: batchFileResults.status })
+    .from(batchFileResults)
+    .where(eq(batchFileResults.taskId, taskId));
+  const success = results.filter((r) => r.status === 'SUCCESS').length;
+  const failed = results.filter((r) => r.status === 'FAILED').length;
+  const total = results.length;
+  const allDone = success + failed >= total;
+  const status = allDone ? summarizeTaskOutcome(results.map((r) => r.status)).status : 'PROCESSING';
+  const updates: Partial<typeof batchTasks.$inferInsert> = {
+    successCount: success,
+    failureCount: failed,
+    status,
+    failRounds: nextFailRounds(current.failRounds, status),
+    updatedAt: new Date(),
+  };
+  if (allDone) updates.completedAt = new Date();
+  await db
+    .update(batchTasks)
+    .set(updates)
+    .where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
+  if (allDone) {
+    await markSetCompletedIfDone(db, taskId);
+    logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failed})`);
+  }
+}
+
+/**
+ * 单文件处理原语（上传 / 重建共用）：
+ * 幂等仅处理 PENDING/PROCESSING 文件；捞起即 PROCESSING 并把真实进度写回
+ * batchFileResults（overall percent + 阶段 + 单元计数），完成后汇总任务。
+ */
+async function processFile(
+  db: Db,
+  processService: ProcessService,
+  taskId: string,
+  file: typeof batchFileResults.$inferSelect,
+  source: FileSource,
+): Promise<{ success: boolean; message: string }> {
+  if (file.status !== 'PENDING' && file.status !== 'PROCESSING') {
+    return { success: true, message: '跳过（已处理）' };
+  }
+  await db
+    .update(batchTasks)
+    .set({ status: 'PROCESSING', updatedAt: new Date() })
+    .where(and(eq(batchTasks.taskId, taskId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
+  await db
+    .update(batchFileResults)
+    .set({ status: 'PROCESSING', progress: 0, stage: null, stageDone: 0, stageTotal: 0 })
+    .where(eq(batchFileResults.id, file.id));
+
+  const isInterrupted = async () => {
+    const [live] = await db
+      .select({ status: batchTasks.status })
+      .from(batchTasks)
+      .where(eq(batchTasks.taskId, taskId))
+      .limit(1);
+    return !live || live.status === 'INTERRUPTED';
+  };
+
+  const onProgress: ProgressReporter = async (event) => {
+    await db
+      .update(batchFileResults)
+      .set({
+        stage: event.stage,
+        progress: event.percent,
+        stageDone: event.done ?? null,
+        stageTotal: event.total ?? null,
+      })
+      .where(eq(batchFileResults.id, file.id));
+  };
+
+  let outcome: ProcessResult;
+  if (source.kind === 'staged') {
+    let buffer: Buffer;
+    try {
+      buffer = await readFile(source.path);
+    } catch {
+      const message = '暂存文件丢失，无法处理';
+      await db
+        .update(batchFileResults)
+        .set({ status: 'FAILED', errorMessage: message })
+        .where(eq(batchFileResults.id, file.id));
+      await finalizeBatchTask(db, taskId);
+      return { success: false, message };
+    }
+    try {
+      outcome = await processService.processBuffer({
+        userId: source.userId,
+        originalFilename: file.filename,
+        buffer,
+        batchTaskId: taskId,
+        onProgress,
+      });
+    } catch (err) {
+      outcome = failOutcome(file.filename, err);
+    }
+  } else {
+    try {
+      outcome = await Promise.race([
+        processService.reprocessStored(source.documentId, 'system', onProgress),
+        timeoutAfter(REBUILD_TIMEOUT_MS),
+      ]);
+    } catch (err) {
+      outcome = failOutcome(file.filename, err);
+    }
+  }
+
+  if (await isInterrupted()) return { success: false, message: '任务已中断' };
+  await db
+    .update(batchFileResults)
+    .set({
+      status: outcome.success ? 'SUCCESS' : 'FAILED',
+      ...(outcome.documentId ? { documentId: outcome.documentId } : {}),
+      message: outcome.message?.slice(0, 500) ?? null,
+      errorMessage: outcome.success ? null : (outcome.message?.slice(0, 500) ?? null),
+      segmentCount: outcome.segmentCount,
+      embeddingCount: outcome.vectorCount,
+      // 成功则进度封顶、阶段清空；失败保留 stage/progress/单元计数便于定位
+      ...(outcome.success ? { progress: 100, stage: null, stageDone: 0, stageTotal: 0 } : {}),
+    })
+    .where(eq(batchFileResults.id, file.id));
+  await finalizeBatchTask(db, taskId);
+  return { success: outcome.success, message: outcome.message };
+}
+
+/** 处理上传任务（幂等：仅处理 PENDING/PROCESSING 的文件；INTERRUPTED 立即停） */
 async function processTaskFiles(
   db: Db,
   processService: ProcessService,
@@ -248,74 +429,24 @@ async function processTaskFiles(
   const pendingResults = await db
     .select()
     .from(batchFileResults)
-    .where(
-      and(
-        eq(batchFileResults.taskId, taskId),
-        inArray(batchFileResults.status, ['PENDING', 'PROCESSING']),
-      ),
-    );
+    .where(and(eq(batchFileResults.taskId, taskId), inArray(batchFileResults.status, ['PENDING', 'PROCESSING'])));
 
   let idx = 0;
   async function worker() {
     while (true) {
       const result = pendingResults[idx++];
       if (!result) return;
-      const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
+      const [live] = await db
+        .select({ status: batchTasks.status })
+        .from(batchTasks)
+        .where(eq(batchTasks.taskId, taskId))
+        .limit(1);
       if (!live || live.status === 'INTERRUPTED') return;
-      let buffer: Buffer;
-      try {
-        buffer = await readFile(result.stagedPath);
-      } catch {
-        await db
-          .update(batchFileResults)
-          .set({ status: 'FAILED', errorMessage: '暂存文件丢失，无法处理' })
-          .where(eq(batchFileResults.id, result.id));
-        continue;
-      }
-      // 捞起即置 PROCESSING + 进度归零，处理过程按阶段回报进度
-      await db
-        .update(batchFileResults)
-        .set({ status: 'PROCESSING', progress: 0, stage: null })
-        .where(eq(batchFileResults.id, result.id));
-      const onProgress = async (stage: ProcessStage, percent: number) => {
-        await db
-          .update(batchFileResults)
-          .set({ stage, progress: percent })
-          .where(eq(batchFileResults.id, result.id));
-      };
-      let outcome;
-      try {
-        outcome = await processService.processBuffer({
-          userId: result.userId,
-          originalFilename: result.filename,
-          buffer,
-          batchTaskId: taskId,
-          onProgress,
-        });
-      } catch (err) {
-        outcome = {
-          documentId: '',
-          originalFilename: result.filename,
-          success: false,
-          message: err instanceof Error ? err.message : '处理失败',
-          status: 'FAILED' as const,
-          segmentCount: 0,
-          vectorCount: 0,
-        };
-      }
-      await db
-        .update(batchFileResults)
-        .set({
-          status: outcome.success ? 'SUCCESS' : 'FAILED',
-          documentId: outcome.documentId,
-          message: outcome.message,
-          errorMessage: outcome.success ? null : outcome.message,
-          segmentCount: outcome.segmentCount,
-          embeddingCount: outcome.vectorCount,
-          // 成功则进度封顶、阶段清空；失败保留 stage/progress 便于定位死在哪一步
-          ...(outcome.success ? { progress: 100, stage: null } : {}),
-        })
-        .where(eq(batchFileResults.id, result.id));
+      await processFile(db, processService, taskId, result, {
+        kind: 'staged',
+        path: result.stagedPath,
+        userId: result.userId,
+      });
     }
   }
 
@@ -326,37 +457,7 @@ async function processTaskFiles(
     logger.info(`[batch] 任务 ${taskId} 已中断，跳过收尾`);
     return;
   }
-  const finalResults = await db
-    .select({ status: batchFileResults.status })
-    .from(batchFileResults)
-    .where(eq(batchFileResults.taskId, taskId));
-  const { status, success, failure } = summarizeTaskOutcome(finalResults.map((r) => r.status));
-  await db
-    .update(batchTasks)
-    .set({
-      status,
-      successCount: success,
-      failureCount: failure,
-      failRounds: nextFailRounds(task.failRounds, status),
-      completedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
-  await markSetCompletedIfDone(db, taskId);
-  logger.info(`[batch] 任务 ${taskId} 完成: ${status} (成功 ${success} / 失败 ${failure})`);
-}
-
-/** 任务进入终态后：若所属集合已无未终态成员，写集合完成时间 */
-async function markSetCompletedIfDone(db: Db, taskId: string): Promise<void> {
-  const [task] = await db.select({ setId: batchTasks.setId }).from(batchTasks).where(eq(batchTasks.taskId, taskId)).limit(1);
-  if (!task?.setId) return;
-  const open = await db
-    .select({ status: batchTasks.status })
-    .from(batchTasks)
-    .where(and(eq(batchTasks.setId, task.setId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
-  if (open.length === 0) {
-    await db.update(taskSets).set({ completedAt: new Date() }).where(eq(taskSets.setId, task.setId));
-  }
+  await finalizeBatchTask(db, taskId);
 }
 /** BullMQ 队列名（name 不允许含冒号；Redis key 由 prefix:name 拼成 myrag:batch:*） */
 const QUEUE_NAME = 'batch';
@@ -395,11 +496,6 @@ export function createBatchService(
   queue.on('error', (err) => logger.error('[batch] 队列异常:', err));
 
   let worker: Worker<QueueJobData> | null = null;
-
-  const JOB_TIMEOUT = 5 * 60 * 1000;
-
-  /** 单任务超时：5 分钟，worker 从开始消费计时 */
-  const JOB_TIMEOUT_MS = 5 * 60 * 1000;
 
   /** 入队：jobId = taskId，重复入队为空操作 */
   async function enqueue(taskId: string): Promise<void> {
@@ -454,36 +550,6 @@ export function createBatchService(
     const jobs = rebuildSingleJobs(taskId, pendingIds);
     if (jobs.length === 0) return;
     await queue.addBulk(jobs);
-  }
-
-
-  /** 单文件处理完后，汇总 batchFileResults 更新 batchTasks 进度 */
-  async function finalizeBatchTask(taskId: string): Promise<void> {
-    const [current] = await db
-      .select({ status: batchTasks.status, failRounds: batchTasks.failRounds })
-      .from(batchTasks)
-      .where(eq(batchTasks.taskId, taskId))
-      .limit(1);
-    if (!current || current.status === 'INTERRUPTED') return;
-    const results = await db
-      .select({ status: batchFileResults.status })
-      .from(batchFileResults)
-      .where(eq(batchFileResults.taskId, taskId));
-    const success = results.filter((r) => r.status === 'SUCCESS').length;
-    const failed = results.filter((r) => r.status === 'FAILED').length;
-    const total = results.length;
-    const allDone = success + failed >= total;
-    const status = allDone ? summarizeTaskOutcome(results.map((r) => r.status)).status : 'PROCESSING';
-    const updates: Partial<typeof batchTasks.$inferInsert> = {
-      successCount: success,
-      failureCount: failed,
-      status,
-      failRounds: nextFailRounds(current.failRounds, status),
-      updatedAt: new Date(),
-    };
-    if (allDone) updates.completedAt = new Date();
-    await db.update(batchTasks).set(updates).where(and(eq(batchTasks.taskId, taskId), eq(batchTasks.status, 'PROCESSING')));
-    if (allDone) await markSetCompletedIfDone(db, taskId);
   }
 
   return {
@@ -570,72 +636,21 @@ export function createBatchService(
       worker = new Worker<QueueJobData>(
         QUEUE_NAME,
         async (job) => {
-          if (job.name === 'process-single') {
-            if (!('documentId' in job.data)) return;
-            const documentId = job.data.documentId;
-            // taskId 由入队方显式放在 data 里，不再从 jobId 字符串里拆
-            const batchTaskId = job.data.taskId ?? null;
-
-            // 标记单文件 PROCESSING + 批任务 PROCESSING（进度归零）
-            if (batchTaskId) {
-              await db
-                .update(batchFileResults)
-                .set({ status: 'PROCESSING', progress: 0, stage: null })
-                .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
-              await db
-                .update(batchTasks)
-                .set({ status: 'PROCESSING', updatedAt: new Date() })
-                .where(and(eq(batchTasks.taskId, batchTaskId), inArray(batchTasks.status, ['PENDING', 'PROCESSING'])));
-            }
-
-            const onProgress = batchTaskId
-              ? async (stage: ProcessStage, percent: number) => {
-                  await db
-                    .update(batchFileResults)
-                    .set({ stage, progress: percent })
-                    .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
-                }
-              : undefined;
-
-            try {
-              // 单任务超时：5 分钟，从开始消费计时
-              const timeout = new Promise<never>((_, reject) => {
-                const timer = setTimeout(() => reject(new Error('处理超时（5 分钟）')), JOB_TIMEOUT_MS);
-                timer.unref?.();
-              });
-              // reprocessStored 先清旧向量再处理；失败不抛异常，必须看返回值
-              const result = await Promise.race([processService.reprocessStored(documentId, 'system', onProgress), timeout]);
-
-              if (batchTaskId) {
-                const [live] = await db.select({ status: batchTasks.status }).from(batchTasks).where(eq(batchTasks.taskId, batchTaskId)).limit(1);
-                if (live?.status === 'INTERRUPTED') return;
-                await db
-                  .update(batchFileResults)
-                  .set({
-                    status: result.success ? 'SUCCESS' : 'FAILED',
-                    message: result.message.slice(0, 500),
-                    errorMessage: result.success ? null : result.message,
-                    segmentCount: result.segmentCount,
-                    embeddingCount: result.vectorCount,
-                    // 成功则进度封顶、阶段清空；失败保留 stage/progress 便于定位
-                    ...(result.success ? { progress: 100, stage: null } : {}),
-                  })
-                  .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
-                await finalizeBatchTask(batchTaskId);
-              }
-              // 处理失败要让 job 失败，否则异常文件在队列侧无任何痕迹
-              if (!result.success) throw new Error(result.message);
-            } catch (err) {
-              const message = err instanceof Error ? err.message.slice(0, 500) : String(err);
-              if (batchTaskId) {
-                await db
-                  .update(batchFileResults)
-                  .set({ status: 'FAILED', errorMessage: message })
-                  .where(and(eq(batchFileResults.taskId, batchTaskId), eq(batchFileResults.documentId, documentId)));
-                await finalizeBatchTask(batchTaskId);
-              }
-              throw err;
-            }
+          if (job.name === 'process-single' && 'documentId' in job.data) {
+            const { documentId, taskId } = job.data;
+            if (!taskId) return;
+            const [file] = await db
+              .select()
+              .from(batchFileResults)
+              .where(and(eq(batchFileResults.taskId, taskId), eq(batchFileResults.documentId, documentId)))
+              .limit(1);
+            if (!file) return;
+            const { success, message } = await processFile(db, processService, taskId, file, {
+              kind: 'stored',
+              documentId,
+            });
+            // 处理失败要让 job 失败，否则异常文件在队列侧无任何痕迹
+            if (!success) throw new Error(message || '处理失败');
             return;
           }
           if (!('documentId' in job.data)) {
@@ -667,7 +682,7 @@ export function createBatchService(
         .where(eq(batchTasks.taskId, taskId));
       await db
         .update(batchFileResults)
-        .set({ status: 'PENDING', progress: 0, stage: null })
+        .set({ status: 'PENDING', progress: 0, stage: null, stageDone: 0, stageTotal: 0 })
         .where(and(eq(batchFileResults.taskId, taskId), eq(batchFileResults.status, 'PROCESSING')));
       await dropJobsForTask(taskId);
     },
@@ -697,7 +712,7 @@ export function createBatchService(
         if (!task) continue;
         await db
           .update(batchFileResults)
-          .set({ status: 'PENDING', errorMessage: null, message: null, progress: 0, stage: null })
+          .set({ status: 'PENDING', errorMessage: null, message: null, progress: 0, stage: null, stageDone: 0, stageTotal: 0 })
           .where(
             and(eq(batchFileResults.taskId, task.taskId), inArray(batchFileResults.status, ['FAILED', 'PROCESSING'])),
           );

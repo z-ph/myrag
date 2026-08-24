@@ -161,10 +161,14 @@ export const batchFileResults = pgTable(
     stagedPath: varchar('staged_path', { length: 512 }).notNull(),
     filename: varchar('filename', { length: 255 }).notNull(),
     status: varchar('status', { length: 32 }).notNull(),
-    /** 单文件处理进度（0-100），仅 PROCESSING 期间有意义 */
+    /** 单文件处理进度（0-100），仅 PROCESSING 期间有意义；由加权真实单元驱动 */
     progress: integer('progress').notNull().default(0),
     /** 当前处理阶段：parse/chunk/embed/write；失败后保留用于定位死在哪一步 */
     stage: varchar('stage', { length: 32 }),
+    /** 当前阶段真实单元：已完成数（如 OCR 页数、向量化块数、写入点数） */
+    stageDone: integer('stage_done').default(0),
+    /** 当前阶段真实单元：总数 */
+    stageTotal: integer('stage_total').default(0),
     message: varchar('message', { length: 512 }),
     errorMessage: text('error_message'),
     embeddingCount: integer('embedding_count').default(0),

@@ -12,11 +12,9 @@ import { chunkText, extractDocumentTime, extractKeywords } from '../../pipeline/
 import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
 import { conflict, badRequest } from '../../lib/errors';
+import { createProgressTracker, type ProgressReporter } from './progress';
 
-/** 处理阶段：parse 解析（含 OCR）/ chunk 分块 / embed 向量化 / write 写入 */
-export type ProcessStage = 'parse' | 'chunk' | 'embed' | 'write';
-/** 阶段进度上报：percent 为整体 0-100 */
-export type ProgressReporter = (stage: ProcessStage, percent: number) => void | Promise<void>;
+export type { ProcessStage, ProgressReporter } from './progress';
 
 export interface ProcessInput {
   userId: string;
@@ -85,6 +83,9 @@ export function createProcessService(
   enqueueRebuild: EnqueueRebuild,
 ): ProcessService {
 
+  /** write 阶段分批大小：按此批量 upsert 向量点 + 写快照，逐批报真实进度 */
+  const WRITE_BATCH = 64;
+
   /** 单个已分片向量入库文档的向量化流程（从解析到写入），返回分块数 */
   async function vectorize(
     documentId: string,
@@ -94,76 +95,80 @@ export function createProcessService(
     buffer: Buffer,
     onProgress?: ProgressReporter,
   ): Promise<{ segmentCount: number; vectorCount: number }> {
-    const report = (stage: ProcessStage, percent: number) => onProgress?.(stage, percent);
-    // 1. 解析（OCR 场景按页推进 5→30）
-    await report('parse', 5);
+    const report = createProgressTracker((event) => onProgress?.(event));
+
+    // 1. 解析：扫描件 OCR 按「已完成页 / 总页数」推进；非 OCR 一次完成
     const { text, ocrModel, ocrDurationMs } = await parseDocument(fileType, buffer, llm, (done, total) =>
-      report('parse', 5 + Math.round((25 * done) / Math.max(total, 1))),
+      report('parse', done / Math.max(total, 1), done, total),
     );
     const cleanText = text.replace(/\u0000/g, '').trim();
     if (!cleanText) {
       throw new ParseError('未能从文档中提取到文本内容');
     }
-    await report('parse', 30);
+    await report('parse', 1);
 
-    // 2. 分块（参数来自动态设置，可运行时调整）
+    // 2. 分块：纯 CPU 快速操作，完成即到 100%
     const s = settings.get();
     const chunks = chunkText(cleanText, s.chunkSize, s.chunkOverlap, s.chunkKeywordsTopN);
     if (chunks.length === 0) throw new ParseError('未能从文档中提取到文本内容');
-    await report('chunk', 35);
+    await report('chunk', 1, chunks.length, chunks.length);
 
-    // 3. 向量化（分批，批次上限可配；按批推进 40→88）
+    // 3. 向量化：分批，按「已向量化块 / 总块数」推进（LLM 主成本）
     const documentTime = extractDocumentTime(cleanText);
     const documentKeywords = extractKeywords(cleanText);
     const vectors: number[][] = [];
     for (let i = 0; i < chunks.length; i += s.embedBatchSize) {
       const batch = chunks.slice(i, i + s.embedBatchSize);
       vectors.push(...(await llm.embed(batch.map((c) => c.text))));
-      await report('embed', 40 + Math.round((48 * (i + batch.length)) / chunks.length));
+      await report('embed', (i + batch.length) / chunks.length, i + batch.length, chunks.length);
     }
 
-    // 4. 写 Qdrant（point ID 必须是整数或 UUID）
+    // 4. 写入：按批 upsert 向量点 + 写分块快照，按「已写入点 / 总点数」推进
     const ingestedAt = new Date().toISOString();
-    const points = chunks.map((chunk, i) => ({
-      id: randomUUID(),
-      vector: vectors[i] ?? [],
-      payload: {
-        document_id: documentId,
-        filename: originalFilename,
-        chunk_index: chunk.index,
-        chunk_hash: `${documentId}:${chunk.index}`,
-        title: chunk.title,
-        category: undefined,
-        document_time: documentTime,
-        ingested_at: ingestedAt,
-        keywords: chunk.keywords,
-        document_keywords: documentKeywords,
-        content_type: fileType,
-      },
+    const chunkRows = chunks.map((chunk) => ({
+      documentId,
+      chunkIndex: chunk.index,
+      chunkText: chunk.text,
+      chunkTextPreview: chunk.text.slice(0, 300),
+      chunkSize: chunk.text.length,
+      rawChunkSize: chunk.text.length,
+      chunkHash: `${documentId}:${chunk.index}`,
+      title: chunk.title,
+      documentTime,
+      ingestedAt,
+      keywords: chunk.keywords,
+      documentKeywords,
+      contentType: fileType,
     }));
-    await qdrant.upsert(documentId, points);
-
-    // 5. 快照（先清后插）
     await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
-    await db.insert(documentChunks).values(
-      chunks.map((chunk, i) => ({
-        documentId,
-        chunkIndex: chunk.index,
-        chunkText: chunk.text,
-        chunkTextPreview: chunk.text.slice(0, 300),
-        chunkSize: chunk.text.length,
-        rawChunkSize: chunk.text.length,
-        chunkHash: `${documentId}:${chunk.index}`,
-        title: chunk.title,
-        documentTime,
-        ingestedAt,
-        keywords: chunk.keywords,
-        documentKeywords,
-        contentType: fileType,
-      })),
-    );
+    let written = 0;
+    for (let i = 0; i < chunks.length; i += WRITE_BATCH) {
+      const batchChunks = chunks.slice(i, i + WRITE_BATCH);
+      const batchVectors = vectors.slice(i, i + WRITE_BATCH);
+      const points = batchChunks.map((chunk, j) => ({
+        id: randomUUID(),
+        vector: batchVectors[j] ?? [],
+        payload: {
+          document_id: documentId,
+          filename: originalFilename,
+          chunk_index: chunk.index,
+          chunk_hash: `${documentId}:${chunk.index}`,
+          title: chunk.title,
+          category: undefined,
+          document_time: documentTime,
+          ingested_at: ingestedAt,
+          keywords: chunk.keywords,
+          document_keywords: documentKeywords,
+          content_type: fileType,
+        },
+      }));
+      await qdrant.upsert(documentId, points);
+      await db.insert(documentChunks).values(chunkRows.slice(i, i + WRITE_BATCH));
+      written += batchChunks.length;
+      await report('write', written / chunks.length, written, chunks.length);
+    }
 
-    // 6. 更新文档元数据（OCR 信息，仅 OCR 场景）
+    // 5. 更新文档元数据（OCR 信息，仅 OCR 场景）
     if (ocrModel || ocrDurationMs !== undefined) {
       await db
         .update(documents)
@@ -171,8 +176,7 @@ export function createProcessService(
         .where(eq(documents.documentId, documentId));
     }
 
-    await report('write', 95);
-    return { segmentCount: chunks.length, vectorCount: points.length };
+    return { segmentCount: chunks.length, vectorCount: chunks.length };
   }
 
   async function processDocumentRow(doc: DocumentRow, onProgress?: ProgressReporter): Promise<ProcessResult> {

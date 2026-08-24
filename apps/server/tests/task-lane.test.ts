@@ -186,6 +186,8 @@ describe('groupLaneItems', () => {
             embeddingCount: null,
             progress: 55,
             stage: 'embed',
+            stageDone: 45,
+            stageTotal: 120,
             createdAt: new Date(),
           },
         ],
@@ -193,6 +195,6 @@ describe('groupLaneItems', () => {
     ]);
     const item = lanes.running[0]!;
     if (item.kind !== 'task') throw new Error('expected task item');
-    expect(item.files[0]).toMatchObject({ progress: 55, stage: 'embed' });
+    expect(item.files[0]).toMatchObject({ progress: 55, stage: 'embed', stageDone: 45, stageTotal: 120 });
   });
 });

@@ -24,6 +24,8 @@ const activeTaskFileSchema = z.object({
   message: z.string(),
   progress: z.number(),
   stage: z.string().optional(),
+  stageDone: z.number().optional(),
+  stageTotal: z.number().optional(),
 });
 
 const activeTaskViewSchema = z.object({
