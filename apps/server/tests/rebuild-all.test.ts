@@ -6,7 +6,6 @@ import type { LlmClient } from '../src/llm/client';
 import type { ObjectStorage } from '../src/store/object-storage';
 import type { QdrantStore } from '../src/vector/qdrant';
 import { createProcessService } from '../src/modules/documents/process.service';
-import type { PromptService } from '../src/modules/prompts/prompt.service';
 import { rebuildSingleJobs } from '../src/modules/upload/batch.service';
 
 function makeDoc(overrides: Partial<DocumentRow> = {}): DocumentRow {
@@ -35,7 +34,6 @@ function makeDoc(overrides: Partial<DocumentRow> = {}): DocumentRow {
     batchTaskId: null,
     createdAt: new Date(),
     processedAt: new Date(),
-    toc: null,
     ...overrides,
   };
 }
@@ -84,7 +82,6 @@ function createService(docs: DocumentRow[], enqueueRebuild = vi.fn().mockResolve
     { qdrantVectorSize: 1024 } as ServerConfig,
     { get: () => ({}) } as SettingsService,
     enqueueRebuild,
-    { get: () => '' } as unknown as PromptService,
   );
   return { service, db, qdrant, getBuffer, enqueueRebuild };
 }

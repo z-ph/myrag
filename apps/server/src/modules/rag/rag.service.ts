@@ -23,7 +23,6 @@ import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from '.
 import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
 import type { DocumentService } from '../documents/document.service';
-import { formatListChunksText } from '../../pipeline/outline';
 
 export interface AskInput {
   question: string;
@@ -76,9 +75,6 @@ export interface RagService {
 
 /** 知识库检索工具名（模型侧 + 前端展示共用） */
 export const SEARCH_TOOL_NAME = 'search_knowledge_base';
-export const LIST_DOCUMENTS_TOOL_NAME = 'list_documents';
-export const GET_DOCUMENT_TOOL_NAME = 'get_document';
-export const LIST_CHUNKS_TOOL_NAME = 'list_chunks';
 export const READ_DOCUMENT_TOOL_NAME = 'read_document';
 const READ_DOCUMENT_DEFAULT_CHUNKS = 8;
 
@@ -88,7 +84,7 @@ export async function lookupOrMissing<T>(documentId: string, run: () => Promise<
     return await run();
   } catch (err) {
     if (isAppError(err) && err.status === 404) {
-      return `没有 id 为 ${documentId} 的文档。请先用 list_documents 核对 documentId。`;
+      return `没有 id 为 ${documentId} 的文档。请用 search_knowledge_base 检索确认 documentId。`;
     }
     throw err;
   }
@@ -97,9 +93,6 @@ export async function lookupOrMissing<T>(documentId: string, run: () => Promise<
 /** 工具名 → 前端展示文案 */
 export const TOOL_LABELS: Record<string, string> = {
   [SEARCH_TOOL_NAME]: '检索知识库',
-  [LIST_DOCUMENTS_TOOL_NAME]: '列出文档',
-  [GET_DOCUMENT_TOOL_NAME]: '查看文档卡片',
-  [LIST_CHUNKS_TOOL_NAME]: '查看块目录',
   [READ_DOCUMENT_TOOL_NAME]: '阅读文档正文',
 };
 
@@ -170,65 +163,23 @@ export function createRagService(
     };
 
     /**
-     * 知识库工具：查看结果同时写入用户来源，不再单独 cite。
+     * 唯一知识库工具：混合检索，结果同时写入用户来源，不再单独 cite。
      */
-    const listDocuments = tool(
-      async ({ filterByFileName }: { filterByFileName?: string }) => {
-        const { documents } = await documentService.list({
-          keyword: filterByFileName?.trim() || undefined,
-          match: 'filename',
-        });
-        if (documents.length === 0) return '没有匹配的文档。';
-        return JSON.stringify(documents.map((d) => ({ documentId: d.documentId, filename: d.filename })));
+    const searchKnowledgeBase = tool(
+      async ({ query, documentIds }: { query: string; documentIds?: string[] }) => {
+        const scope = documentIds?.filter(Boolean);
+        const docs = await retriever.retrieve(query, collector.maxResults, scope && scope.length > 0 ? scope : undefined);
+        remember(docs);
+        const { contextText } = packContext(docs, settings.get().contextBudget);
+        return contextText ?? (scope && scope.length > 0 ? '指定文档范围内没有检索到相关资料。' : '知识库中没有检索到与该问题相关的资料。');
       },
       {
-        name: LIST_DOCUMENTS_TOOL_NAME,
+        name: SEARCH_TOOL_NAME,
         description:
-          '目录：列出知识库文档的 documentId 与文件名。filterByFileName 按文件名模糊筛；不传则全部。不含正文。',
+          '在财务处知识库中检索相关片段。query 为检索内容；documentIds 为可选文档范围，不传或空数组表示全库，传入则只在这些文档中检索。',
         schema: z.object({
-          filterByFileName: z.string().optional().describe('按文件名模糊过滤；不传则列出全部'),
-        }),
-      },
-    );
-
-    const getDocument = tool(
-      async ({ documentId }: { documentId: string }) =>
-        lookupOrMissing(documentId, async () => {
-          const doc = await documentService.get(documentId);
-          return JSON.stringify({
-            documentId: doc.documentId,
-            filename: doc.filename,
-            fileType: doc.fileType,
-            fileSize: doc.fileSize,
-            status: doc.status,
-            segmentCount: doc.segmentCount,
-            uploadTime: doc.uploadTime,
-          });
-        }),
-      {
-        name: GET_DOCUMENT_TOOL_NAME,
-        description:
-          '卡片：按 documentId 取文件身份（文件名、类型、大小、状态、分块数、上传时间）。不含正文。要读内容用 read_document。id 不存在时返回说明，可再 list_documents。',
-        schema: z.object({
-          documentId: z.string().describe('文档 id'),
-        }),
-      },
-    );
-
-    const listChunks = tool(
-      async ({ documentId }: { documentId: string }) =>
-        lookupOrMissing(documentId, async () => {
-          const meta = await documentService.get(documentId);
-          const listed = await documentService.listChunks(documentId);
-          if (listed.chunks.length === 0) return `${meta.filename}：没有分块数据。`;
-          return formatListChunksText(meta.filename, listed.toc, listed.chunks);
-        }),
-      {
-        name: LIST_CHUNKS_TOOL_NAME,
-        description:
-          '块目录：层级目录与每块标题、摘要，不含正文。先看目录再 read_document。id 不存在时返回说明。',
-        schema: z.object({
-          documentId: z.string().describe('文档 id'),
+          query: z.string().describe('用于检索的关键词或完整问题'),
+          documentIds: z.array(z.string()).optional().describe('限定文档 id；不传则全库检索'),
         }),
       },
     );
@@ -268,7 +219,7 @@ export function createRagService(
       {
         name: READ_DOCUMENT_TOOL_NAME,
         description:
-          '读正文：按块返回指定文档原文，不做相关度检索。先用 list_chunks 看块目录，再按 startChunk/maxChunks 读需要的部分。默认从 0 起读 8 块。id 不存在时返回说明。',
+          '阅读指定文档的正文原文，按块返回，不做相关度检索。documentId 来自检索结果的 documentId 字段；startChunk 为起始块序号（默认 0），maxChunks 为本次读取块数（默认 8）。id 不存在时返回说明。',
         schema: z.object({
           documentId: z.string().describe('文档 id'),
           startChunk: z.number().int().min(0).optional().describe('起始块序号，默认 0'),
@@ -276,27 +227,6 @@ export function createRagService(
         }),
       },
     );
-
-    const searchKnowledgeBase = tool(
-      async ({ query, documentIds }: { query: string; documentIds?: string[] }) => {
-        const scope = documentIds?.filter(Boolean);
-        const docs = await retriever.retrieve(query, collector.maxResults, scope && scope.length > 0 ? scope : undefined);
-        remember(docs);
-        const { contextText } = packContext(docs, settings.get().contextBudget);
-        return contextText ?? (scope && scope.length > 0 ? '指定文档范围内没有检索到相关资料。' : '知识库中没有检索到与该问题相关的资料。');
-      },
-      {
-        name: SEARCH_TOOL_NAME,
-        description:
-          '在财务处知识库中检索相关片段。query 为检索内容；documentIds 为可选文档范围，不传或空数组表示全库，传入则只在这些文档中检索。每条结果含 documentId。不知道 id 时先调 list_documents。',
-        schema: z.object({
-          query: z.string().describe('用于检索的关键词或完整问题'),
-          documentIds: z.array(z.string()).optional().describe('限定文档 id；不传则全库检索'),
-        }),
-      },
-    );
-
-
 
     let imageUnderstanding: ImageUnderstandingResult | undefined;
     if (input.imageBase64) {
@@ -307,7 +237,7 @@ export function createRagService(
     llm.chatModel.temperature = settings.get().llmChatTemperature;
 
     // 关闭知识库时不给工具：agent 直接回答
-    const tools = input.useKnowledgeBase === false ? [] : [listDocuments, getDocument, listChunks, readDocument, searchKnowledgeBase];
+    const tools = input.useKnowledgeBase === false ? [] : [searchKnowledgeBase, readDocument];
     const agent = createAgent({
       model: llm.chatModel,
       tools,

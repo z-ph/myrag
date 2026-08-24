@@ -16,7 +16,6 @@ import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
 import { notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
-import type { TocItem } from '../../pipeline/outline';
 
 export interface Downloadable {
   stream: ReadableStream<Uint8Array>;
@@ -41,8 +40,6 @@ export interface DocumentService {
   list(query?: DocumentListQuery): Promise<DocumentListResponse>;
   /** 文档卡片：身份信息，不含正文 */
   get(documentId: string): Promise<DocumentListItem>;
-  /** 块目录：层级目录与每块标题、摘要，不含正文 */
-  listChunks(documentId: string): Promise<ChunkDirectory>;
   /** 公开下载：返回文件流信息，文档不存在返回 null */
   download(documentId: string): Promise<Downloadable | null>;
   remove(documentId: string, operator: string): Promise<DocumentDeleteResponse>;
@@ -55,19 +52,6 @@ export interface DocumentService {
 function likeContains(column: SQLWrapper, keyword: string) {
   const pattern = `%${keyword.replace(/[\\%_]/g, '\\$&')}%`;
   return sql`${column} ilike ${pattern} escape '\\'`;
-}
-
-/** 块目录：序号、标题、大小、摘要（不含全文） */
-export interface ChunkOutline {
-  chunkIndex: number;
-  title?: string;
-  chunkSize: number;
-  summary?: string;
-}
-
-export interface ChunkDirectory {
-  toc: TocItem[] | null;
-  chunks: ChunkOutline[];
 }
 
 function toListItem(row: typeof documents.$inferSelect): DocumentListItem {
@@ -132,34 +116,6 @@ export function createDocumentService(
         .limit(1);
       if (!doc) throw notFound('文档不存在');
       return toListItem(doc);
-    },
-
-    async listChunks(documentId) {
-      const [doc] = await db
-        .select({ documentId: documents.documentId, toc: documents.toc })
-        .from(documents)
-        .where(and(eq(documents.documentId, documentId), eq(documents.deleted, false)))
-        .limit(1);
-      if (!doc) throw notFound('文档不存在');
-      const chunks = await db
-        .select({
-          chunkIndex: documentChunks.chunkIndex,
-          title: documentChunks.title,
-          chunkSize: documentChunks.chunkSize,
-          summary: documentChunks.summary,
-        })
-        .from(documentChunks)
-        .where(eq(documentChunks.documentId, documentId))
-        .orderBy(documentChunks.chunkIndex);
-      return {
-        toc: (doc.toc ?? null) as TocItem[] | null,
-        chunks: chunks.map((c) => ({
-          chunkIndex: c.chunkIndex,
-          title: c.title ?? undefined,
-          chunkSize: c.chunkSize ?? 0,
-          summary: c.summary ?? undefined,
-        })),
-      };
     },
 
     async download(documentId) {

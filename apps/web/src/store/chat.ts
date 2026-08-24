@@ -36,9 +36,6 @@ export interface ToolStep {
 /** 工具名 → 展示文案 */
 const TOOL_LABELS: Record<string, string> = {
   search_knowledge_base: '检索知识库',
-  list_documents: '列出文档',
-  get_document: '查看文档卡片',
-  list_chunks: '查看块目录',
   read_document: '阅读文档正文',
 };
 

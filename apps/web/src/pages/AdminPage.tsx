@@ -24,6 +24,7 @@ import {
 import { DeleteOutlined, FileTextOutlined, HistoryOutlined, ReloadOutlined, StopOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentsApi, maintenanceApi, promptsApi, settingsApi, usersApi } from '../api';
+import { runDocumentBatch } from './documentBatch';
 
 /** 提示词 key 的展示名（未知 key 回退为原 key） */
 const PROMPT_LABELS: Record<string, string> = {
@@ -310,7 +311,6 @@ const TASK_STATUS_TAG: Record<string, { color: string; text: string }> = {
 const STAGE_LABEL: Record<string, string> = {
   parse: '解析',
   chunk: '分块',
-  outline: '目录分析',
   embed: '向量化',
   write: '写入向量库',
 };
@@ -550,6 +550,16 @@ function TaskLanes() {
     },
     onError: (err: Error) => message.error(err.message),
   });
+  const removeManyMutation = useMutation({
+    mutationFn: (taskIds: string[]) => runDocumentBatch(taskIds, (id) => documentsApi.removeTask(id)),
+    onSuccess: (r, taskIds) => {
+      if (r.failed.length === 0) message.success(`已删除 ${r.succeeded.length} 个任务`);
+      else message.warning(`已删除 ${r.succeeded.length} / ${taskIds.length} 个，失败：${r.firstError}`);
+      setSelected((ids) => ids.filter((id) => !r.succeeded.includes(id)));
+      invalidate();
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
 
   const running = data?.running ?? [];
   const queued = data?.queued ?? [];
@@ -616,6 +626,14 @@ function TaskLanes() {
                       >
                         恢复所选
                       </Button>
+                      <Popconfirm
+                        title={`删除所选 ${visibleSelected.length} 个异常任务？`}
+                        onConfirm={() => removeManyMutation.mutate(visibleSelected)}
+                      >
+                        <Button size="small" danger icon={<DeleteOutlined />} loading={removeManyMutation.isPending}>
+                          删除所选
+                        </Button>
+                      </Popconfirm>
                       <Button size="small" type="link" onClick={() => setSelected([])}>
                         取消选择
                       </Button>

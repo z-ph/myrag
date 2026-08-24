@@ -69,7 +69,6 @@ export const documents = pgTable(
     batchTaskId: varchar('batch_task_id', { length: 64 }),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     processedAt: timestamp('processed_at'),
-    toc: jsonb('toc').$type<Array<{ title: string; startChunk: number; endChunk: number; children?: unknown[] }>>(),
   },
   (t) => [
     uniqueIndex('uq_documents_document_id').on(t.documentId),
@@ -93,7 +92,6 @@ export const documentChunks = pgTable(
     rawChunkSize: integer('raw_chunk_size'),
     chunkHash: varchar('chunk_hash', { length: 128 }),
     title: varchar('title', { length: 255 }),
-    summary: varchar('summary', { length: 200 }),
     category: varchar('category', { length: 128 }),
     documentTime: varchar('document_time', { length: 64 }),
     ingestedAt: varchar('ingested_at', { length: 64 }),
@@ -165,7 +163,7 @@ export const batchFileResults = pgTable(
     status: varchar('status', { length: 32 }).notNull(),
     /** 单文件处理进度（0-100），仅 PROCESSING 期间有意义 */
     progress: integer('progress').notNull().default(0),
-    /** 当前处理阶段：parse/chunk/outline/embed/write；失败后保留用于定位死在哪一步 */
+    /** 当前处理阶段：parse/chunk/embed/write；失败后保留用于定位死在哪一步 */
     stage: varchar('stage', { length: 32 }),
     message: varchar('message', { length: 512 }),
     errorMessage: text('error_message'),

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, Button, Drawer, Empty, Input, List, Modal, Popconfirm, Spin, Switch, Tooltip } from 'antd';
 import {
-  BarsOutlined,
   BookOutlined,
   CheckOutlined,
   CopyOutlined,
@@ -17,7 +16,6 @@ import {
   SendOutlined,
   StopOutlined,
   ToolOutlined,
-  UnorderedListOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 
@@ -188,12 +186,6 @@ function ToolGlyphIcon({ name }: { name: string }) {
   switch (name) {
     case 'search_knowledge_base':
       return <SearchOutlined />;
-    case 'list_documents':
-      return <UnorderedListOutlined />;
-    case 'get_document':
-      return <FileTextOutlined />;
-    case 'list_chunks':
-      return <BarsOutlined />;
     case 'read_document':
       return <BookOutlined />;
     default:
@@ -201,68 +193,16 @@ function ToolGlyphIcon({ name }: { name: string }) {
   }
 }
 
-/** 工具行摘要：优先显示检索/读取的 query，否则按输出类型取合理摘要 */
+/** 工具行摘要：检索工具优先显示 query，否则取输出首段摘要 */
 function toolPreview(tc: ToolStep): string {
   if (typeof tc.args?.query === 'string' && tc.args.query.trim()) return tc.args.query.trim();
-  const out = (tc.output ?? '').replace(/\s+/g, ' ').trim();
-  if (!out) return '';
-  // JSON 数组（如 list_documents）只显示条数，避免工具行摘要是一坨 JSON
-  try {
-    const parsed = JSON.parse(out) as unknown;
-    if (Array.isArray(parsed)) return `共 ${parsed.length} 条结果`;
-    if (parsed && typeof parsed === 'object') {
-      const keys = Object.keys(parsed as Record<string, unknown>);
-      if (keys.length > 0) return keys.slice(0, 4).join('、');
-    }
-  } catch {
-    // 纯文本输出：取首段摘要
-  }
-  return out.slice(0, 90);
+  return (tc.output ?? '').replace(/\s+/g, ' ').trim().slice(0, 90);
 }
 
-/** 友好渲染工具返回：把 JSON / 分块文本转成人话摘要 */
-function renderToolOutput(name: string, output: string): React.ReactNode {
+/** 渲染检索工具返回：检索结果是纯文本片段 */
+function renderToolOutput(output: string): React.ReactNode {
   if (!output) return null;
-  // 尝试解析为 JSON（list_documents / get_document 返回 JSON）
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch {
-    // read_document / search_knowledge_base 返回纯文本
-    return <pre className="tool-output-text">{output}</pre>;
-  }
-
-  if (Array.isArray(parsed)) {
-    if (name === 'list_documents') {
-      const items = parsed as { documentId: string; filename: string }[];
-      return (
-        <ul className="tool-output-list">
-          {items.map((d) => (
-            <li key={d.documentId}>
-              <span className="tool-output-file">📄 {d.filename}</span>
-              <code className="tool-output-id">{d.documentId}</code>
-            </li>
-          ))}
-        </ul>
-      );
-    }
-  }
-
-  if (parsed && typeof parsed === 'object' && name === 'get_document') {
-    const d = parsed as Record<string, unknown>;
-    return (
-      <dl className="tool-output-card">
-        <dt>文件名</dt><dd>{String(d.filename ?? '')}</dd>
-        <dt>类型</dt><dd>{String(d.fileType ?? '')}</dd>
-        <dt>大小</dt><dd>{String(d.fileSize ?? '')}</dd>
-        <dt>状态</dt><dd>{String(d.status ?? '')}</dd>
-        <dt>分块数</dt><dd>{String(d.segmentCount ?? '')}</dd>
-      </dl>
-    );
-  }
-
-  // 兜底：格式化 JSON
-  return <pre className="tool-output-json">{JSON.stringify(parsed, null, 2)}</pre>;
+  return <pre className="tool-output-text">{output}</pre>;
 }
 
 /** 单条工具调用：DSH 风格行（图标 + 名称 + 单行摘要，点击展开结果） */
@@ -303,7 +243,7 @@ function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
               </div>
             </>
           ) : (
-            renderToolOutput(tc.name, tc.output!)
+            renderToolOutput(tc.output!)
           )}
         </div>
       )}

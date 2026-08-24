@@ -2,7 +2,7 @@
 
 本页对照当前实现，说明仓库里实际用了哪些 LangChain 抽象。以 `apps/server/src/modules/rag/rag.service.ts` 为准，不以历史设计稿为准。
 
-问答不是固定「先检索再生成」。每轮用 `createAgent` 挂五个查看工具，模型决定是否调用、用什么参数、调用几次。查阅过的文档自动写入用户来源，不再单独 cite。
+问答不是固定「先检索再生成」。每轮用 `createAgent` 挂两个工具（检索 + 读正文），模型决定是否调用、用什么参数、调用几次。查阅过的文档自动写入用户来源，不再单独 cite。
 
 ## 问答主路径
 
@@ -11,8 +11,8 @@ POST /conversations/{id}/messages（stream=true 时 SSE）
   → 可选：imageService.understand（Agent 之前）
   → createAgent({ middleware: tool/model call limit, recursionLimit: 80 })
   → streamEvents v3（并行：messages.reasoning / messages.text / toolCalls）
-  → list_documents / get_document / list_chunks / read_document / search_knowledge_base
-  → DocumentService.list|get|listChunks|content / RagRetriever.retrieve
+  → search_knowledge_base / read_document
+  → RagRetriever.retrieve / DocumentService.get|content
   → 消息落库：content / reasoning / tool_calls / sources
 ```
 
@@ -27,8 +27,8 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 
 | 阶段 | LangChain 抽象 | 本仓库实现 |
 |---|---|---|
-| 编排 | `createAgent` | `rag.service.ts`：每请求新建，工具默认五件；`toolCallLimitMiddleware(10)` + `modelCallLimitMiddleware(13)` 停机，`recursionLimit: 80` 避免中间件收尾再撞默认 25 |
-| 工具 | `tool` + zod schema | `list_documents` 目录；`get_document` 卡片无正文；`list_chunks` 层级目录 + 每块标题摘要，不含全文；`read_document` 按块原文；`search_knowledge_base(query, documentIds?)` 相关片段 |
+| 编排 | `createAgent` | `rag.service.ts`：每请求新建，工具默认两件；`toolCallLimitMiddleware(10)` + `modelCallLimitMiddleware(13)` 停机，`recursionLimit: 80` 避免中间件收尾再撞默认 25 |
+| 工具 | `tool` + zod schema | `search_knowledge_base(query, documentIds?)` 在知识库混合检索相关片段；`read_document(documentId, startChunk?, maxChunks?)` 按块读正文原文，不做相关度检索 |
 | 文档块 | `Document` | `ChunkDocument`（`chunk.ts`） |
 | 分块 | Text splitter | 中文标题感知 `chunkText`（制度文档域定制） |
 | 向量化 | `OpenAIEmbeddings` | `llm/client.ts`（`stripNewLines: false`，`encodingFormat: 'float'`） |
@@ -37,9 +37,7 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 | 生成 | `ChatOpenAI` | `streamEvents` 消费思考与正文；思考不回灌 |
 | 图片理解 | `withStructuredOutput` | `image.service.ts`：失败回退 `visionChat` + 本地 JSON 解析 |
 
-`read_document` / `search_knowledge_base` 把块写入本轮 collector，按 `documentId` 去重后作为用户来源。正文不应再写「资料来源」。工具返回文本按 `contextBudget` 截断。
-
-`vectorize` 在 embed 前一次 `chatStructured` 写 `documents.toc` 与每块 `title`/`summary`。
+`search_knowledge_base` / `read_document` 把块写入本轮 collector，按 `documentId` 去重后作为用户来源。正文不应再写「资料来源」。工具返回文本按 `contextBudget` 截断。
 
 ## 明确不采用
 

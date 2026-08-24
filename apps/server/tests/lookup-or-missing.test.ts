@@ -8,7 +8,7 @@ describe('lookupOrMissing', () => {
       throw notFound('文档不存在');
     });
     expect(text).toContain('missing-id');
-    expect(text).toContain('list_documents');
+    expect(text).toContain('search_knowledge_base');
   });
 
   it('命中则原样返回', async () => {
