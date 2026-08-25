@@ -18,6 +18,8 @@ export interface ObjectStorage {
   /** 按 key 读取流，不存在返回 null */
   getStream(key: string): Promise<ReadableStream<Uint8Array> | null>;
   remove(key: string): Promise<void>;
+  /** 删除指定前缀下全部对象（如清理会话图片目录），返回删除数 */
+  removePrefix(prefix: string): Promise<number>;
   /** 启动时确保 bucket 就绪 */
   ensureReady(): Promise<void>;
 }
@@ -112,6 +114,23 @@ export function createObjectStorage(cfg: ServerConfig): ObjectStorage {
       }
       // 旧本地遗留文件一并清理
       await local.remove(key);
+    },
+    async removePrefix(prefix) {
+      let removed = 0;
+      try {
+        const objects = client.listObjects(bucket, prefix, true);
+        const keys: string[] = [];
+        for await (const obj of objects) {
+          if (obj.name) keys.push(obj.name);
+        }
+        if (keys.length > 0) {
+          await client.removeObjects(bucket, keys);
+          removed = keys.length;
+        }
+      } catch (err) {
+        logger.error(`[object-storage] removePrefix ${prefix} 失败:`, err);
+      }
+      return removed;
     },
     async ensureReady() {
       const exists = await client.bucketExists(bucket);

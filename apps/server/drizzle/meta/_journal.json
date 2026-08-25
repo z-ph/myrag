@@ -71,6 +71,13 @@
       "when": 1787555128631,
       "tag": "0009_breezy_bromley",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787591756140,
+      "tag": "0010_cynical_nightcrawler",
+      "breakpoints": true
     }
   ]
 }

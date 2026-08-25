@@ -253,6 +253,11 @@ export const conversationMessageSchema = z.object({
   toolCalls: z.array(toolCallRecordSchema).optional(),
   /** 来源引用（持久化，仅展示） */
   sources: z.array(sourceReferenceSchema).optional(),
+  /**
+   * 用户消息附带图片的 API 相对路径（如 /conversations/{id}/images/{file}）。
+   * 仅展示与历史回看；调用方需自行拼接 API 前缀后作为 img src 使用。
+   */
+  imageUrl: z.string().optional(),
   timestamp: z.string(),
   status: z.enum(MESSAGE_STATUSES).optional(),
 });

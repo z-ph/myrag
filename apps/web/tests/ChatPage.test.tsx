@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/api';
-import { documentsApi } from '../src/api';
+import { documentsApi, ragApi } from '../src/api';
 import ChatPage from '../src/pages/ChatPage';
 import { useAuthStore } from '../src/store/auth';
 import { useChatStore, type ChatMessage } from '../src/store/chat';
@@ -16,6 +16,13 @@ vi.mock('../src/api', async (importOriginal) => {
     },
     documentsApi: {
       content: vi.fn(),
+    },
+    ragApi: {
+      ...(actual.ragApi ?? {}),
+      askStream: vi.fn().mockImplementation(async (_params, handlers) => {
+        handlers.onStart?.();
+        handlers.onComplete?.(false);
+      }),
     },
   };
 });
@@ -138,5 +145,25 @@ describe('ChatPage assistant extras', () => {
     fireEvent.click(screen.getByRole('button', { name: '差旅费管理办法.pdf' }));
     expect(await screen.findByText('住宿费限额五百元')).toBeTruthy();
     expect(scroll).toHaveBeenCalled();
+  });
+
+  it('纯图片发送（无文字）：消息出现在聊天里并可预览，不再被静默丢弃', async () => {
+    window.URL.createObjectURL = vi.fn(() => 'blob:test-image');
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'invoice.png', { type: 'image/png' });
+    const { container } = mount();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    Object.defineProperty(input, 'files', { value: [png] });
+    fireEvent.change(input);
+
+    // 选图后发送按钮可用（仅图片、无文字）
+    const send = await screen.findByRole('button', { name: /发 送|发送/ });
+    fireEvent.click(send);
+
+    // 用户消息带图渲染（可预览），空文字不再渲染空气泡
+    expect(await screen.findByAltText('用户图片')).toBeTruthy();
+    const askCall = vi.mocked(ragApi.askStream).mock.calls[0];
+    expect(askCall?.[0].image).toBeTruthy();
   });
 });

@@ -39,6 +39,8 @@
 
 **问答统一落库口径**：问答只有一条链路（`POST /conversations/{conversationId}/messages`，`stream=true` 时 SSE 流式），登录用户与访客共用。未登录时前端静默调用 `/auth/guest-sessions` 签发访客 token（JWT，角色 GUEST，默认有效期 30 天），会话与消息同样落库、可恢复、可取消。
 
+**图片问答与回看**：消息表单的图片字段为 `file`（兼容历史 `image`），问题与图片二选一——纯图片发送时服务端自动按「请分析这张图片」处理。原图存对象存储（`chat-images/{conversationId}/…`），消息记存储 key；历史经会话详情接口换算为 API 相对路径返回（`imageUrl` 字段）。回看端点 `GET /conversations/{conversationId}/images/{filename}` 公开（与文档原始文件下载同一语义，供 img src 直接引用）；删除会话与访客清理时图片一并删除。
+
 **问答双模式**（表单 `mode` 字段，默认 `deep`）：`deep` 深度检索为 agent 工具循环（模型自主检索/读文档）；`fast` 快速模式为写死管线——问题改写 → 混合检索一次 → 片段塞入上下文 → 无工具单次直答。两模式共用会话落库、来源展示与取消机制。
 
 **访客 vs 登录的差异只剩身份与保留期**（不再是两套实现）：访客会话按保留天数定时清理（默认 7 天，BullMQ 每小时调度；管理面板可开关、改保留天数、手动触发 `/admin/conversations/cleanup`）；登录用户会话持久保留。访客不能访问 `/admin/**` 与 `GET /auth/sessions/current`。
@@ -50,7 +52,7 @@
 | `POST /auth/sessions` | ✅ | — | — | — | — |
 | `POST /auth/guest-sessions`（签发访客 token） | ✅ | — | — | — | — |
 | `GET /auth/sessions/current` | — | ❌ | ✅ | ✅ | ✅ |
-| `GET /documents`、`GET /documents/{id}/file` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /documents`、`GET /documents/{id}/file`、`GET /conversations/{id}/images/{filename}` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /documents/health` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `POST /conversations/{id}/messages`（同步/流式）、`GET /conversations/**`、`DELETE /conversations/{id}`、`POST /conversations/{id}/cancellation` | — | ✅ | ✅ | ✅ | ✅ |
 | `POST /documents/uploads`、`GET /documents/uploads/{taskId}` | — | ❌ | ❌ | ✅ | ✅ |

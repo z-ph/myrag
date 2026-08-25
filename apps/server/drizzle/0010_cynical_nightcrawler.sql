@@ -1,0 +1,1 @@
+ALTER TABLE "conversation_messages" ADD COLUMN "image_url" varchar(512);

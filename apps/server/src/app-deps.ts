@@ -94,7 +94,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg);
   batchService = createBatchService(handle.db, processService, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
-  const conversationService = createConversationService(handle.db, cfg);
+  const conversationService = createConversationService(handle.db, cfg, objectStorage);
   const cleanupService = createCleanupService(conversationService, settingsService, cfg);
   const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
   const imageService = createImageService(llm, promptService);
@@ -108,6 +108,7 @@ export function createApp(cfg: ServerConfig): AppContainer {
     settingsService,
     promptService,
     documentService,
+    objectStorage,
   );
 
   const deps: AppDeps = {

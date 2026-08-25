@@ -236,6 +236,8 @@ export const conversationMessages = pgTable(
     toolCalls: jsonb('tool_calls').$type<ToolCallRecord[]>(),
     /** 来源引用（仅展示） */
     sources: jsonb('sources').$type<SourceReference[]>(),
+    /** 用户消息附图的对象存储 key（chat-images/{conversationId}/…），仅展示 */
+    imageUrl: varchar('image_url', { length: 512 }),
     status: varchar('status', { length: 16 }).notNull().default('COMPLETED'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),

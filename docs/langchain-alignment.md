@@ -18,7 +18,7 @@ POST /conversations/{id}/messages（stream=true 时 SSE）
 
 - 系统提示词来自 `promptService`（登录 `qa.system`，访客 `qa.systemGuest`）。
 - 多轮历史只回灌 `content`：`foldHistoryRecap` 折成一条 user「问/答」文本，并对 assistant 内容做 `stripReasoning`。`reasoning`、`tool_calls`、`sources` 仅展示。
-- 图片不是检索双路：视觉模型先 `withStructuredOutput`（`functionCalling`），失败再自由文本 JSON；OCR / 摘要拼进当前 user 消息后，仍由 Agent 决定是否搜库。
+- 图片不是检索双路：视觉模型先 `withStructuredOutput`（`functionCalling`），失败再自由文本 JSON；OCR / 摘要拼进当前 user 消息后，仍由 Agent 决定是否搜库。原图另存对象存储（`chat-images/{会话}/…`）并在用户消息记 key，历史回看经 `GET /conversations/{id}/images/{filename}` 返回（仅展示，不回灌上下文）。
 - 服务端表单有 `useKnowledgeBase`；当前前端不传，默认挂工具。
 
 SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `sources` / `complete` / `error`。`data` 一律 JSON 编码（`packages/shared/src/sse.ts`）。

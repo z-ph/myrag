@@ -11,6 +11,9 @@ import { ApiError, getGuestToken, getToken, setGuestToken, setToken } from './cl
  */
 export const rpc = hc<AppType>(import.meta.env.VITE_API_PREFIX as string);
 
+/** API 前缀（与 rpc 客户端一致），供拼接服务端返回的资源相对路径（如会话图片） */
+export const API_BASE = import.meta.env.VITE_API_PREFIX as string;
+
 /** 请求头注入当前身份 token（优先用户 token，其次访客 token） */
 export function authHeaders(): Record<string, string> {
   const token = getToken() ?? getGuestToken();

@@ -4,8 +4,9 @@ import { askResponseSchema, conversationDetailSchema, conversationListSchema } f
 import type { AppDeps, AppVariables } from '../../app-deps';
 import { createOpenApiApp, errorResponses, bearerSecurity } from '../../openapi';
 import { requireAuth } from '../../middleware/auth';
-import { badRequest } from '../../lib/errors';
+import { badRequest, notFound } from '../../lib/errors';
 import { encodeSse } from '@myrag/shared';
+import { CHAT_IMAGE_PREFIX } from './conversation.service';
 
 const convParam = z.object({ conversationId: z.string().min(1).max(128) });
 
@@ -136,6 +137,39 @@ export function createConversationRoutes(deps: AppDeps) {
           c.header('Connection', 'keep-alive');
           // 运行时两种响应形态（JSON / SSE），OpenAPI 仅声明 JSON 形态
           return c.body(stream) as never;
+        },
+      )
+
+      .openapi(
+        createRoute({
+          method: 'get',
+          path: '/{conversationId}/images/{filename}',
+          description:
+            '获取会话消息图片（公开，供 img src 直接引用；与文档原始文件下载同一公开语义。filename 为服务端生成的随机名）',
+          security: [],
+          request: {
+            params: z.object({
+              conversationId: z.string().min(1).max(128),
+              /** 服务端生成的文件名（时间戳-随机串.扩展名），不含路径分隔符 */
+              filename: z.string().min(1).max(255).regex(/^[\w.-]+$/),
+            }),
+          },
+          responses: {
+            200: { description: '图片二进制流', content: { 'application/octet-stream': { schema: z.any() } } },
+            ...errorResponses,
+          },
+        }),
+        async (c) => {
+          const { conversationId, filename } = c.req.valid('param');
+          const ext = filename.split('.').pop() ?? '';
+          const contentType = Object.entries(IMAGE_EXT).find(([, e]) => e === ext)?.[0] ?? 'application/octet-stream';
+          const buffer = await deps.objectStorage.getBuffer(`${CHAT_IMAGE_PREFIX}/${conversationId}/${filename}`);
+          if (!buffer) throw notFound('图片不存在');
+          c.header('Content-Type', contentType);
+          c.header('Content-Length', String(buffer.byteLength));
+          // 图片走内联展示语义（img src），非附件下载
+          c.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(filename)}`);
+          return c.body(new Uint8Array(buffer));
         },
       )
 

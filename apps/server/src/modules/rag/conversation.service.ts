@@ -4,11 +4,22 @@ import type { ServerConfig } from '@myrag/shared';
 import type { Db } from '../../db';
 import { conversationMessages, conversations } from '../../db/schema';
 import { notFound } from '../../lib/errors';
+import type { ObjectStorage } from '../../store/object-storage';
+
+/** 会话图片的对象存储 key 前缀（每会话一个子目录） */
+export const CHAT_IMAGE_PREFIX = 'chat-images';
 
 export interface ConversationService {
   /** 确保会话存在（不存在则创建），返回是否新建 */
   ensure(conversationId: string, userId: string, titleHint?: string): Promise<boolean>;
-  appendMessage(conversationId: string, role: MessageRole, content: string, status?: MessageStatus): Promise<void>;
+  appendMessage(
+    conversationId: string,
+    role: MessageRole,
+    content: string,
+    status?: MessageStatus,
+    /** 用户消息附图的对象存储 key（chat-images/{conversationId}/…） */
+    imageUrl?: string,
+  ): Promise<void>;
   markMessage(
     conversationId: string,
     role: MessageRole,
@@ -25,6 +36,12 @@ export interface ConversationService {
   deleteGuestsOlderThan(retentionDays: number): Promise<number>;
 }
 
+/** 存储 key → API 相对路径（调用方拼 API 前缀后作 img src） */
+export function chatImagePath(conversationId: string, key: string): string {
+  const filename = key.split('/').pop() ?? '';
+  return `/conversations/${encodeURIComponent(conversationId)}/images/${encodeURIComponent(filename)}`;
+}
+
 function toMessage(row: typeof conversationMessages.$inferSelect): ConversationMessage {
   return {
     role: row.role as MessageRole,
@@ -32,12 +49,13 @@ function toMessage(row: typeof conversationMessages.$inferSelect): ConversationM
     reasoning: row.reasoning ?? undefined,
     toolCalls: row.toolCalls ?? undefined,
     sources: row.sources ?? undefined,
+    imageUrl: row.imageUrl ? chatImagePath(row.conversationId, row.imageUrl) : undefined,
     timestamp: row.createdAt.toISOString(),
     status: row.status as MessageStatus,
   };
 }
 
-export function createConversationService(db: Db, cfg: ServerConfig): ConversationService {
+export function createConversationService(db: Db, cfg: ServerConfig, objectStorage?: ObjectStorage): ConversationService {
   return {
     async ensure(conversationId, userId, titleHint) {
       const [existing] = await db
@@ -64,12 +82,13 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
       return true;
     },
 
-    async appendMessage(conversationId, role, content, status = 'COMPLETED') {
+    async appendMessage(conversationId, role, content, status = 'COMPLETED', imageUrl) {
       await db.insert(conversationMessages).values({
         conversationId,
         role,
         content,
         status,
+        ...(imageUrl ? { imageUrl } : {}),
       });
       // 刷新会话活跃时间：列表排序与访客清理保留期都以此为准
       await db
@@ -146,6 +165,10 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
       if (!conv || conv.userId !== userId) return;
       await db.delete(conversationMessages).where(eq(conversationMessages.conversationId, conversationId));
       await db.delete(conversations).where(eq(conversations.conversationId, conversationId));
+      // 会话图片对象一并清理（尽力而为，失败不阻塞会话删除）
+      if (objectStorage) {
+        await objectStorage.removePrefix(`${CHAT_IMAGE_PREFIX}/${conversationId}/`);
+      }
     },
 
     async deleteGuestsOlderThan(retentionDays) {
@@ -159,6 +182,12 @@ export function createConversationService(db: Db, cfg: ServerConfig): Conversati
       // 与 clear 同序：先删消息再删会话
       await db.delete(conversationMessages).where(inArray(conversationMessages.conversationId, ids));
       await db.delete(conversations).where(inArray(conversations.conversationId, ids));
+      // 访客会话图片一并清理（尽力而为）
+      if (objectStorage) {
+        for (const id of ids) {
+          await objectStorage.removePrefix(`${CHAT_IMAGE_PREFIX}/${id}/`);
+        }
+      }
       return ids.length;
     },
   };

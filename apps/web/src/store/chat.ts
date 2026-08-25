@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { QaMode, SourceReference } from '@myrag/shared';
 import { ragApi } from '../api';
+import { API_BASE } from '../api/rpc';
 import { message } from 'antd';
 
 export interface ChatMessage {
@@ -153,6 +154,8 @@ export const useChatStore = create<ChatState>((set, get) => {
             content: m.content,
             reasoning: m.reasoning,
             sources: m.sources,
+            // 服务端返回 API 相对路径，拼上本站 API 前缀后可直接作为 img src
+            imageUrl: m.imageUrl ? `${API_BASE}${m.imageUrl}` : undefined,
             toolCalls: m.toolCalls?.map((tc) => ({
               id: tc.id,
               name: tc.name,
