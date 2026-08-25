@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import type { LlmClient } from '../llm/client';
 import type { FileType } from '@myrag/shared';
+import { convertViaLibreOffice } from './libreoffice';
 
 /** 解析失败时抛出，message 面向用户 */
 export class ParseError extends Error {
@@ -15,6 +16,11 @@ export class ParseError extends Error {
 }
 
 const decoder = new TextDecoder('utf-8');
+
+/** OLE 复合文档魔数（D0 CF 11 E0）：.doc/.ppt/.xls 等老二进制格式共用 */
+export function isOleBuffer(buffer: Buffer): boolean {
+  return buffer.length > 8 && buffer[0] === 0xd0 && buffer[1] === 0xcf && buffer[2] === 0x11 && buffer[3] === 0xe0;
+}
 
 /** 纯文本类（txt/md/csv） */
 export function parsePlainText(buffer: Buffer): string {
@@ -188,14 +194,23 @@ export async function parseDocument(
     }
     case 'DOCUMENT': {
       // docx 以 PK 头开头；doc 是 OLE（D0 CF 11 E0）
-      const isOle = buffer.length > 8 && buffer[0] === 0xd0 && buffer[1] === 0xcf;
-      const text = isOle ? await parseDoc(buffer) : await parseDocx(buffer);
+      const text = isOleBuffer(buffer) ? await parseDoc(buffer) : await parseDocx(buffer);
       return { text };
     }
     case 'PRESENTATION':
-      return { text: await parsePptx(buffer) };
+      // 老二进制 .ppt（OLE）先经 LibreOffice 转 pptx，再走同一解析
+      return {
+        text: await (isOleBuffer(buffer)
+          ? convertViaLibreOffice(buffer, '.ppt', '.pptx').then(parsePptx)
+          : parsePptx(buffer)),
+      };
     case 'EXCEL':
-      return { text: await parseSpreadsheet(buffer) };
+      // 老二进制 .xls（OLE）先经 LibreOffice 转 xlsx；exceljs 读不了 BIFF 格式
+      return {
+        text: await (isOleBuffer(buffer)
+          ? convertViaLibreOffice(buffer, '.xls', '.xlsx').then(parseSpreadsheet)
+          : parseSpreadsheet(buffer)),
+      };
     case 'IMAGE': {
       const text = await parseImage(buffer, llm);
       return { text, ocrModel: 'vision', ocrDurationMs: Date.now() - start };

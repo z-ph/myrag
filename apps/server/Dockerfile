@@ -23,8 +23,16 @@ COPY apps/server apps/server
 RUN pnpm --filter @myrag/server build:bundle
 
 # ---------- 运行阶段 ----------
-FROM node:24-alpine AS runtime
+# 用 Debian slim：alpine 的 LibreOffice 移植版 headless 转换会崩（UNO RuntimeException），勿改回 alpine
+FROM node:24-slim AS runtime
 WORKDIR /app
+# LibreOffice nogui 子包：老式 .ppt/.xls 经 headless 转换为 pptx/xlsx 后复用解析器（无纯 JS 替代）。
+# -nogui 变体无 GUI/X 依赖；apt 源统一走国内镜像
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+      libreoffice-calc-nogui libreoffice-impress-nogui \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 ENV NODE_ENV=production
 
 COPY --from=build /app/runtime-deps/node_modules ./node_modules

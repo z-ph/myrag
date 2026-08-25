@@ -43,6 +43,8 @@
 
 **问答双模式**（表单 `mode` 字段，默认 `deep`）：`deep` 深度检索为 agent 工具循环（模型自主检索/读文档）；`fast` 快速模式为写死管线——问题改写 → 混合检索一次 → 片段塞入上下文 → 无工具单次直答。两模式共用会话落库、来源展示与取消机制。
 
+**文档上传格式口径**：白名单以 `@myrag/shared` 的 `DEFAULTS.allowedExtensions` 为准（前后端共用）。纯文本（txt/md/csv）、PDF（扫描件自动 OCR）、docx/doc、pptx、xlsx、图片（jpg/jpeg/png/bmp）直接解析；老二进制 **.ppt 与 .xls** 依赖运行环境安装 LibreOffice——服务端经 headless 转换为 pptx/xlsx 后复用同一解析器（见 `apps/server/src/pipeline/libreoffice.ts`），环境未安装时上传可通过但处理失败并给出明确报错。单文件上限 50MB。
+
 **访客 vs 登录的差异只剩身份与保留期**（不再是两套实现）：访客会话按保留天数定时清理（默认 7 天，BullMQ 每小时调度；管理面板可开关、改保留天数、手动触发 `/admin/conversations/cleanup`）；登录用户会话持久保留。访客不能访问 `/admin/**` 与 `GET /auth/sessions/current`。
 
 ## 4. 权限矩阵
