@@ -71,7 +71,7 @@ interface ChatState {
   historyMetas: ConversationMeta[];
   /** 从文档库带来的引用，进聊天页后挂在输入框上，不自动发送 */
   pendingDocRef: { documentId: string; filename: string } | null;
-  /** 问答模式：deep 深度检索（默认）/ fast 快速直答，本地持久化 */
+  /** 问答模式：fast 快速直答（默认）/ deep 深度检索，本地持久化 */
   mode: QaMode;
   setMode(mode: QaMode): void;
   currentConversationId(): string;
@@ -101,7 +101,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     isLoadingHistory: false,
     historyMetas: [],
     pendingDocRef: null,
-    mode: localStorage.getItem(MODE_KEY) === 'fast' ? 'fast' : 'deep',
+    // 默认快速回答；仅当用户显式选过「深度检索」时保持 deep
+    mode: localStorage.getItem(MODE_KEY) === 'deep' ? 'deep' : 'fast',
 
     setMode(mode) {
       localStorage.setItem(MODE_KEY, mode);

@@ -55,6 +55,12 @@ function normalizeMarkdown(text: string): string {
 }
 
 
+/** 图片上传入口开关：当前隐藏「发送图片」按钮与选图流程；置为 true 即可恢复 */
+export const IMAGE_UPLOAD_ENABLED = false;
+
+/** 开发者模式开关：当前隐藏「开发者模式」切换（工具调用原始输入/输出视图）；置为 true 即可恢复 */
+export const DEV_MODE_ENABLED = false;
+
 const DEFAULT_SUGGESTIONS = [
   '差旅费报销标准是什么？',
   '报销需要准备哪些附件？',
@@ -618,7 +624,7 @@ export default function ChatPage() {
             </Button>
           </div>
         )}
-        {imagePreview && (
+        {IMAGE_UPLOAD_ENABLED && imagePreview && (
           <div className="chat-image-preview">
             <img src={imagePreview} alt="预览" />
             <Button size="small" type="text" danger onClick={() => { setImage(null); setImagePreview(null); }}>
@@ -633,16 +639,20 @@ export default function ChatPage() {
           <Tooltip title="历史会话">
             <Button type="text" className="composer-icon" icon={<HistoryOutlined />} onClick={() => setDrawerOpen(true)} />
           </Tooltip>
-          <Tooltip title="发送图片">
-            <Button type="text" className="composer-icon" icon={<FileImageOutlined />} onClick={() => fileRef.current?.click()} disabled={isGenerating} />
-          </Tooltip>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/jpeg,image/png,image/bmp"
-            style={{ display: 'none' }}
-            onChange={(e) => handlePickImage(e.target.files?.[0])}
-          />
+          {IMAGE_UPLOAD_ENABLED && (
+            <>
+              <Tooltip title="发送图片">
+                <Button type="text" className="composer-icon" icon={<FileImageOutlined />} onClick={() => fileRef.current?.click()} disabled={isGenerating} />
+              </Tooltip>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/bmp"
+                style={{ display: 'none' }}
+                onChange={(e) => handlePickImage(e.target.files?.[0])}
+              />
+            </>
+          )}
           <Input.TextArea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -680,8 +690,12 @@ export default function ChatPage() {
                 { label: '快速回答', value: 'fast' },
               ]}
             />
-            开发者模式
-            <Switch size="small" checked={devMode} onChange={setDevMode} />
+            {DEV_MODE_ENABLED && (
+              <>
+                {'开发者模式'}
+                <Switch size="small" checked={devMode} onChange={setDevMode} />
+              </>
+            )}
           </span>
         </div>
       </div>

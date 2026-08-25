@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/api';
 import { documentsApi, ragApi } from '../src/api';
-import ChatPage from '../src/pages/ChatPage';
+import ChatPage, { IMAGE_UPLOAD_ENABLED } from '../src/pages/ChatPage';
 import { useAuthStore } from '../src/store/auth';
 import { useChatStore, type ChatMessage } from '../src/store/chat';
 
@@ -147,7 +147,23 @@ describe('ChatPage assistant extras', () => {
     expect(scroll).toHaveBeenCalled();
   });
 
-  it('纯图片发送（无文字）：消息出现在聊天里并可预览，不再被静默丢弃', async () => {
+  it('图片上传入口隐藏：不出现发送图片按钮和文件选择框', () => {
+    const { container } = mount();
+    expect(screen.queryByLabelText('file-image')).toBeNull();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  it('默认模式为快速回答，且不出现开发者模式开关', () => {
+    mount();
+    const fast = screen.getByRole('radio', { name: '快速回答' }) as HTMLInputElement;
+    const deep = screen.getByRole('radio', { name: '深度检索' }) as HTMLInputElement;
+    expect(fast.checked).toBe(true);
+    expect(deep.checked).toBe(false);
+    expect(screen.queryByText('开发者模式')).toBeNull();
+  });
+
+  // 图片上传入口恢复（IMAGE_UPLOAD_ENABLED = true）时自动重新启用
+  (IMAGE_UPLOAD_ENABLED ? it : it.skip)('纯图片发送（无文字）：消息出现在聊天里并可预览，不再被静默丢弃', async () => {
     window.URL.createObjectURL = vi.fn(() => 'blob:test-image');
     const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'invoice.png', { type: 'image/png' });
     const { container } = mount();
