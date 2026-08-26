@@ -759,6 +759,33 @@
   text-align: center;
 }
 
+.route-status {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  padding: 32px 20px;
+}
+
+.route-status-code {
+  color: #1a2138;
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.route-status h1,
+.route-status p {
+  margin: 0;
+}
+
+.route-status p {
+  color: #6b7280;
+}
+
 .chat-doc-ref {
   display: flex;
   align-items: center;

@@ -15,7 +15,7 @@ export default function MyPage() {
     try {
       await login(values.username, values.password);
       message.success('登录成功');
-      navigate('/chat');
+      navigate('/chat/new');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '登录失败');
     } finally {
@@ -37,7 +37,7 @@ export default function MyPage() {
           </div>
         </div>
         <Space direction="vertical" style={{ width: '100%' }}>
-          <Button danger block icon={<LogoutOutlined />} onClick={() => { logout(); message.success('已退出登录'); navigate('/chat'); }}>
+          <Button danger block icon={<LogoutOutlined />} onClick={() => { logout(); message.success('已退出登录'); navigate('/chat/new'); }}>
             退出登录
           </Button>
         </Space>

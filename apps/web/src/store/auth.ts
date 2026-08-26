@@ -6,6 +6,15 @@ import { useChatStore } from './chat';
 
 /** 确保访客 token 存在：未登录用户进入时静默签发，失败不阻塞界面。 */
 let guestEnsuring: Promise<void> | null = null;
+const identityFingerprint = () => `${getToken() ?? ''}|${getGuestToken() ?? ''}`;
+let lastIdentityFingerprint = identityFingerprint();
+
+function notifyIdentityChanged(): void {
+  lastIdentityFingerprint = identityFingerprint();
+  useChatStore.getState().onIdentityChanged();
+  window.dispatchEvent(new Event('myrag:identity-changed'));
+}
+
 function ensureGuestToken(): Promise<void> {
   if (getToken() || getGuestToken()) return Promise.resolve();
   if (!guestEnsuring) {
@@ -49,13 +58,13 @@ export const useAuthStore = create<AuthState>((set) => ({
       isManager: result.user.role !== 'USER',
       isSuperAdmin: result.user.role === 'SUPER_ADMIN',
     });
-    useChatStore.getState().onIdentityChanged();
+    notifyIdentityChanged();
   },
 
   logout() {
     setToken(null);
     set({ user: null, loading: false, isManager: false, isSuperAdmin: false });
-    void ensureGuestToken().then(() => useChatStore.getState().onIdentityChanged());
+    void ensureGuestToken().then(notifyIdentityChanged);
   },
 
   async restore() {
@@ -75,7 +84,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       setToken(null);
       set({ user: null, loading: false, isManager: false, isSuperAdmin: false });
-      void ensureGuestToken();
+      await ensureGuestToken();
+      notifyIdentityChanged();
     }
   },
 }));
@@ -86,6 +96,18 @@ export function setupAuthEvents(): void {
     useAuthStore.getState().logout();
   });
   window.addEventListener('myrag:guest-expired', () => {
-    void ensureGuestToken();
+    const previous = identityFingerprint();
+    void ensureGuestToken().then(() => {
+      if (identityFingerprint() !== previous) notifyIdentityChanged();
+    });
   });
+  window.addEventListener('storage', handleStorageIdentityChange);
+}
+
+function handleStorageIdentityChange(event: StorageEvent): void {
+  if (event.key !== 'myrag-token' && event.key !== 'myrag-guest-token') return;
+  const next = identityFingerprint();
+  if (next === lastIdentityFingerprint) return;
+  notifyIdentityChanged();
+  void useAuthStore.getState().restore();
 }

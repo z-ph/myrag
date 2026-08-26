@@ -15,6 +15,7 @@ import DocumentsPage from './pages/DocumentsPage';
 import AdminPage from './pages/AdminPage';
 import UsersPage from './pages/UsersPage';
 import MyPage from './pages/MyPage';
+import { ConversationNotFoundPage, GenericNotFoundPage, RouteLoadError } from './pages/RouteStatusPage';
 
 const NAV_ITEMS = [
   { key: '/chat', icon: <CommentOutlined />, label: '智能问答' },
@@ -24,7 +25,7 @@ const NAV_ITEMS = [
   { key: '/my', icon: <UserOutlined />, label: '我的' },
 ];
 
-function AppShell() {
+export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading, restore } = useAuthStore();
@@ -33,13 +34,19 @@ function AppShell() {
     void restore();
   }, []);
 
+  useEffect(() => {
+    const onIdentityChanged = () => navigate('/chat/new', { replace: true });
+    window.addEventListener('myrag:identity-changed', onIdentityChanged);
+    return () => window.removeEventListener('myrag:identity-changed', onIdentityChanged);
+  }, [navigate]);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const selectedKey = NAV_ITEMS.map((n) => n.key).find((k) => location.pathname.startsWith(k)) ?? '/chat';
   const visibleItems = NAV_ITEMS.filter((n) => !n.adminOnly || user?.role === 'SUPER_ADMIN');
 
   const go = (path: string) => {
     setMenuOpen(false);
-    navigate(path);
+    navigate(path === '/chat' ? '/chat/new' : path);
   };
 
   const renderNav = (idPrefix: string) =>
@@ -61,7 +68,7 @@ function AppShell() {
         <button type="button" className="topbar-menu" aria-label="打开菜单" onClick={() => setMenuOpen(true)}>
           <MenuOutlined />
         </button>
-        <button type="button" className="topbar-brand" onClick={() => navigate('/chat')}>
+        <button type="button" className="topbar-brand" onClick={() => navigate('/chat/new')}>
           <span className="seal" aria-hidden="true">
             财
           </span>
@@ -96,13 +103,15 @@ function AppShell() {
       <main className="app-main">
         {loading ? null : (
           <Routes>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/" element={<Navigate to="/chat/new" replace />} />
+            <Route path="/chat" element={<Navigate to="/chat/new" replace />} />
+            <Route path="/chat/new" element={<ChatPage />} />
+            <Route path="/chat/:conversationId" element={<ChatPage />} />
             <Route path="/documents" element={<DocumentsPage />} />
-            <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat" replace />} />
-            <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat/new" replace />} />
+            <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat/new" replace />} />
             <Route path="/my" element={<MyPage />} />
-            <Route path="*" element={<Navigate to="/chat" replace />} />
+            <Route path="*" element={<GenericNotFoundPage />} />
           </Routes>
         )}
       </main>

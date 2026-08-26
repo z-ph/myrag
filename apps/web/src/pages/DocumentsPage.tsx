@@ -344,7 +344,7 @@ export default function DocumentsPage() {
             aria-label={`问「${row.filename}」`}
             onClick={() => {
               useChatStore.getState().askAboutDocument({ documentId: row.documentId, filename: row.filename });
-              navigate('/chat');
+              navigate('/chat/new');
             }}
           />
         </Tooltip>
