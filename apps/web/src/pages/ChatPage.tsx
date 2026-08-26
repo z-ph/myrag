@@ -20,11 +20,14 @@ import {
 } from '@ant-design/icons';
 
 import { useQuery } from '@tanstack/react-query';
-import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useChatStore, createConversationId, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
+import { ApiError } from '../api/client';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
 import { buildFollowUpQuestions, shouldShowAssistantCopy } from './chatMessageExtras';
+import { ConversationNotFoundPage, RouteLoadError } from './RouteStatusPage';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './chat.css';
@@ -469,16 +472,22 @@ export default function ChatPage() {
     historyMetas,
     isGenerating,
     isLoadingHistory,
-    conversationId,
     loadConversation,
     refreshConversations,
-    startNewConversation,
+    resetChat,
     deleteConversation,
     sendMessage,
     stopGeneration,
     mode,
     setMode,
   } = useChatStore();
+  const { conversationId } = useParams<{ conversationId?: string }>();
+  const navigate = useNavigate();
+  const isNewConversation = conversationId === undefined;
+  const [routeState, setRouteState] = useState<'new' | 'loading' | 'ready' | 'not-found' | 'error'>(
+    isNewConversation ? 'new' : 'loading',
+  );
+  const pendingCreationIdRef = useRef<string | null>(null);
 
   const [input, setInput] = useState('');
   const [devMode, setDevMode] = useState(false);
@@ -493,14 +502,35 @@ export default function ChatPage() {
   const { data: suggestionData } = useQuery({ queryKey: ['suggestions'], queryFn: () => settingsApi.getSuggestions() });
   const suggestions = suggestionData?.questions?.length ? suggestionData.questions : DEFAULT_SUGGESTIONS;
 
+  const loadRouteConversation = (id: string) => {
+    resetChat();
+    setRouteState('loading');
+    void loadConversation(id)
+      .then(() => setRouteState('ready'))
+      .catch((err: unknown) => {
+        const status = err instanceof ApiError ? err.status : undefined;
+        if (status === 401) return;
+        setRouteState(status === 404 || status === 400 ? 'not-found' : 'error');
+      });
+  };
+
   useEffect(() => {
     if (authLoading) return;
     const pending = useChatStore.getState().takePendingDocRef();
-    if (pending) setDocRef(pending);
+    if (pending && isNewConversation) setDocRef(pending);
     void refreshConversations();
-    if (conversationId && !pending) void loadConversation(conversationId);
+    if (isNewConversation) {
+      resetChat();
+      setRouteState('new');
+      return;
+    }
+    if (pendingCreationIdRef.current === conversationId) {
+      setRouteState('ready');
+      return;
+    }
+    loadRouteConversation(conversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading]);
+  }, [authLoading, conversationId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -517,7 +547,12 @@ export default function ChatPage() {
     const asked = docRef
       ? `引用文档：${docRef.filename}\ndocumentId: ${docRef.documentId}\n\n${q}`
       : q;
-    void sendMessage(asked, image ?? undefined);
+    const targetId = conversationId ?? createConversationId();
+    if (!conversationId) {
+      pendingCreationIdRef.current = targetId;
+      navigate(`/chat/${encodeURIComponent(targetId)}`, { replace: true });
+    }
+    void sendMessage(targetId, asked, image ?? undefined);
     setInput('');
     setDocRef(null);
     setImage(null);
@@ -526,12 +561,24 @@ export default function ChatPage() {
   };
 
   const handleNewConversation = () => {
-    startNewConversation();
+    pendingCreationIdRef.current = null;
+    resetChat();
     setDrawerOpen(false);
     setInput('');
     setDocRef(null);
     setImage(null);
     setImagePreview(null);
+    navigate('/chat/new');
+  };
+
+  const handlePickConversation = (id: string) => {
+    setDrawerOpen(false);
+    navigate(`/chat/${encodeURIComponent(id)}`);
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    await deleteConversation(id);
+    if (id === conversationId) navigate('/chat/new', { replace: true });
   };
 
   const handlePickImage = (file: File | undefined) => {
@@ -543,6 +590,11 @@ export default function ChatPage() {
     setImage(file);
     setImagePreview(URL.createObjectURL(file));
   };
+
+  if (!isNewConversation && routeState === 'not-found') return <ConversationNotFoundPage />;
+  if (!isNewConversation && routeState === 'error') {
+    return <RouteLoadError onRetry={() => loadRouteConversation(conversationId!)} />;
+  }
 
   return (
     <div className="chat">
@@ -567,9 +619,9 @@ export default function ChatPage() {
           locale={{ emptyText: <Empty description="暂无会话" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
           renderItem={(meta) => (
             <List.Item
-              onClick={() => {
-                void loadConversation(meta.id);
-                setDrawerOpen(false);
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest('.conv-del')) return;
+                handlePickConversation(meta.id);
               }}
               className={`conv-item ${meta.id === conversationId ? 'conv-active' : ''}`}
               actions={[
@@ -579,12 +631,10 @@ export default function ChatPage() {
                   getPopupContainer={(trigger) => trigger.closest('.ant-drawer-body') ?? document.body}
                   onConfirm={(e) => {
                     e?.stopPropagation();
-                    void deleteConversation(meta.id);
+                    void handleDeleteConversation(meta.id);
                   }}
                 >
-                  <Tooltip title="删除会话">
-                    <Button type="text" size="small" className="conv-del" icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-                  </Tooltip>
+                  <Button type="text" size="small" className="conv-del" icon={<DeleteOutlined />} aria-label="删除会话" />
                 </Popconfirm>,
               ]}
             >
@@ -598,7 +648,7 @@ export default function ChatPage() {
       </Drawer>
 
       <div className="chat-scroll">
-        {isLoadingHistory ? (
+        {routeState === 'loading' || isLoadingHistory ? (
           <Spin style={{ display: 'block', margin: '80px auto' }} />
         ) : messages.length === 0 ? (
           <Hero onPick={(q) => handleSend(q)} suggestions={suggestions} />
@@ -668,7 +718,7 @@ export default function ChatPage() {
             disabled={isGenerating}
           />
           {isGenerating ? (
-            <Button type="primary" danger icon={<StopOutlined />} onClick={stopGeneration}>
+            <Button type="primary" danger icon={<StopOutlined />} onClick={() => conversationId && stopGeneration(conversationId)}>
               停止
             </Button>
           ) : (
