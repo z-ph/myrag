@@ -11,10 +11,10 @@ COPY apps/server/package.json apps/server/
 RUN printf 'registry=https://registry.npmmirror.com\n' > .npmrc \
  && pnpm install --frozen-lockfile
 
-# 运行时只要 pdf-parse 子树（其余已被 tsup 打进 bundle）。独立目录 + npm 扁平树，避免 pnpm deploy 整包复制。
-WORKDIR /app/runtime-deps
-RUN node -e "const v=require('../apps/server/package.json').dependencies['pdf-parse']; if(!v) throw new Error('pdf-parse missing'); require('fs').writeFileSync('package.json', JSON.stringify({private:true,dependencies:{'pdf-parse':v}}))" \
- && npm install --omit=dev --registry=https://registry.npmmirror.com
+# 运行阶段基于 Debian slim（见下），原生子依赖必须与其同为 glibc：
+# 若在 alpine 构建阶段安装，npm 会选中 *-musl 原生变体，复制到 slim 后加载失败，
+# pdf.js 无法补齐 DOMMatrix，导致服务启动即崩（ReferenceError: DOMMatrix is not defined）。
+# 因此 runtime-deps 改在运行阶段直接安装。
 
 WORKDIR /app
 COPY packages/shared packages/shared
@@ -35,7 +35,16 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 ENV NODE_ENV=production
 
-COPY --from=build /app/runtime-deps/node_modules ./node_modules
+# 运行时只要 pdf-parse 子树（其余已被 tsup 打进 bundle）。独立目录 + npm 扁平树，避免 pnpm deploy 整包复制。
+# 在本阶段安装保证 @napi-rs/canvas 等 native 包与运行镜像同为 glibc 变体
+COPY apps/server/package.json /tmp/deps-src/apps/server/package.json
+WORKDIR /app/runtime-deps
+RUN node -e "const v=require('/tmp/deps-src/apps/server/package.json').dependencies['pdf-parse']; if(!v) throw new Error('pdf-parse missing'); require('fs').writeFileSync('package.json', JSON.stringify({private:true,dependencies:{'pdf-parse':v}}))" \
+ && npm install --omit=dev --registry=https://registry.npmmirror.com \
+ && mv /app/runtime-deps/node_modules /app/node_modules \
+ && rm -rf /tmp/deps-src
+
+WORKDIR /app
 COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/apps/server/drizzle ./drizzle
 
