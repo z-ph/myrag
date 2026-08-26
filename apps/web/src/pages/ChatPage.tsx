@@ -489,8 +489,8 @@ export default function ChatPage() {
   );
   const pendingCreationIdRef = useRef<string | null>(null);
   const routeLoadTokenRef = useRef(0);
-  const currentConversationIdRef = useRef(conversationId);
-  currentConversationIdRef.current = conversationId;
+  const routeConversationIdRef = useRef(conversationId);
+  routeConversationIdRef.current = conversationId;
 
   const [input, setInput] = useState('');
   const [devMode, setDevMode] = useState(false);
@@ -513,14 +513,14 @@ export default function ChatPage() {
       .then(() => {
         if (
           routeLoadTokenRef.current !== requestToken
-          || currentConversationIdRef.current !== id
+          || routeConversationIdRef.current !== id
         ) return;
         setRouteState('ready');
       })
       .catch((err: unknown) => {
         if (
           routeLoadTokenRef.current !== requestToken
-          || currentConversationIdRef.current !== id
+          || routeConversationIdRef.current !== id
         ) return;
         const status = err instanceof ApiError ? err.status : undefined;
         if (status === 401) return;
@@ -592,7 +592,7 @@ export default function ChatPage() {
 
   const handleDeleteConversation = async (id: string) => {
     await deleteConversation(id);
-    if (id === currentConversationIdRef.current) navigate('/chat/new', { replace: true });
+    if (id === routeConversationIdRef.current) navigate('/chat/new', { replace: true });
   };
 
   const handlePickImage = (file: File | undefined) => {
