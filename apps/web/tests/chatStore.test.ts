@@ -23,6 +23,8 @@ beforeEach(() => {
   useChatStore.setState({ historyMetas: [], pendingDocRef: null, isLoadingHistory: false });
   vi.mocked(ragApi.askStream).mockReset();
   vi.mocked(ragApi.conversationDetail).mockReset();
+  vi.mocked(ragApi.listConversations).mockReset();
+  vi.mocked(ragApi.listConversations).mockResolvedValue([]);
 });
 
 describe('chat store URL-driven contract', () => {
@@ -98,5 +100,59 @@ describe('chat store URL-driven contract', () => {
     await firstLoad;
 
     expect(useChatStore.getState().messages).toEqual([]);
+  });
+
+  it('重置后旧 SSE 的完成路径不会改变新生成或刷新列表', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    let oldHandlers!: Parameters<typeof ragApi.askStream>[1];
+    vi.mocked(ragApi.askStream)
+      .mockImplementationOnce(async (_params, handlers, signal) => {
+        oldHandlers = handlers;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      })
+      .mockImplementationOnce(async () => new Promise(() => {}));
+
+    const oldRequest = useChatStore.getState().sendMessage('conv-old', '旧问题');
+    useChatStore.getState().resetChat();
+    vi.setSystemTime(new Date('2026-01-01T00:00:01Z'));
+    void useChatStore.getState().sendMessage('conv-new', '新问题');
+    await oldRequest;
+    oldHandlers.onComplete(false);
+
+    expect(useChatStore.getState()).toMatchObject({ isGenerating: true });
+    expect(useChatStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'user-1767225601000', content: '新问题', status: 'COMPLETED' }),
+      expect.objectContaining({ id: 'assistant-1767225601000', status: 'GENERATING' }),
+    ]);
+    expect(ragApi.listConversations).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('身份变化后忽略旧身份的列表结果并保留新身份的刷新', async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof ragApi.listConversations>>) => void;
+    let resolveNew!: (value: Awaited<ReturnType<typeof ragApi.listConversations>>) => void;
+    const oldList = new Promise<Awaited<ReturnType<typeof ragApi.listConversations>>>((resolve) => {
+      resolveOld = resolve;
+    });
+    const newList = new Promise<Awaited<ReturnType<typeof ragApi.listConversations>>>((resolve) => {
+      resolveNew = resolve;
+    });
+    vi.mocked(ragApi.listConversations).mockReturnValueOnce(oldList).mockReturnValueOnce(newList);
+
+    const oldRefresh = useChatStore.getState().refreshConversations();
+    useChatStore.getState().onIdentityChanged();
+    resolveOld([{ conversationId: 'conv-old', title: '旧身份会话', updatedAt: '2026-01-01T00:00:00.000Z' }]);
+    await oldRefresh;
+
+    expect(useChatStore.getState().historyMetas).toEqual([]);
+    resolveNew([{ conversationId: 'conv-new', title: '新身份会话', updatedAt: '2026-01-01T00:00:01.000Z' }]);
+    await Promise.resolve();
+
+    expect(useChatStore.getState().historyMetas).toEqual([
+      { id: 'conv-new', title: '新身份会话', updatedAt: 1767225601000 },
+    ]);
   });
 });

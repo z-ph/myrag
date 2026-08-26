@@ -111,6 +111,7 @@ export const useChatStore = create<ChatState>((set, get) => {
   let activeController: AbortController | null = null;
   let activeConversationId: string | null = null;
   let activeLoadSequence = 0;
+  let listGeneration = 0;
 
   return {
     messages: [],
@@ -127,8 +128,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     async refreshConversations() {
+      const generation = listGeneration;
       try {
         const list = await ragApi.listConversations();
+        if (generation !== listGeneration) return;
         set({
           historyMetas: list.map((c) => ({
             id: c.conversationId,
@@ -192,6 +195,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       const controller = new AbortController();
       activeController = controller;
       activeConversationId = conversationId;
+      const isActiveRequest = () => activeController === controller;
 
       // 节流：把高频 delta 合并到每帧刷新，避免 React 批量渲染导致「一次性出现」
       let contentBuf = '';
@@ -203,7 +207,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         const r = reasoningBuf;
         contentBuf = '';
         reasoningBuf = '';
-        if (!c && !r) return;
+        if (!isActiveRequest() || (!c && !r)) return;
         set((s) => ({
           messages: s.messages.map((m) =>
             m.id === aiMsg.id
@@ -214,20 +218,20 @@ export const useChatStore = create<ChatState>((set, get) => {
       };
 
       const finish = (status: ChatMessage['status'], content?: string) => {
-        if (activeController === controller) {
-          activeController = null;
-          activeConversationId = null;
-        }
+        if (!isActiveRequest()) return false;
         if (rafId != null) {
           cancelAnimationFrame(rafId);
           flushDeltas();
         }
+        activeController = null;
+        activeConversationId = null;
         set((s) => ({
           isGenerating: false,
           messages: s.messages.map((m) =>
             m.id === aiMsg.id ? { ...m, status, content: content ?? m.content, reasoning: m.reasoning, sources: m.sources } : m,
           ),
         }));
+        return true;
       };
 
       try {
@@ -236,14 +240,17 @@ export const useChatStore = create<ChatState>((set, get) => {
           {
             onStart() {},
             onDelta(content) {
+              if (!isActiveRequest()) return;
               contentBuf += content;
               if (rafId == null) rafId = requestAnimationFrame(flushDeltas);
             },
             onReasoningDelta(content) {
+              if (!isActiveRequest()) return;
               reasoningBuf += content;
               if (rafId == null) rafId = requestAnimationFrame(flushDeltas);
             },
             onToolCall(call) {
+              if (!isActiveRequest()) return;
               // 工具调用发生时正文的累计长度（含尚未 flush 的 delta 缓冲）：
               // flush 只按顺序追加 contentBuf，故 offset = 已落库正文 + 缓冲。
               const pendingLen = contentBuf.length;
@@ -270,6 +277,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               }));
             },
             onToolResult(result) {
+              if (!isActiveRequest()) return;
               set((s) => ({
                 messages: s.messages.map((m) =>
                   m.id === aiMsg.id
@@ -284,17 +292,18 @@ export const useChatStore = create<ChatState>((set, get) => {
               }));
             },
             onSources(sources) {
+              if (!isActiveRequest()) return;
               set((s) => ({
                 messages: s.messages.map((m) => (m.id === aiMsg.id ? { ...m, sources } : m)),
               }));
             },
             onComplete(cancelled) {
-              finish(cancelled ? 'CANCELLED' : 'COMPLETED');
+              if (!finish(cancelled ? 'CANCELLED' : 'COMPLETED')) return;
               // 会话已落库（懒创建/标题/排序），刷新侧栏列表
               void get().refreshConversations();
             },
             onError(msg) {
-              finish('ERROR', msg || '请求失败');
+              if (!finish('ERROR', msg || '请求失败')) return;
               message.error(msg || '请求失败');
             },
           },
@@ -305,7 +314,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           finish('CANCELLED');
         } else {
           const msg = err instanceof Error ? err.message : '网络错误，请重试';
-          finish('ERROR', msg);
+          if (!finish('ERROR', msg)) return;
           message.error(msg);
         }
       }
@@ -319,6 +328,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     onIdentityChanged() {
+      listGeneration += 1;
       get().resetChat();
       set({ historyMetas: [] });
       void get().refreshConversations();
