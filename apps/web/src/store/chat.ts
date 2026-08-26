@@ -50,21 +50,39 @@ export interface ConversationMeta {
   updatedAt: number;
 }
 
-const CURRENT_KEY = 'myrag-current-conv';
 const MODE_KEY = 'myrag-qa-mode';
 
-function genId(): string {
+export function createConversationId(): string {
   return `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function saveCurrent(id: string | null): void {
-  if (id) localStorage.setItem(CURRENT_KEY, id);
-  else localStorage.removeItem(CURRENT_KEY);
+function toChatMessage(
+  m: Awaited<ReturnType<typeof ragApi.conversationDetail>>['recentMessages'][number],
+  i: number,
+): ChatMessage {
+  return {
+    id: `${m.role}-${m.timestamp}-${i}`,
+    role: m.role === 'USER' ? 'user' : 'assistant',
+    content: m.content,
+    reasoning: m.reasoning,
+    sources: m.sources,
+    // 服务端返回 API 相对路径，拼上本站 API 前缀后可直接作为 img src
+    imageUrl: m.imageUrl ? `${API_BASE}${m.imageUrl}` : undefined,
+    toolCalls: m.toolCalls?.map((tc) => ({
+      id: tc.id,
+      name: tc.name,
+      label: toolLabel(tc.name),
+      args: tc.args,
+      output: tc.output,
+      status: 'done' as const,
+      atOffset: tc.atOffset,
+    })),
+    status: m.status ?? 'COMPLETED',
+  };
 }
 
 interface ChatState {
   messages: ChatMessage[];
-  conversationId: string | null;
   isGenerating: boolean;
   isLoadingHistory: boolean;
   /** 会话列表（服务端驱动：登录用户与访客各自名下的会话） */
@@ -74,15 +92,13 @@ interface ChatState {
   /** 问答模式：fast 快速直答（默认）/ deep 深度检索，本地持久化 */
   mode: QaMode;
   setMode(mode: QaMode): void;
-  currentConversationId(): string;
   /** 从服务端拉取会话列表（失败不阻塞聊天） */
   refreshConversations(): Promise<void>;
   loadConversation(id: string): Promise<void>;
-  startNewConversation(): void;
+  resetChat(): void;
   deleteConversation(id: string): Promise<void>;
-  sendMessage(question: string, image?: File): Promise<void>;
-  stopGeneration(): void;
-  clearConversation(): Promise<void>;
+  sendMessage(conversationId: string, question: string, image?: File): Promise<void>;
+  stopGeneration(conversationId: string): void;
   /** 身份切换（登录/登出）后调用：重置当前会话并刷新列表 */
   onIdentityChanged(): void;
   /** 新开会话并记下问题，供聊天页发出 */
@@ -93,10 +109,11 @@ interface ChatState {
 export const useChatStore = create<ChatState>((set, get) => {
   /** 当前进行中生成的取消控制器 */
   let activeController: AbortController | null = null;
+  let activeConversationId: string | null = null;
+  let activeLoadSequence = 0;
 
   return {
     messages: [],
-    conversationId: localStorage.getItem(CURRENT_KEY),
     isGenerating: false,
     isLoadingHistory: false,
     historyMetas: [],
@@ -107,15 +124,6 @@ export const useChatStore = create<ChatState>((set, get) => {
     setMode(mode) {
       localStorage.setItem(MODE_KEY, mode);
       set({ mode });
-    },
-
-    currentConversationId() {
-      const { conversationId } = get();
-      if (conversationId) return conversationId;
-      const id = genId();
-      saveCurrent(id);
-      set({ conversationId: id });
-      return id;
     },
 
     async refreshConversations() {
@@ -134,65 +142,35 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     async loadConversation(id) {
-      set({ isLoadingHistory: true, conversationId: id });
-      saveCurrent(id);
+      const sequence = ++activeLoadSequence;
+      set({ isLoadingHistory: true, messages: [] });
       try {
         const detail = await ragApi.conversationDetail(id);
-        if (!detail.exists) {
-          // 会话懒创建：新 ID 在服务端尚不存在是正常空会话，不是错误。
-          const known = get().historyMetas.some((m) => m.id === id);
-          set({ messages: [] });
-          if (known) {
-            message.warning('该会话不存在或已删除');
-            get().startNewConversation();
-          }
-          return;
-        }
-        set({
-          messages: detail.recentMessages.map((m, i) => ({
-            id: `${m.role}-${m.timestamp}-${i}`,
-            role: m.role === 'USER' ? 'user' : 'assistant',
-            content: m.content,
-            reasoning: m.reasoning,
-            sources: m.sources,
-            // 服务端返回 API 相对路径，拼上本站 API 前缀后可直接作为 img src
-            imageUrl: m.imageUrl ? `${API_BASE}${m.imageUrl}` : undefined,
-            toolCalls: m.toolCalls?.map((tc) => ({
-              id: tc.id,
-              name: tc.name,
-              label: toolLabel(tc.name),
-              args: tc.args,
-              output: tc.output,
-              status: 'done' as const,
-              atOffset: tc.atOffset,
-            })),
-            status: m.status ?? 'COMPLETED',
-          })),
-        });
+        if (sequence !== activeLoadSequence) return;
+        set({ messages: detail.recentMessages.map(toChatMessage) });
       } finally {
-        set({ isLoadingHistory: false });
+        if (sequence === activeLoadSequence) set({ isLoadingHistory: false });
       }
     },
 
-    startNewConversation() {
-      const id = genId();
-      saveCurrent(id);
-      set({ conversationId: id, messages: [] });
+    resetChat() {
+      activeLoadSequence += 1;
+      activeController?.abort();
+      activeController = null;
+      activeConversationId = null;
+      set({ messages: [], isGenerating: false, isLoadingHistory: false, pendingDocRef: null });
     },
 
     async deleteConversation(id) {
-      const { conversationId } = get();
       await ragApi.clearConversation(id).catch(() => {});
-      if (conversationId === id) get().startNewConversation();
       await get().refreshConversations();
     },
 
-    async sendMessage(question, image) {
+    async sendMessage(conversationId, question, image) {
       const text = question.trim();
       // 纯图片发送（无文字）同样有效：服务端会补「请分析这张图片」
       if ((!text && !image) || get().isGenerating) return;
 
-      const conversationId = get().currentConversationId();
       const userMsg: ChatMessage = {
         id: `user-${Date.now()}`,
         role: 'user',
@@ -213,6 +191,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       activeController?.abort();
       const controller = new AbortController();
       activeController = controller;
+      activeConversationId = conversationId;
 
       // 节流：把高频 delta 合并到每帧刷新，避免 React 批量渲染导致「一次性出现」
       let contentBuf = '';
@@ -235,7 +214,10 @@ export const useChatStore = create<ChatState>((set, get) => {
       };
 
       const finish = (status: ChatMessage['status'], content?: string) => {
-        if (activeController === controller) activeController = null;
+        if (activeController === controller) {
+          activeController = null;
+          activeConversationId = null;
+        }
         if (rafId != null) {
           cancelAnimationFrame(rafId);
           flushDeltas();
@@ -329,33 +311,22 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
     },
 
-    stopGeneration() {
-      const { conversationId, isGenerating } = get();
-      if (!isGenerating) return;
+    stopGeneration(conversationId) {
+      if (!get().isGenerating || activeConversationId !== conversationId) return;
       // 本地中止流式读取；服务端生成由 cancel 接口终止
       activeController?.abort();
-      if (conversationId) {
-        void ragApi.cancelGeneration(conversationId).catch(() => {});
-      }
-    },
-
-    async clearConversation() {
-      const { conversationId } = get();
-      if (!conversationId) return;
-      await ragApi.clearConversation(conversationId).catch(() => {});
-      get().startNewConversation();
-      await get().refreshConversations();
+      void ragApi.cancelGeneration(conversationId).catch(() => {});
     },
 
     onIdentityChanged() {
-      saveCurrent(null);
-      set({ conversationId: null, messages: [], historyMetas: [], pendingDocRef: null });
+      get().resetChat();
+      set({ historyMetas: [] });
       void get().refreshConversations();
     },
 
     askAboutDocument(doc) {
-      get().startNewConversation();
-      set({ pendingDocRef: doc });
+      activeLoadSequence += 1;
+      set({ messages: [], isLoadingHistory: false, pendingDocRef: doc });
     },
 
     takePendingDocRef() {
