@@ -488,6 +488,9 @@ export default function ChatPage() {
     isNewConversation ? 'new' : 'loading',
   );
   const pendingCreationIdRef = useRef<string | null>(null);
+  const routeLoadTokenRef = useRef(0);
+  const currentConversationIdRef = useRef(conversationId);
+  currentConversationIdRef.current = conversationId;
 
   const [input, setInput] = useState('');
   const [devMode, setDevMode] = useState(false);
@@ -503,11 +506,22 @@ export default function ChatPage() {
   const suggestions = suggestionData?.questions?.length ? suggestionData.questions : DEFAULT_SUGGESTIONS;
 
   const loadRouteConversation = (id: string) => {
+    const requestToken = ++routeLoadTokenRef.current;
     resetChat();
     setRouteState('loading');
     void loadConversation(id)
-      .then(() => setRouteState('ready'))
+      .then(() => {
+        if (
+          routeLoadTokenRef.current !== requestToken
+          || currentConversationIdRef.current !== id
+        ) return;
+        setRouteState('ready');
+      })
       .catch((err: unknown) => {
+        if (
+          routeLoadTokenRef.current !== requestToken
+          || currentConversationIdRef.current !== id
+        ) return;
         const status = err instanceof ApiError ? err.status : undefined;
         if (status === 401) return;
         setRouteState(status === 404 || status === 400 ? 'not-found' : 'error');
@@ -578,7 +592,7 @@ export default function ChatPage() {
 
   const handleDeleteConversation = async (id: string) => {
     await deleteConversation(id);
-    if (id === conversationId) navigate('/chat/new', { replace: true });
+    if (id === currentConversationIdRef.current) navigate('/chat/new', { replace: true });
   };
 
   const handlePickImage = (file: File | undefined) => {

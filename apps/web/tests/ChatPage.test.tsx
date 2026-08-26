@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/api';
 import { documentsApi, ragApi } from '../src/api';
 import { ApiError } from '../src/api/client';
+import { AppShell } from '../src/App';
 import ChatPage, { IMAGE_UPLOAD_ENABLED } from '../src/pages/ChatPage';
 import { useAuthStore } from '../src/store/auth';
 import { useChatStore, type ChatMessage } from '../src/store/chat';
@@ -74,6 +75,11 @@ function NavigateBackButton() {
   return <button type="button" onClick={() => navigate(-1)}>测试后退</button>;
 }
 
+function NavigateToConversationBButton() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate('/chat/conv-b')}>测试前往会话 B</button>;
+}
+
 function mount(path = '/chat/new', initialEntries = [path]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -81,6 +87,7 @@ function mount(path = '/chat/new', initialEntries = [path]) {
       <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.indexOf(path)}>
         <LocationProbe />
         <NavigateBackButton />
+        <NavigateToConversationBButton />
         <Routes>
           <Route path="/chat/new" element={<ChatPage />} />
           <Route path="/chat/:conversationId" element={<ChatPage />} />
@@ -88,6 +95,28 @@ function mount(path = '/chat/new', initialEntries = [path]) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+function mountAppShell(path: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <LocationProbe />
+        <AppShell />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function assistant(partial: Partial<ChatMessage>): ChatMessage {
@@ -102,7 +131,7 @@ function assistant(partial: Partial<ChatMessage>): ChatMessage {
 
 describe('ChatPage assistant extras', () => {
   beforeEach(() => {
-    useAuthStore.setState({ loading: false });
+    useAuthStore.setState({ loading: false, restore: vi.fn().mockResolvedValue(undefined) });
     useChatStore.setState({
       messages: [],
       isGenerating: false,
@@ -153,6 +182,52 @@ describe('ChatPage assistant extras', () => {
     mount('/chat/invalid-id');
     expect(await screen.findByText('会话不存在')).toBeVisible();
     expect(screen.queryByText('加载失败')).toBeNull();
+  });
+
+  it('A 的迟到失败不会覆盖已成功加载的 B', async () => {
+    const detailA = deferred<Awaited<ReturnType<typeof ragApi.conversationDetail>>>();
+    vi.mocked(ragApi.conversationDetail)
+      .mockImplementationOnce(() => detailA.promise)
+      .mockResolvedValueOnce({ conversationId: 'conv-b', exists: true, recentMessages: [], recentMessageCount: 0 });
+    mount('/chat/conv-a');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-a'));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    await screen.findByText('问制度，找依据');
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b');
+
+    await act(async () => detailA.reject(new ApiError(404, '会话不存在')));
+    expect(screen.getByText('问制度，找依据')).toBeVisible();
+    expect(screen.queryByText('会话不存在')).toBeNull();
+  });
+
+  it('A 的迟到成功不会覆盖 B 的加载失败', async () => {
+    const detailA = deferred<Awaited<ReturnType<typeof ragApi.conversationDetail>>>();
+    vi.mocked(ragApi.conversationDetail)
+      .mockImplementationOnce(() => detailA.promise)
+      .mockRejectedValueOnce(new ApiError(404, '会话不存在'));
+    mount('/chat/conv-a');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-a'));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    expect(await screen.findByText('会话不存在')).toBeVisible();
+
+    await act(async () => detailA.resolve({
+      conversationId: 'conv-a', exists: true, recentMessages: [], recentMessageCount: 0,
+    }));
+    expect(screen.getByText('会话不存在')).toBeVisible();
+  });
+
+  it('详情 HTTP 401 不显示错误页，并由身份事件进入新会话', async () => {
+    vi.mocked(ragApi.conversationDetail).mockRejectedValue(new ApiError(401, '未授权'));
+    mountAppShell('/chat/conv-401');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-401'));
+    expect(screen.queryByText('会话不存在')).toBeNull();
+    expect(screen.queryByText('加载失败')).toBeNull();
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-401');
+
+    await act(async () => window.dispatchEvent(new Event('myrag:identity-changed')));
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/new');
   });
 
   it('生成中不出现复制按钮和追问', () => {
@@ -352,6 +427,33 @@ describe('ChatPage assistant extras', () => {
     fireEvent.click(deleteButton);
     fireEvent.click(await screen.findByRole('button', { name: /^(确定|OK)$/ }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/new'));
+  });
+
+  it('删除当前会话期间切换到 B 时，完成后保留 B 的 URL', async () => {
+    const deletion = deferred<void>();
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-current', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    vi.mocked(ragApi.clearConversation).mockImplementationOnce(() => deletion.promise as never);
+    mount('/chat/conv-current');
+    await screen.findByText('问制度，找依据');
+    act(() => useChatStore.setState({
+      historyMetas: [{ id: 'conv-current', title: '当前会话', updatedAt: 2 }],
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'history' }));
+    const deleteButton = await waitFor(() => {
+      const button = document.querySelector<HTMLButtonElement>('.conv-del');
+      expect(button).toBeTruthy();
+      return button!;
+    });
+    fireEvent.click(deleteButton);
+    fireEvent.click(await screen.findByRole('button', { name: /^(确定|OK)$/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b'));
+    await act(async () => deletion.resolve());
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b'));
   });
 
   // 图片上传入口恢复（IMAGE_UPLOAD_ENABLED = true）时自动重新启用
