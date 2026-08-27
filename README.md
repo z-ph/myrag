@@ -60,7 +60,7 @@ pnpm smoke            # 接口冒烟（需基础设施 + mock-llm 就绪）
 - **契约即文档，RPC 端到端类型安全**：全部路由 `@hono/zod-openapi`，请求/响应 schema 即运行时校验，OpenAPI 自动生成（`/docs`）；后端导出 `AppType`，前端用 `hc<AppType>`（hono/client）生成类型安全客户端，接口层零手写请求/响应类型（见 `apps/web/src/api/`）。
 - **统一响应**：成功直接返回资源表示；错误由 HTTP 状态码 + `{ code, message, details }` 表达。
 - **问答 Agent（langchain.js）**：每轮 `createAgent`，混合检索封装为 `search_knowledge_base`（模型决定是否检索、改写 query）；工具内仍是 Qdrant 向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR。图片先视觉结构化理解再拼进 user 消息，不是图文检索双路。`streamEvents` 推思考 / 工具 / 正文，SSE `data` 一律 JSON。说明见 `docs/langchain-alignment.md`。
-- **问答双模式**（表单 `mode`，默认 `deep`）：深度检索即上述 agent 工具循环；快速模式（`fast`）为写死管线——问题改写（LLM 单次调用）→ 混合检索一次 → 片段塞入上下文 → 无工具 agent 单次直答，改写失败回退原问题。两条链路共用流式投影、落库与取消；提示词 `qa.rewrite` / `qa.systemFast` 已 DB 化可在管理面板编辑。
+- **问答双模式**（表单 `mode`，默认 `deep`）：深度模式使用上述 agent 工具循环；快速模式（`fast`）直接调用同一个 `LLM_CHAT_MODEL`，不改写问题、不做固定前置检索，通过 `chat_template_kwargs.enable_thinking=false` 关闭思考；输入模糊时由模型先用简短问题澄清意图，意图明确后按需调用检索/读文档工具。两条链路共用落库与取消；快速对话提示词 `qa.systemFast` 已 DB 化可在管理面板编辑。
 - **可观测（可选）**：设置 `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` 后，langchain 调用可进入 LangSmith。
 - **问答统一落库**：登录用户与访客共用 `POST /conversations/{id}/messages` 一条链路；未登录时前端静默签发访客 token（`POST /auth/guest-sessions`，JWT 角色 GUEST、默认 30 天），会话同样落库、可恢复、可取消。访客会话按保留天数定时清理（BullMQ 每小时调度，管理面板可开关/改保留天数/手动触发 `/admin/conversations/cleanup`）。
 - **提示词 DB 化**：系统提示词存 `prompt_templates` 表（版本留痕于 `prompt_template_versions`），运行时热生效并经 Redis Pub/Sub 跨实例同步；管理面板在线编辑/重置/回滚（`/admin/prompts/**`）。

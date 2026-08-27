@@ -41,7 +41,7 @@
 
 **图片问答与回看**：消息表单的图片字段为 `file`（兼容历史 `image`），问题与图片二选一——纯图片发送时服务端自动按「请分析这张图片」处理。原图存对象存储（`chat-images/{conversationId}/…`），消息记存储 key；历史经会话详情接口换算为 API 相对路径返回（`imageUrl` 字段）。回看端点 `GET /conversations/{conversationId}/images/{filename}` 公开（与文档原始文件下载同一语义，供 img src 直接引用）；删除会话与访客清理时图片一并删除。
 
-**问答双模式**（表单 `mode` 字段，默认 `deep`）：`deep` 深度检索为 agent 工具循环（模型自主检索/读文档）；`fast` 快速模式为写死管线——问题改写 → 混合检索一次 → 片段塞入上下文 → 无工具单次直答。两模式共用会话落库、来源展示与取消机制。
+**问答双模式**（表单 `mode` 字段，默认 `deep`）：`deep` 深度检索为 agent 工具循环（模型自主检索/读文档）；`fast` 快速模式直接与同一个 chat 模型对话，不改写问题、不做固定前置检索，并关闭 thinking；输入模糊时由模型先简短澄清意图，确认后按需调用检索/读文档工具。两模式共用会话落库与取消机制，快速模式只有实际调用知识库工具时才产生来源。
 
 **文档上传格式口径**：白名单以 `@myrag/shared` 的 `DEFAULTS.allowedExtensions` 为准（前后端共用）。纯文本（txt/md/csv）、PDF（扫描件自动 OCR）、docx/doc、pptx、xlsx、图片（jpg/jpeg/png/bmp）直接解析；老二进制 **.ppt 与 .xls** 依赖运行环境安装 LibreOffice——服务端经 headless 转换为 pptx/xlsx 后复用同一解析器（见 `apps/server/src/pipeline/libreoffice.ts`），环境未安装时上传可通过但处理失败并给出明确报错。单文件上限 50MB。
 
