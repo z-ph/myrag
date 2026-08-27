@@ -39,7 +39,7 @@ test.describe('智能问答', () => {
     await expect(page).toHaveURL(/\/chat\/new$/);
     expect(page.url()).not.toBe(guestConversationUrl);
     // 登录态验证：管理员可见管理面板入口
-    await expect(page.getByRole('menuitem', { name: '管理面板' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: '管理面板' })).toBeVisible({ timeout: 10_000 });
     // 我的页显示退出按钮，再回到聊天页提问
     await page.goto('/my');
     await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible();

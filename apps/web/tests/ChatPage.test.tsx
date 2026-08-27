@@ -354,6 +354,46 @@ describe('ChatPage assistant extras', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentIds[0]}`);
   });
 
+  it('离开新建会话后再返回，会重新加载已创建会话详情', async () => {
+    let sentId = '';
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      sentId = params.conversationId;
+      handlers.onComplete(false);
+    });
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-b', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    mount('/chat/new', ['/outside', '/chat/new']);
+
+    fireEvent.change(screen.getByPlaceholderText(/输入问题/), { target: { value: '创建 A' } });
+    fireEvent.click(screen.getByRole('button', { name: /发送$/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentId}`));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b'));
+    fireEvent.click(screen.getByRole('button', { name: '测试后退' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentId}`));
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith(sentId));
+  });
+
+  it('已有会话详情加载期间禁止发送，避免覆盖乐观消息', async () => {
+    const detail = deferred<Awaited<ReturnType<typeof ragApi.conversationDetail>>>();
+    vi.mocked(ragApi.conversationDetail).mockReturnValue(detail.promise);
+    mount('/chat/conv-loading');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-loading'));
+
+    const input = screen.getByPlaceholderText(/输入问题/);
+    fireEvent.change(input, { target: { value: '加载期间的问题' } });
+    const send = screen.getByRole('button', { name: /发送$/ });
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(ragApi.askStream).not.toHaveBeenCalled();
+
+    await act(async () => detail.resolve({
+      conversationId: 'conv-loading', exists: true, recentMessages: [], recentMessageCount: 0,
+    }));
+  });
+
   it('点击历史会话更新 URL', async () => {
     vi.mocked(ragApi.conversationDetail).mockResolvedValue({
       conversationId: 'conv-history', exists: true, recentMessages: [], recentMessageCount: 0,

@@ -19,7 +19,7 @@ export async function apiLogin(username: string, password: string): Promise<stri
 export async function waitForAnswer(page: Page, timeout = 30_000): Promise<void> {
   const answer = page.locator('.msg-assistant .answer').last();
   // 生成结束后「停止」换回「发送」
-  await expect(page.getByRole('button', { name: '发送' })).toBeVisible({ timeout });
+  await expect(page.locator('button.composer-send')).toBeVisible({ timeout });
   await expect(page.locator('.answer-typing')).toHaveCount(0);
   const text = (await answer.textContent()) ?? '';
   expect(text.trim().length).toBeGreaterThan(0);
@@ -30,7 +30,9 @@ export async function waitForAnswer(page: Page, timeout = 30_000): Promise<void>
 export async function askQuestion(page: Page, question: string): Promise<void> {
   const textarea = page.getByPlaceholder('输入问题').or(page.locator('.composer-input'));
   await textarea.fill(question);
-  await page.getByRole('button', { name: '发送' }).click();
+  const sendButton = page.locator('button.composer-send');
+  await expect(sendButton).toBeEnabled();
+  await sendButton.click();
 }
 
 /** 上传文件到文档库（若存在） */

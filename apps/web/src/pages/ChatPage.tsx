@@ -534,9 +534,13 @@ export default function ChatPage() {
     if (pending && isNewConversation) setDocRef(pending);
     void refreshConversations();
     if (isNewConversation) {
+      pendingCreationIdRef.current = null;
       resetChat();
       setRouteState('new');
       return;
+    }
+    if (pendingCreationIdRef.current && pendingCreationIdRef.current !== conversationId) {
+      pendingCreationIdRef.current = null;
     }
     if (pendingCreationIdRef.current === conversationId) {
       setRouteState('ready');
@@ -557,6 +561,7 @@ export default function ChatPage() {
 
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
+    if (routeState === 'loading' || isLoadingHistory) return;
     if (!q && !image) return;
     const asked = docRef
       ? `引用文档：${docRef.filename}\ndocumentId: ${docRef.documentId}\n\n${q}`
@@ -729,14 +734,20 @@ export default function ChatPage() {
                 handleSend();
               }
             }}
-            disabled={isGenerating}
+            disabled={isGenerating || routeState === 'loading' || isLoadingHistory}
           />
           {isGenerating ? (
             <Button type="primary" danger icon={<StopOutlined />} onClick={() => conversationId && stopGeneration(conversationId)}>
               停止
             </Button>
           ) : (
-            <Button type="primary" className="composer-send" icon={<SendOutlined />} onClick={() => handleSend()} disabled={!input.trim() && !image}>
+            <Button
+              type="primary"
+              className="composer-send"
+              icon={<SendOutlined />}
+              onClick={() => handleSend()}
+              disabled={routeState === 'loading' || isLoadingHistory || (!input.trim() && !image)}
+            >
               发送
             </Button>
           )}
