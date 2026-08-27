@@ -127,6 +127,7 @@ docker exec -e PGPASSWORD="$DB_PASSWORD" postgres psql \
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
 | 浏览器路由、未知路径 404、会话 404 | 通过 | 真实 Chromium 脚本 6 项通过 |
+| 项目自带 Playwright 路由用例 | 通过 | 统一使用 `localhost` 后 2 项通过，5.5 秒完成 |
 | 页面发送后 URL | 通过 | 页面进入 `/chat/conv-*`，用户消息可见 |
 | 浏览器完整知识库问答 | 失败 | 等待 120 秒后助手仍为「正在思考…」，未出现回答 |
 | 直接 API、关闭知识库 | 通过 | SSE 在约 3 秒内收到 `complete`，回答为 `DIRECT-API-OK` |
@@ -134,6 +135,14 @@ docker exec -e PGPASSWORD="$DB_PASSWORD" postgres psql \
 | PostgreSQL、Qdrant、Redis、MinIO | 可用 | 开发服务器初始化完成，路由和会话 API 正常 |
 
 这说明 URL 路由和前端 SSE 基础消费已经被真实页面验证，但完整 RAG 问答仍有服务端生成阶段超时。服务日志出现过「问题改写失败，回退原问题：Request timed out」，因此后续应继续为问题改写、检索、最终模型流分别增加耗时和终态日志；不能把该问题归因于构建或 URL 路由。
+
+项目自带 Playwright 配置中的 `webServer` 使用 `localhost`，实际测试地址也应保持一致。若将 `E2E_WEB_URL` 设为 `127.0.0.1`，可能出现服务已启动但测试第二次导航连接被拒绝的主机名不一致问题。筛选路由用例时，直接调用 `apps/e2e` 的 Playwright CLI：
+
+```bash
+E2E_WEB_URL=http://localhost:5174 \
+pnpm --filter @myrag/e2e exec playwright test \
+  --grep '根路径和旧聊天路径|不存在会话显示'
+```
 
 ## 六、验收结论规则
 
