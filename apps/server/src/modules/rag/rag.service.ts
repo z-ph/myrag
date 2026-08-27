@@ -111,6 +111,9 @@ export const QA_AGENT_RECURSION_LIMIT = 80;
 /** 单轮问答允许的工具调用次数。到顶后拦截，让模型基于已有资料作答。 */
 export const QA_AGENT_TOOL_RUN_LIMIT = 10;
 
+const REWRITE_PROMPT_CONSTRAINTS = `
+额外硬性限制：只输出最终检索语句，不解释、不分析、不加引号、不使用 Markdown；最多输出 30 个汉字。`;
+
 /**
  * 快速模式第一步：问题改写。结合历史对话补全指代，产出独立检索式。
  * 非流式单次调用；失败时回退原问题，不阻塞问答主链路。
@@ -124,7 +127,10 @@ export async function rewriteQuery(
   try {
     chatModel.temperature = 0;
     const user = recap ? `历史对话：\n${recap}\n\n当前问题：${question}` : question;
-    const res = await chatModel.invoke([new SystemMessage(systemPrompt), new HumanMessage(user)]);
+    const res = await chatModel.invoke([
+      new SystemMessage(`${systemPrompt}${REWRITE_PROMPT_CONSTRAINTS}`),
+      new HumanMessage(user),
+    ]);
     const rewritten = typeof res.content === 'string' ? stripThink(res.content).trim() : '';
     return rewritten || question;
   } catch (err) {
@@ -435,7 +441,7 @@ export function createRagService(
     if (input.useKnowledgeBase !== false) {
       const recapForRewrite = foldHistoryRecap(history, s.memoryWindow);
       const searchQuery = await rewriteQuery(
-        llm.chatModel,
+        llm.rewriteModel,
         promptService.get('qa.rewrite'),
         question,
         recapForRewrite,

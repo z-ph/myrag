@@ -140,6 +140,7 @@ docker exec -e PGPASSWORD="$DB_PASSWORD" postgres psql \
 | 浏览器完整知识库问答 | 失败 | 严格脚本等待 30 秒后回答文本仍为空；页面仍在生成 |
 | 直接 API、关闭知识库 | 通过 | SSE 在约 2 秒内收到 `complete`，回答为 `DIRECT-API-OK` |
 | 直接 API、开启知识库 | 失败 | 20 秒超时，只收到 `start`，无 `complete` |
+| 改写提示词 + `maxTokens=64` 实验 | 未解决 | 真实上游仍约 34.6 秒后超时回退；浏览器等待 45 秒仍无回答，只有 HTTP 200、无完整 SSE 事件 |
 | PostgreSQL、Qdrant、Redis、MinIO | 可用 | 开发服务器初始化完成，路由和会话 API 正常 |
 
 这说明 URL 路由和前端 SSE 基础消费已经被真实页面验证，但完整 RAG 问答仍有服务端生成阶段超时。服务日志出现过「问题改写失败，回退原问题：Request timed out」，因此后续应继续为问题改写、检索、最终模型流分别增加耗时和终态日志；不能把该问题归因于构建或 URL 路由。

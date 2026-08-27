@@ -14,6 +14,8 @@ export interface VisionMessageInput {
 export interface LlmClient {
   /** 对话模型实例（供 createAgent 使用；temperature 在调用前由业务侧设置） */
   readonly chatModel: ChatOpenAI;
+  /** 问题改写专用实例：同一模型，但限制输出规模，避免影响正式回答 */
+  readonly rewriteModel: ChatOpenAI;
   /** 批量向量化 */
   embed(texts: string[]): Promise<number[][]>;
   /** 图片理解（视觉模型，自由文本；OCR 等场景） */
@@ -30,6 +32,9 @@ export interface LlmClient {
   /** LLM 相关性重排：对每个候选打 0-10 分，返回与 candidates 同序的分数数组 */
   rerank(query: string, candidates: string[]): Promise<number[]>;
 }
+
+/** 查询改写只需要一条短检索语句，避免复用正式回答的无限输出预算。 */
+export const REWRITE_MAX_TOKENS = 64;
 
 /** 组装视觉模型多模态消息 */
 function buildVisionMessages(system: string, prompt: string, imageBase64: string): BaseMessage[] {
@@ -150,6 +155,11 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     parallelToolCalls: true,
   };
   const chatModel = new ChatOpenAI(chatFields);
+  const rewriteModel = new ChatOpenAI({
+    ...chatFields,
+    temperature: 0,
+    maxTokens: REWRITE_MAX_TOKENS,
+  });
   // 独立实例：langchain 1.x 无 bind，且 invocationParams 读 this.temperature
   const rerankModel = new ChatOpenAI({ ...chatFields, temperature: 0 });
   const visionModel = new ChatOpenAI({
@@ -175,6 +185,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
 
   return {
     chatModel,
+    rewriteModel,
 
     async embed(texts) {
       try {

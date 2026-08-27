@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBm25Scorer, jaccard, tokenize } from '../src/modules/rag/bm25';
 import { hashPassword, verifyPassword, signToken, verifyToken } from '../src/lib/security';
+import { createLlmClient, REWRITE_MAX_TOKENS } from '../src/llm/client';
+import { rewriteQuery } from '../src/modules/rag/rag.service';
+import { loadServerConfig } from '@myrag/shared';
 
 describe('tokenize', () => {
   it('中文按二元组切分', () => {
@@ -86,5 +89,35 @@ describe('JWT', () => {
     const token = await signToken({ sub: '1', username: 'admin', role: 'SUPER_ADMIN' });
     process.env.JWT_SECRET = 'secret-b';
     await expect(verifyToken(token)).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe('问题改写约束', () => {
+  it('使用独立的聊天模型实例并限制最大输出 token', () => {
+    const cfg = loadServerConfig({
+      ...process.env,
+      LLM_BASE_URL: 'http://llm.test/v1',
+      LLM_API_KEY: 'test-key',
+      LLM_CHAT_MODEL: 'test-chat',
+      LLM_EMBEDDING_MODEL: 'test-embedding',
+      LLM_VISION_MODEL: 'test-vision',
+      LLM_OCR_MODEL: 'test-ocr',
+    });
+    const llm = createLlmClient(cfg, {} as never);
+
+    expect(llm.rewriteModel).not.toBe(llm.chatModel);
+    expect(llm.rewriteModel.maxTokens).toBe(REWRITE_MAX_TOKENS);
+    expect(llm.rewriteModel.temperature).toBe(0);
+  });
+
+  it('问题改写提示词明确限制为短文本且不解释', async () => {
+    const invoke = vi.fn().mockResolvedValue({ content: '独立检索问题' });
+    const model = { temperature: 0, invoke } as never;
+
+    await rewriteQuery(model, '基础改写提示词', '当前问题', '');
+
+    const systemPrompt = invoke.mock.calls[0]?.[0]?.[0]?.content as string;
+    expect(systemPrompt).toContain('最多输出 30 个汉字');
+    expect(systemPrompt).toContain('不解释、不分析');
   });
 });
