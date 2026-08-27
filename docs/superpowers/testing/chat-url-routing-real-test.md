@@ -66,7 +66,7 @@ python3 apps/e2e/scripts/chat_url_routing_smoke.py \
   --skip-answer
 ```
 
-脚本会在 `.superpowers/manual-tests/chat-url-routing/` 写入截图和 `result.json`。浏览器控制台中的预期会话详情 `404` 不等同于页面失败；关键判断以页面文案、URL 和检查项状态为准。
+脚本会在 `.superpowers/manual-tests/chat-url-routing/` 写入截图和 `result.json`。浏览器控制台中的预期会话详情 `404` 不等同于页面失败；脚本只忽略带有本次测试会话 ID 的该条 404，其余 HTTP 错误、`pageerror` 和控制台错误都会使检查失败。
 
 ## 三、再做真实 SSE 问答验收
 
@@ -77,9 +77,17 @@ python3 apps/e2e/scripts/chat_url_routing_smoke.py \
 - 是否最终收到 `complete`，且助手消息内容非空。
 - 刷新同一 URL 后，用户消息和助手消息是否恢复。
 - `localStorage` 是否没有 `myrag-current-conv`。
-- 数据库中助手消息是否从 `GENERATING` 进入 `COMPLETED`、`ERROR` 或 `CANCELLED`，不能长期停留在 `GENERATING`。
+- 会话详情接口返回的数据库持久化助手消息是否离开 `GENERATING`；成功验收要求最新消息为 `COMPLETED` 且内容非空，不能长期停留在 `GENERATING`。
 
-脚本默认执行这一层。模型或知识库链路超时会返回失败，并保留前面已经通过的页面检查。
+脚本默认执行这一层，并且会强制检查：
+
+- 问答 POST 响应为 HTTP 200，SSE 同时包含 `start`、`reasoning` 或 `delta`、`complete`，且不能出现 `error`。
+- 页面上的助手回答非空，不把「正在思考…」误判成回答。
+- 通过同源会话详情接口复核持久化消息：最新助手消息为 `COMPLETED`、内容非空，且没有助手消息停留在 `GENERATING`。
+- 刷新后 URL 不变，用户消息和非空助手回答都能恢复。
+- `myrag-current-conv` 不存在，且没有未解释的浏览器错误。
+
+模型或知识库链路超时会返回失败，并保留前面已经通过的页面检查、SSE 事件、持久化状态和浏览器错误证据。`result.json` 中的 `sse_events`、`persisted_assistant_statuses` 和 `unexpected_browser_errors` 用于定位失败阶段。
 
 ## 四、用 API 分层定位失败
 
@@ -126,12 +134,12 @@ docker exec -e PGPASSWORD="$DB_PASSWORD" postgres psql \
 
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
-| 浏览器路由、未知路径 404、会话 404 | 通过 | 真实 Chromium 脚本 6 项通过 |
-| 项目自带 Playwright 路由用例 | 通过 | 统一使用 `localhost` 后 2 项通过，5.5 秒完成 |
+| 浏览器路由、未知路径 404、会话 404 | 通过 | 真实 Chromium 脚本 7 项通过（含浏览器错误门槛） |
+| 项目自带 Playwright 路由用例 | 通过 | 统一使用 `localhost` 后 2 项通过，2.9 秒完成 |
 | 页面发送后 URL | 通过 | 页面进入 `/chat/conv-*`，用户消息可见 |
-| 浏览器完整知识库问答 | 失败 | 等待 120 秒后助手仍为「正在思考…」，未出现回答 |
-| 直接 API、关闭知识库 | 通过 | SSE 在约 3 秒内收到 `complete`，回答为 `DIRECT-API-OK` |
-| 直接 API、开启知识库 | 失败 | 45 秒超时，只收到 `start` |
+| 浏览器完整知识库问答 | 失败 | 严格脚本等待 30 秒后回答文本仍为空；页面仍在生成 |
+| 直接 API、关闭知识库 | 通过 | SSE 在约 2 秒内收到 `complete`，回答为 `DIRECT-API-OK` |
+| 直接 API、开启知识库 | 失败 | 20 秒超时，只收到 `start`，无 `complete` |
 | PostgreSQL、Qdrant、Redis、MinIO | 可用 | 开发服务器初始化完成，路由和会话 API 正常 |
 
 这说明 URL 路由和前端 SSE 基础消费已经被真实页面验证，但完整 RAG 问答仍有服务端生成阶段超时。服务日志出现过「问题改写失败，回退原问题：Request timed out」，因此后续应继续为问题改写、检索、最终模型流分别增加耗时和终态日志；不能把该问题归因于构建或 URL 路由。
@@ -150,7 +158,7 @@ pnpm --filter @myrag/e2e exec playwright test \
 
 1. 浏览器路由检查全部通过。
 2. API SSE 至少收到完整 `complete`。
-3. 助手内容非空，数据库没有遗留 `GENERATING`。
+3. 助手内容非空，会话详情接口确认数据库没有遗留 `GENERATING`。
 4. 刷新原会话 URL 后消息仍在。
 5. 控制台没有未解释的 JavaScript 异常。
 
