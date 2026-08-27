@@ -8,6 +8,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** 生成本条助手消息时使用的问答模式；历史消息缺省时按旧行为处理 */
+  mode?: QaMode;
   /** 思考过程（仅展示，不回灌上下文） */
   reasoning?: string;
   status: 'GENERATING' | 'COMPLETED' | 'CANCELLED' | 'ERROR';
@@ -204,6 +206,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: '',
+        mode: get().mode,
         reasoning: '',
         status: 'GENERATING',
         startedAt: Date.now(),

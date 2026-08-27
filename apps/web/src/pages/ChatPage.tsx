@@ -314,13 +314,13 @@ function formatElapsed(ms: number): string {
 }
 
 /** 正在回答：跳动圆点 + 状态文案 + 经过时间（DSH「Deep diving… · 3m 04s」式） */
-function LiveRow({ startedAt, streaming, toolRunning }: { startedAt?: number; streaming: boolean; toolRunning: boolean }) {
+function LiveRow({ startedAt, streaming, toolRunning, fastMode }: { startedAt?: number; streaming: boolean; toolRunning: boolean; fastMode: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, []);
-  const label = toolRunning ? '正在检索知识库…' : streaming ? '正在生成回答…' : '正在思考…';
+  const label = toolRunning ? '正在检索知识库…' : streaming || fastMode ? '正在生成回答…' : '正在思考…';
   return (
     <div className="live-row" role="status" aria-live="polite">
       <span className="live-dots"><i /><i /><i /></span>
@@ -367,7 +367,7 @@ function AgentFlow({ msg, devMode }: { msg: ChatMessage; devMode: boolean }) {
           </div>
         );
       })}
-      {generating && <LiveRow startedAt={msg.startedAt} streaming={streamingText} toolRunning={toolRunning} />}
+      {generating && <LiveRow startedAt={msg.startedAt} streaming={streamingText} toolRunning={toolRunning} fastMode={msg.mode === 'fast'} />}
     </div>
   );
 }

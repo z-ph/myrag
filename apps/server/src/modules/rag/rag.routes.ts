@@ -18,7 +18,7 @@ const messageFormSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v === undefined ? true : !['false', '0'].includes(v.toLowerCase()))),
-  /** 问答模式：deep=agent 深度检索（默认）；fast=固定管线直答，无工具调用 */
+  /** 问答模式：deep=agent 深度检索（默认）；fast=直接 chat 对话，模型按需调用工具 */
   mode: z
     .enum(['deep', 'fast'])
     .optional()
@@ -73,7 +73,7 @@ export function createConversationRoutes(deps: AppDeps) {
           method: 'post',
           path: '/{conversationId}/messages',
           description:
-            '发送消息（创建消息资源）：同步返回回答；表单 stream=true 时返回 SSE 事件流（multipart：question 与图片字段 file 二选一，纯图片时 question 传空自动按「请分析这张图片」处理，可选 maxResults/useKnowledgeBase/mode；mode=deep 深度检索 agent，mode=fast 固定管线无工具）',
+            '发送消息（创建消息资源）：同步返回回答；表单 stream=true 时返回 SSE 事件流（multipart：question 与图片字段 file 二选一，纯图片时 question 传空自动按「请分析这张图片」处理，可选 maxResults/useKnowledgeBase/mode；mode=deep 深度检索 agent，mode=fast 直接 chat 对话并按需调用检索工具）',
           security: bearerSecurity,
           middleware: [requireAuth],
           request: {
@@ -255,4 +255,3 @@ export function createConversationRoutes(deps: AppDeps) {
       )
   );
 }
-

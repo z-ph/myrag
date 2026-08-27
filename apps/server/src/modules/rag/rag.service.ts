@@ -23,7 +23,7 @@ import { CHAT_IMAGE_PREFIX } from './conversation.service';
 import type { ImageService } from './image.service';
 import type { RagRetriever } from './retrieval.service';
 import { Document } from '@langchain/core/documents';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
 import type { ChatOpenAI } from '@langchain/openai';
 import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from './chunk';
 import { foldHistoryRecap } from './prompts';
@@ -35,7 +35,7 @@ export interface AskInput {
   conversationId: string;
   maxResults?: number;
   useKnowledgeBase?: boolean;
-  /** 问答模式：deep 深度检索（默认）/ fast 固定管线无工具 */
+  /** 问答模式：deep 深度检索（默认）/ fast 直接对话 */
   mode?: QaMode;
   /** 图片问答（base64 JPEG） */
   imageBase64?: string;
@@ -111,28 +111,6 @@ export const QA_AGENT_RECURSION_LIMIT = 80;
 /** 单轮问答允许的工具调用次数。到顶后拦截，让模型基于已有资料作答。 */
 export const QA_AGENT_TOOL_RUN_LIMIT = 10;
 
-/**
- * 快速模式第一步：问题改写。结合历史对话补全指代，产出独立检索式。
- * 非流式单次调用；失败时回退原问题，不阻塞问答主链路。
- */
-export async function rewriteQuery(
-  chatModel: ChatOpenAI,
-  systemPrompt: string,
-  question: string,
-  recap: string,
-): Promise<string> {
-  try {
-    chatModel.temperature = 0;
-    const user = recap ? `历史对话：\n${recap}\n\n当前问题：${question}` : question;
-    const res = await chatModel.invoke([new SystemMessage(systemPrompt), new HumanMessage(user)]);
-    const rewritten = typeof res.content === 'string' ? stripThink(res.content).trim() : '';
-    return rewritten || question;
-  } catch (err) {
-    logger.warn('[rag] 问题改写失败，回退原问题:', err);
-    return question;
-  }
-}
-
 /** streamEvents v3 投影的最小消费接口（深度/快速两条链路共用） */
 interface AgentStreamProjection {
   messages: AsyncIterable<{
@@ -151,7 +129,7 @@ interface AgentStreamProjection {
 async function consumeAgentStream(
   stream: AgentStreamProjection,
   handlers: GenerateHandlers,
-): Promise<{ answer: string; reasoning: string }> {
+): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[] }> {
   let reasoning = '';
   let answer = '';
   const toolCalls: ToolCallRecord[] = [];
@@ -191,7 +169,16 @@ async function consumeAgentStream(
       }
     })(),
   ]);
-  return { answer, reasoning };
+  return { answer, reasoning, toolCalls };
+}
+
+interface GenerateOptions {
+  /** 指定本轮使用的 chat 实例；快速模式传入关闭 thinking 的同模型实例。 */
+  model?: ChatOpenAI;
+  /** 指定系统提示词；快速模式使用 qa.systemFast。 */
+  systemPrompt?: string;
+  /** 指定 agent 接收的真实多轮消息；默认使用深度模式的历史回顾消息。 */
+  buildMessages?: (question: string) => BaseMessage[];
 }
 
 /** 图片 MIME → 扩展名（仅接受的三种图片类型） */
@@ -262,6 +249,7 @@ export function createRagService(
     history: ContextMessage[],
     handlers: GenerateHandlers,
     signal?: AbortSignal,
+    options: GenerateOptions = {},
   ): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[]; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
     const collector: { maxResults: number; docs: ChunkDocument[]; seen: Set<string> } = {
       maxResults: input.maxResults ?? settings.get().maxResults,
@@ -352,13 +340,14 @@ export function createRagService(
       imageUnderstanding = await imageService.understand(input.question, input.imageBase64);
     }
 
-    const systemPrompt = promptService.get(input.anonymous ? 'qa.systemGuest' : 'qa.system');
-    llm.chatModel.temperature = settings.get().llmChatTemperature;
+    const systemPrompt = options.systemPrompt ?? promptService.get(input.anonymous ? 'qa.systemGuest' : 'qa.system');
+    const chatModel = options.model ?? llm.chatModel;
+    chatModel.temperature = settings.get().llmChatTemperature;
 
     // 关闭知识库时不给工具：agent 直接回答
     const tools = input.useKnowledgeBase === false ? [] : [searchKnowledgeBase, readDocument];
     const agent = createAgent({
-      model: llm.chatModel,
+      model: chatModel,
       tools,
       systemPrompt,
       middleware: [
@@ -375,20 +364,22 @@ export function createRagService(
       question = `${question}\n\n${img}`;
     }
     const userContent = recap ? `历史对话回顾：\n${recap}\n\n问题：${question}` : question;
+    const messages = options.buildMessages ? options.buildMessages(question) : [{ role: 'user' as const, content: userContent }];
 
     const stream = await agent.streamEvents(
-      { messages: [{ role: 'user', content: userContent }] },
+      { messages },
       { version: 'v3', signal, recursionLimit: QA_AGENT_RECURSION_LIMIT },
     );
 
     let reasoning = '';
     let answer = '';
-    const toolCalls: ToolCallRecord[] = [];
+    let toolCalls: ToolCallRecord[] = [];
 
     try {
       const collected = await consumeAgentStream(stream, handlers);
       answer = collected.answer;
       reasoning = collected.reasoning;
+      toolCalls = collected.toolCalls;
     } catch (err) {
       if (
         !(err instanceof Error) ||
@@ -412,69 +403,89 @@ export function createRagService(
     };
   }
 
+  /** 将模型消息 content 统一转为正文文本，兼容 OpenAI 多模态 content 数组。 */
+  function messageContentToText(content: unknown): string {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (!part || typeof part !== 'object') return '';
+        const text = (part as { text?: unknown }).text;
+        return typeof text === 'string' ? text : '';
+      })
+      .join('');
+  }
+
+  /** 快速模式消息：保留真实多轮消息，不拼接改写结果或检索上下文。 */
+  function buildFastChatMessages(history: ContextMessage[], question: string, memoryWindow: number): BaseMessage[] {
+    return [
+      ...history.slice(-memoryWindow).map((message) =>
+        message.role === 'ASSISTANT'
+          ? new AIMessage(stripThink(message.content))
+          : new HumanMessage(message.content),
+      ),
+      new HumanMessage(question),
+    ];
+  }
+
   /**
-   * 快速模式生成核心：写死的固定管线，无工具调用——
-   * 问题改写 → 混合检索一次 → 片段塞入上下文 → 无工具 agent 单次直答。
-   * 复用无工具 agent 的流式投影（与 useKnowledgeBase=false 的深度链路同一消费路径）。
+   * 快速模式生成核心：直接与关闭 thinking 的 chat 模型对话，不做问题改写和前置检索。
+   * 知识库开启时把检索工具交给模型按需调用：模糊输入先澄清，意图确认后再检索。
    */
   async function generateFast(
     input: AskInput,
     history: ContextMessage[],
     handlers: GenerateHandlers,
     signal?: AbortSignal,
+    streaming = false,
   ): Promise<{ answer: string; reasoning: string; toolCalls: ToolCallRecord[]; sources: SourceReference[]; imageUnderstanding?: ImageUnderstandingResult }> {
-    let imageUnderstanding: ImageUnderstandingResult | undefined;
-    if (input.imageBase64) {
-      imageUnderstanding = await imageService.understand(input.question, input.imageBase64);
-    }
-
     const s = settings.get();
-    let question = input.question;
-    if (imageUnderstanding) {
-      const img = `【图片理解】\n摘要：${imageUnderstanding.imageSummary ?? ''}\nOCR：${imageUnderstanding.ocrText ?? ''}\n关键实体：${(imageUnderstanding.keyEntities ?? []).join('、')}\n针对问题：${imageUnderstanding.questionFocusedSummary ?? ''}`;
-      question = `${question}\n\n${img}`;
+    const chatModel = llm.chatModelWithoutThinking ?? llm.chatModel;
+
+    // 关闭知识库时保留真正的直连 chat 路径，不创建 agent，也不提供工具。
+    if (input.useKnowledgeBase === false) {
+      let imageUnderstanding: ImageUnderstandingResult | undefined;
+      if (input.imageBase64) {
+        imageUnderstanding = await imageService.understand(input.question, input.imageBase64);
+      }
+
+      chatModel.temperature = s.llmChatTemperature;
+      const systemPrompt = promptService.get('qa.systemFast');
+      let question = input.question;
+      if (imageUnderstanding) {
+        const img = `【图片理解】\n摘要：${imageUnderstanding.imageSummary ?? ''}\nOCR：${imageUnderstanding.ocrText ?? ''}\n关键实体：${(imageUnderstanding.keyEntities ?? []).join('、')}\n针对问题：${imageUnderstanding.questionFocusedSummary ?? ''}`;
+        question = `${question}\n\n${img}`;
+      }
+      const messages = [new SystemMessage(systemPrompt), ...buildFastChatMessages(history, question, s.memoryWindow)];
+
+      let answer = '';
+      if (streaming) {
+        const stream = await chatModel.stream(messages, { signal });
+        for await (const chunk of stream) {
+          const delta = messageContentToText(chunk.content);
+          if (!delta) continue;
+          answer += delta;
+          handlers.onDelta(delta);
+        }
+      } else {
+        const response = await chatModel.invoke(messages, { signal });
+        answer = messageContentToText(response.content);
+      }
+      return {
+        answer: stripThink(answer).trim(),
+        reasoning: '',
+        toolCalls: [],
+        sources: [],
+        imageUnderstanding,
+      };
     }
 
-    // 固定管线：改写 → 检索 → 打包上下文（关闭知识库时跳过，直接回答）
-    let contextBlock: string | undefined;
-    let fastDocs: ChunkDocument[] = [];
-    if (input.useKnowledgeBase !== false) {
-      const recapForRewrite = foldHistoryRecap(history, s.memoryWindow);
-      const searchQuery = await rewriteQuery(
-        llm.chatModel,
-        promptService.get('qa.rewrite'),
-        question,
-        recapForRewrite,
-      );
-      fastDocs = await retriever.retrieve(searchQuery, input.maxResults ?? s.maxResults);
-      handlers.onSources(toSourceReferences(fastDocs));
-      contextBlock = packContext(fastDocs, s.contextBudget).contextText ?? undefined;
-    }
-
-    llm.chatModel.temperature = s.llmChatTemperature;
-    const systemPrompt = promptService.get(input.anonymous ? 'qa.systemGuest' : 'qa.systemFast');
-    // 无工具：createAgent 退化为单次模型调用，流式消费与深度模式同一条代码路径
-    const agent = createAgent({ model: llm.chatModel, tools: [], systemPrompt });
-
-    const parts: string[] = [];
-    const recap = foldHistoryRecap(history, s.memoryWindow);
-    if (recap) parts.push(`历史对话回顾：\n${recap}`);
-    if (contextBlock) parts.push(`【知识库资料】\n${contextBlock}`);
-    parts.push(`问题：${question}`);
-
-    const stream = await agent.streamEvents(
-      { messages: [{ role: 'user', content: parts.join('\n\n') }] },
-      { version: 'v3', signal, recursionLimit: 8 },
-    );
-    const { answer, reasoning } = await consumeAgentStream(stream, handlers);
-
-    return {
-      answer: answer.trim(),
-      reasoning,
-      toolCalls: [],
-      sources: toSourceReferences(fastDocs),
-      imageUnderstanding,
-    };
+    return generate(input, history, handlers, signal, {
+      model: chatModel,
+      systemPrompt: promptService.get('qa.systemFast'),
+      buildMessages: (question) => buildFastChatMessages(history, question, s.memoryWindow),
+    });
   }
 
   /** 登录用户：持久化消息并执行生成 */
@@ -482,6 +493,7 @@ export function createRagService(
     input: AskInput,
     handlers: GenerateHandlers,
     signal?: AbortSignal,
+    streaming = false,
   ) {
     if (!input.userId) throw badRequest('缺少用户身份');
     await conversationService.ensure(input.conversationId, input.userId, input.question);
@@ -494,7 +506,7 @@ export function createRagService(
     try {
       const result =
         input.mode === 'fast'
-          ? await generateFast(input, history, handlers, signal)
+          ? await generateFast(input, history, handlers, signal, streaming)
           : await generate(input, history, handlers, signal);
       // 持久化 AI 回答、思考、工具轨迹与来源：content 供多轮历史回灌，其余仅展示
       await conversationService.markMessage(
@@ -523,7 +535,7 @@ export function createRagService(
         onToolCall: () => {},
         onToolResult: () => {},
         onSources: () => {},
-      });
+      }, undefined, false);
       return {
         answer: result.answer,
         reasoning: result.reasoning || undefined,
@@ -557,7 +569,7 @@ export function createRagService(
 
       handlers.onStart();
       try {
-        const result = await generatePersisted(input, handlers, controller.signal);
+        const result = await generatePersisted(input, handlers, controller.signal, true);
         handlers.onSources(result.sources);
         handlers.onComplete(false);
       } catch (err) {

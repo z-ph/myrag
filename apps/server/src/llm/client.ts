@@ -14,6 +14,8 @@ export interface VisionMessageInput {
 export interface LlmClient {
   /** 对话模型实例（供 createAgent 使用；temperature 在调用前由业务侧设置） */
   readonly chatModel: ChatOpenAI;
+  /** 与 chatModel 使用同一模型配置，但请求级关闭模型思考（快速问答使用） */
+  readonly chatModelWithoutThinking?: ChatOpenAI;
   /** 批量向量化 */
   embed(texts: string[]): Promise<number[][]>;
   /** 图片理解（视觉模型，自由文本；OCR 等场景） */
@@ -65,6 +67,11 @@ export function stripReasoning(text: string): string {
 
 const RERANK_SYSTEM =
   '你是一个相关性评分器。给定用户问题和若干文档片段，为每个片段打 0-10 的相关性分数（10=完全相关，0=无关）。只返回 JSON 数组，不要其他内容。';
+
+/** OpenAI 兼容网关识别的 chat template 参数：快速问答不生成思考内容。 */
+export const NO_THINKING_CHAT_TEMPLATE_KWARGS = {
+  chat_template_kwargs: { enable_thinking: false },
+} as const;
 
 /** 从模型输出提取 JSON 数组（兼容 markdown 代码块包裹、前后杂文） */
 function extractJsonArray(raw: string): unknown[] {
@@ -150,6 +157,12 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     parallelToolCalls: true,
   };
   const chatModel = new ChatOpenAI(chatFields);
+  // 不新增或切换“fast model”：仍使用 LLM_CHAT_MODEL，只为快速问答构造一个
+  // 同配置实例，并通过 modelKwargs 关闭 chat template 的 thinking。
+  const chatModelWithoutThinking = new ChatOpenAI({
+    ...chatFields,
+    modelKwargs: NO_THINKING_CHAT_TEMPLATE_KWARGS,
+  });
   // 独立实例：langchain 1.x 无 bind，且 invocationParams 读 this.temperature
   const rerankModel = new ChatOpenAI({ ...chatFields, temperature: 0 });
   const visionModel = new ChatOpenAI({
@@ -175,6 +188,7 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
 
   return {
     chatModel,
+    chatModelWithoutThinking,
 
     async embed(texts) {
       try {

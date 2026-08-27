@@ -91,6 +91,16 @@ describe('ChatPage assistant extras', () => {
     expect(screen.queryByText('追问')).toBeNull();
   });
 
+  it('快速模式生成中显示生成回答，不显示正在思考', () => {
+    useChatStore.setState({
+      messages: [assistant({ status: 'GENERATING', mode: 'fast', content: '' })],
+      isGenerating: true,
+    });
+    mount();
+    expect(screen.getByText('正在生成回答…')).toBeTruthy();
+    expect(screen.queryByText('正在思考…')).toBeNull();
+  });
+
   it('回答完成后出现复制，并在来源旁给出追问', () => {
     useChatStore.setState({
       messages: [

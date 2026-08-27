@@ -71,7 +71,9 @@ export function createPromptService(db: Db, redis: RedisStore): PromptService {
         const stale =
           current !== undefined &&
           current !== DEFAULT_PROMPTS[key] &&
-          (current.includes('标注资料来源文件名') || current.includes('cite_sources'));
+          (current.includes('标注资料来源文件名') ||
+            current.includes('cite_sources') ||
+            (key === 'qa.systemFast' && current.includes('本模式下系统已按固定流程完成检索')));
         if (stale) {
           await this.update(key, DEFAULT_PROMPTS[key], 'system');
         }
