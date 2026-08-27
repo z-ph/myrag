@@ -83,7 +83,7 @@ test.describe('智能问答', () => {
     await expect(page).toHaveURL(/\/chat\/new$/);
 
     await page.goto('/unknown-application-path');
-    await expect(page.getByText('页面不存在')).toBeVisible();
+    await expect(page.getByRole('heading', { name: '页面不存在' })).toBeVisible();
     await page.getByRole('button', { name: '返回首页' }).click();
     await expect(page).toHaveURL(/\/chat\/new$/);
   });
