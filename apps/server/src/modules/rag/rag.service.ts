@@ -158,16 +158,22 @@ async function consumeAgentStream(
   await Promise.all([
     (async () => {
       for await (const m of stream.messages) {
-        for await (const d of m.reasoning) {
-          reasoning += d;
-          handlers.onReasoningDelta(d);
-        }
-        for await (const d of m.text) {
-          if (d) {
-            answer += d;
-            handlers.onDelta(d);
-          }
-        }
+        await Promise.all([
+          (async () => {
+            for await (const d of m.reasoning) {
+              reasoning += d;
+              handlers.onReasoningDelta(d);
+            }
+          })(),
+          (async () => {
+            for await (const d of m.text) {
+              if (d) {
+                answer += d;
+                handlers.onDelta(d);
+              }
+            }
+          })(),
+        ]);
       }
     })(),
     (async () => {
