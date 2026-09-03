@@ -196,7 +196,7 @@ export function createDocumentService(
         vectorCount: doc.vectorCount ?? points.length,
         indexedPointCount: points.length,
         vectorCollectionName: cfg.qdrantCollection,
-        vectorSize: cfg.qdrantVectorSize,
+        vectorSize: (await qdrant.getVectorSize()) ?? cfg.qdrantVectorSize,
         points: chunks.map((c) => ({
           pointId: c.chunkHash ?? `${c.documentId}:${c.chunkIndex}`,
           chunkIndex: c.chunkIndex,

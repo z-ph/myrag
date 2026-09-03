@@ -46,8 +46,10 @@ export interface VectorSearchHit {
 }
 
 export interface QdrantStore {
-  /** 初始化集合（不存在则按配置维度创建） */
-  ensureCollection(): Promise<void>;
+  /** 初始化集合（不存在则按传入维度创建；维度不一致时删除重建） */
+  ensureCollection(vectorSize: number): Promise<void>;
+  /** 读取现有集合的向量维度；集合不存在或无法解析时返回 undefined */
+  getVectorSize(): Promise<number | undefined>;
   /** 批量写入向量点 */
   upsert(documentId: string, vectors: { id: string; vector: number[]; payload: ChunkPayload }[]): Promise<void>;
   /** 按文档删除全部向量点 */
@@ -65,23 +67,28 @@ export interface QdrantStore {
 export function createQdrantStore(cfg: ServerConfig): QdrantStore {
   const client = new QdrantClient({ host: cfg.qdrantHost, port: cfg.qdrantPort });
 
-  async function ensureCollection(): Promise<void> {
+  async function collectionVectorSize(): Promise<number | undefined> {
     const collections = await client.getCollections();
-    const exists = collections.collections.some((c) => c.name === cfg.qdrantCollection);
-    if (!exists) {
-      await createCollection(cfg.qdrantVectorSize);
-      return;
-    }
+    if (!collections.collections.some((c) => c.name === cfg.qdrantCollection)) return undefined;
     const info = await client.getCollection(cfg.qdrantCollection);
     const vectors = info.config?.params?.vectors;
     const dim =
       vectors !== null && typeof vectors === 'object' && !Array.isArray(vectors) && 'size' in vectors
         ? (vectors as { size: unknown }).size
         : undefined;
-    if (typeof dim === 'number' && dim !== cfg.qdrantVectorSize) {
-      logger.warn(`[qdrant] 集合 ${cfg.qdrantCollection} 维度 ${dim} 与配置 ${cfg.qdrantVectorSize} 不一致，删除重建`);
+    return typeof dim === 'number' ? dim : undefined;
+  }
+
+  async function ensureCollection(vectorSize: number): Promise<void> {
+    const dim = await collectionVectorSize();
+    if (dim === undefined) {
+      await createCollection(vectorSize);
+      return;
+    }
+    if (dim !== vectorSize) {
+      logger.warn(`[qdrant] 集合 ${cfg.qdrantCollection} 维度 ${dim} 与目标维度 ${vectorSize} 不一致，删除重建`);
       await client.deleteCollection(cfg.qdrantCollection);
-      await createCollection(cfg.qdrantVectorSize);
+      await createCollection(vectorSize);
     }
   }
 
@@ -97,8 +104,12 @@ export function createQdrantStore(cfg: ServerConfig): QdrantStore {
   }
 
   return {
-    async ensureCollection() {
-      await ensureCollection();
+    async ensureCollection(vectorSize: number) {
+      await ensureCollection(vectorSize);
+    },
+
+    async getVectorSize() {
+      return collectionVectorSize();
     },
 
     async upsert(documentId, vectors) {

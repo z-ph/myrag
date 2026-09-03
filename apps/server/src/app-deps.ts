@@ -147,13 +147,33 @@ export function createApp(cfg: ServerConfig): AppContainer {
     },
   };
 
+  /** 启动时确定向量维度：显式配置 > embedding 接口自动探测 > 现有集合维度 */
+  async function resolveVectorSize(): Promise<number> {
+    if (cfg.qdrantVectorSize > 0) return cfg.qdrantVectorSize;
+    try {
+      const [probe] = await llm.embed(['向量维度探测']);
+      if (probe?.length) {
+        logger.info(`[init] 已从 embedding 服务自动探测向量维度 dim=${probe.length}`);
+        return probe.length;
+      }
+    } catch (err) {
+      logger.warn(`[init] embedding 维度自动探测失败，回退到现有集合维度: ${err instanceof Error ? err.message : err}`);
+    }
+    const existing = await qdrant.getVectorSize();
+    if (existing) {
+      logger.warn(`[init] 使用现有集合维度 dim=${existing}（embedding 服务不可用，注意与模型输出维度是否一致）`);
+      return existing;
+    }
+    throw new Error('QDRANT_VECTOR_SIZE 未配置，且无法自动探测向量维度（embedding 服务不可用且无现存集合），请显式配置 QDRANT_VECTOR_SIZE');
+  }
+
   return {
     deps,
     async init() {
       await objectStorage.ensureReady();
       await mkdir(`${cfg.dataDir}/batch`, { recursive: true });
       await mkdir(`${cfg.dataDir}/chunks`, { recursive: true });
-      await qdrant.ensureCollection();
+      await qdrant.ensureCollection(await resolveVectorSize());
       await authService.bootstrapAdmin();
       await settingsService.init();
       await promptService.init();

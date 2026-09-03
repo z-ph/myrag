@@ -32,6 +32,7 @@ export interface ServerConfig {
   qdrantHost: string;
   qdrantPort: number;
   qdrantCollection: string;
+  /** 向量维度；0 表示启动时调用 embedding 服务自动探测 */
   qdrantVectorSize: number;
   qdrantCreateCollection: boolean;
 
@@ -229,7 +230,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     qdrantHost: env.QDRANT_HOST ?? 'localhost',
     qdrantPort: num('QDRANT_PORT', 6333),
     qdrantCollection: env.QDRANT_COLLECTION ?? 'knowledge-base',
-    qdrantVectorSize: num('QDRANT_VECTOR_SIZE', 2048),
+    qdrantVectorSize: num('QDRANT_VECTOR_SIZE', 0),
     qdrantCreateCollection: bool('QDRANT_CREATE_COLLECTION_IF_NOT_EXISTS', true),
     redisHost: env.REDIS_HOST ?? 'localhost',
     redisPort: num('REDIS_PORT', 6379),
@@ -310,7 +311,7 @@ export function assertServerConfig(cfg: ServerConfig): void {
   if (cfg.jwtSecret === 'dev-secret-change-me' && process.env.NODE_ENV === 'production') {
     throw new Error('生产环境必须配置 JWT_SECRET');
   }
-  if (!Number.isInteger(cfg.qdrantVectorSize) || cfg.qdrantVectorSize <= 0) {
-    throw new Error('QDRANT_VECTOR_SIZE 必须是正整数');
+  if (cfg.qdrantVectorSize !== 0 && (!Number.isInteger(cfg.qdrantVectorSize) || cfg.qdrantVectorSize <= 0)) {
+    throw new Error('QDRANT_VECTOR_SIZE 必须是正整数或 0（0 = 启动时自动探测 embedding 维度）');
   }
 }
