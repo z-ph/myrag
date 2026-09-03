@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Avatar, Button, Drawer, Empty, Image, Input, List, message, Modal, Popconfirm, Segmented, Spin, Switch, Tooltip } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { Button, Image, Input, message, Modal, Popconfirm, Segmented, Spin, Switch, Tooltip } from 'antd';
 import {
+  ArrowUpOutlined,
   BookOutlined,
   CheckOutlined,
   CopyOutlined,
@@ -10,17 +12,16 @@ import {
   FileTextOutlined,
   HistoryOutlined,
   LoadingOutlined,
+  MenuFoldOutlined,
   PlusOutlined,
-  RobotOutlined,
   SearchOutlined,
-  SendOutlined,
   StopOutlined,
   ToolOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 
 import { useQuery } from '@tanstack/react-query';
-import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
+import { useChatStore, type ChatMessage, type ConversationMeta, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
@@ -29,12 +30,46 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './chat.css';
 
-/** 会话时间戳：今天显示 HH:mm，更早显示 M/D */
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
+/**
+ * 历史会话分组（DeepSeek 侧栏式）：今天 / 7天内 / 30天内 / 按月。
+ * 传入前需按 updatedAt 降序，组内顺序保持不变。
+ */
+interface ConvGroup {
+  label: string;
+  items: ConversationMeta[];
+}
+
+function groupConversations(metas: ConversationMeta[]): ConvGroup[] {
   const now = new Date();
-  if (d.toDateString() === now.toDateString()) return d.toTimeString().slice(0, 5);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const day = 24 * 60 * 60 * 1000;
+  const today: ConversationMeta[] = [];
+  const week: ConversationMeta[] = [];
+  const month: ConversationMeta[] = [];
+  const older = new Map<string, ConversationMeta[]>();
+  for (const meta of metas) {
+    if (meta.updatedAt >= startOfToday) today.push(meta);
+    else if (meta.updatedAt >= startOfToday - 7 * day) week.push(meta);
+    else if (meta.updatedAt >= startOfToday - 30 * day) month.push(meta);
+    else {
+      const d = new Date(meta.updatedAt);
+      const label = `${d.getFullYear()}年${d.getMonth() + 1}月`;
+      const bucket = older.get(label);
+      if (bucket) bucket.push(meta);
+      else older.set(label, [meta]);
+    }
+  }
+  const groups: ConvGroup[] = [];
+  if (today.length) groups.push({ label: '今天', items: today });
+  if (week.length) groups.push({ label: '7天内', items: week });
+  if (month.length) groups.push({ label: '30天内', items: month });
+  for (const [label, items] of older) groups.push({ label, items });
+  return groups;
+}
+
+/** 窄屏判定：移动端侧栏以浮层形式打开 */
+function isNarrowViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 }
 
 /**
@@ -72,8 +107,8 @@ function Hero({ onPick, suggestions }: { onPick: (q: string) => void; suggestion
   return (
     <div className="hero">
       <span className="seal seal-lg">财</span>
-      <h1 className="hero-title">问制度，找依据</h1>
-      <p className="hero-sub">从财务处知识库检索制度、流程与标准，回答附来源依据。</p>
+      <h1 className="hero-title">有什么能帮你的吗？</h1>
+      <p className="hero-sub">问制度，找依据 —— 从财务处知识库检索制度、流程与标准，回答附来源依据。</p>
       <div className="hero-chips">
         {suggestions.map((s) => (
           <button key={s} type="button" className="hero-chip" onClick={() => onPick(s)}>
@@ -172,8 +207,27 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
 
 function ReasoningBlock({ reasoning, generating }: { reasoning: string; generating: boolean }) {
   const [open, setOpen] = useState(false);
-  if (!reasoning.trim()) return null;
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const wasLiveRef = useRef(false);
   const live = generating && reasoning.trim().length > 0;
+
+  // DSH 风格：思考中自动展开流式显示，结束后自动收起（渲染期同步派生状态）
+  if (live && !wasLiveRef.current) {
+    wasLiveRef.current = true;
+    setOpen(true);
+  } else if (!live && wasLiveRef.current) {
+    wasLiveRef.current = false;
+    setOpen(false);
+  }
+
+  // 流式输出时自动滚动到底部，保持最新内容可见
+  useEffect(() => {
+    if (open && live && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }
+  }, [reasoning, open, live]);
+
+  if (!reasoning.trim()) return null;
   return (
     <div className={`think-row${live ? ' is-live' : ''}`}>
       <button type="button" className="think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -182,7 +236,11 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
         {!open && <span className="think-preview">{reasoning.replace(/\s+/g, ' ').slice(0, 70)}</span>}
         <span className="think-chevron">{open ? '▾' : '▸'}</span>
       </button>
-      {open && <div className="think-body">{reasoning}</div>}
+      {open && (
+        <div className={`think-body${live ? ' is-live' : ''}`} ref={bodyRef}>
+          <span className="think-text">{reasoning}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -451,7 +509,6 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
   const finished = msg.status !== 'GENERATING';
   return (
     <div className="msg-row msg-assistant">
-      <Avatar icon={<RobotOutlined />} className="msg-avatar" />
       <div className="msg-body">
         <AgentFlow msg={msg} devMode={devMode} />
         {/* 来源与复制、追问同时出现：只在回答完成后展示 */}
@@ -480,16 +537,19 @@ export default function ChatPage() {
     setMode,
   } = useChatStore();
 
+  const user = useAuthStore((s) => s.user);
+  const authLoading = useAuthStore((s) => s.loading);
+  const navigate = useNavigate();
+
   const [input, setInput] = useState('');
   const [devMode, setDevMode] = useState(false);
   const [docRef, setDocRef] = useState<{ documentId: string; filename: string } | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [previewSource, setPreviewSource] = useState<SourceReference | null>(null);
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const authLoading = useAuthStore((s) => s.loading);
   const { data: suggestionData } = useQuery({ queryKey: ['suggestions'], queryFn: () => settingsApi.getSuggestions() });
   const suggestions = suggestionData?.questions?.length ? suggestionData.questions : DEFAULT_SUGGESTIONS;
 
@@ -502,6 +562,11 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading]);
 
+  // 移动端默认收起侧栏，通过「历史会话」按钮以浮层打开
+  useEffect(() => {
+    if (isNarrowViewport()) setSidebarOpen(false);
+  }, []);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -510,6 +575,7 @@ export default function ChatPage() {
     () => [...historyMetas].sort((a, b) => b.updatedAt - a.updatedAt),
     [historyMetas],
   );
+  const convGroups = useMemo(() => groupConversations(sortedMetas), [sortedMetas]);
 
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
@@ -527,7 +593,6 @@ export default function ChatPage() {
 
   const handleNewConversation = () => {
     startNewConversation();
-    setDrawerOpen(false);
     setInput('');
     setDocRef(null);
     setImage(null);
@@ -544,159 +609,192 @@ export default function ChatPage() {
     setImagePreview(URL.createObjectURL(file));
   };
 
+  const pickConversation = (id: string) => {
+    void loadConversation(id);
+    if (isNarrowViewport()) setSidebarOpen(false);
+  };
+
   return (
-    <div className="chat">
-      <Drawer
-        title={
-          <div className="drawer-head">
-            <span>历史会话</span>
-            <Tooltip title="新会话">
-              <Button type="text" shape="circle" icon={<PlusOutlined />} onClick={handleNewConversation} />
-            </Tooltip>
-          </div>
-        }
-        placement="left"
-        size={320}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        className="conv-drawer"
-      >
-        <List
-          size="small"
-          dataSource={sortedMetas}
-          locale={{ emptyText: <Empty description="暂无会话" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-          renderItem={(meta) => (
-            <List.Item
-              onClick={() => {
-                void loadConversation(meta.id);
-                setDrawerOpen(false);
-              }}
-              className={`conv-item ${meta.id === conversationId ? 'conv-active' : ''}`}
-              actions={[
-                <Popconfirm
-                  key="del"
-                  title="删除该会话？"
-                  getPopupContainer={(trigger) => trigger.closest('.ant-drawer-body') ?? document.body}
-                  onConfirm={(e) => {
-                    e?.stopPropagation();
-                    void deleteConversation(meta.id);
-                  }}
-                >
-                  <Tooltip title="删除会话">
-                    <Button type="text" size="small" className="conv-del" icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-                  </Tooltip>
-                </Popconfirm>,
-              ]}
-            >
-              <div className="conv-main">
-                <div className="conv-title">{meta.title}</div>
-                <div className="conv-time">{fmtTime(meta.updatedAt)}</div>
-              </div>
-            </List.Item>
-          )}
-        />
-      </Drawer>
-
-      <div className="chat-scroll">
-        {isLoadingHistory ? (
-          <Spin style={{ display: 'block', margin: '80px auto' }} />
-        ) : messages.length === 0 ? (
-          <Hero onPick={(q) => handleSend(q)} suggestions={suggestions} />
-        ) : (
-          <div className="chat-messages">
-            {messages.map((m) => (
-              <MessageItem key={m.id} msg={m} onAsk={handleSend} onPreview={setPreviewSource} devMode={devMode} />
-            ))}
-            <div ref={endRef} />
-          </div>
-        )}
-      </div>
-
-      <div className="composer">
-        {docRef && (
-          <div className="chat-doc-ref">
-            <FileTextOutlined />
-            <span className="chat-doc-ref-name" title={docRef.filename}>
-              引用 {docRef.filename}
-            </span>
-            <Button size="small" type="text" onClick={() => setDocRef(null)}>
-              移除
-            </Button>
-          </div>
-        )}
-        {IMAGE_UPLOAD_ENABLED && imagePreview && (
-          <div className="chat-image-preview">
-            <img src={imagePreview} alt="预览" />
-            <Button size="small" type="text" danger onClick={() => { setImage(null); setImagePreview(null); }}>
-              移除
-            </Button>
-          </div>
-        )}
-        <div className="composer-box">
-          <Tooltip title="新会话">
-            <Button type="text" className="composer-icon" icon={<PlusOutlined />} onClick={handleNewConversation} disabled={isGenerating} />
-          </Tooltip>
-          <Tooltip title="历史会话">
-            <Button type="text" className="composer-icon" icon={<HistoryOutlined />} onClick={() => setDrawerOpen(true)} />
-          </Tooltip>
-          {IMAGE_UPLOAD_ENABLED && (
-            <>
-              <Tooltip title="发送图片">
-                <Button type="text" className="composer-icon" icon={<FileImageOutlined />} onClick={() => fileRef.current?.click()} disabled={isGenerating} />
-              </Tooltip>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/jpeg,image/png,image/bmp"
-                style={{ display: 'none' }}
-                onChange={(e) => handlePickImage(e.target.files?.[0])}
-              />
-            </>
-          )}
-          <Input.TextArea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-            autoSize={{ minRows: 1, maxRows: 4 }}
-            className="composer-input"
-            onPressEnter={(e) => {
-              if (!e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            disabled={isGenerating}
-          />
-          {isGenerating ? (
-            <Button type="primary" danger icon={<StopOutlined />} onClick={stopGeneration}>
-              停止
-            </Button>
+    <div className={`chat${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
+      <aside className="chat-sidebar" aria-label="历史会话">
+        <div className="sidebar-head">
+          <span className="seal sidebar-seal" aria-hidden="true">财</span>
+          <span className="sidebar-brand">财务处知识库</span>
+          <button type="button" className="sidebar-fold" aria-label="收起会话栏" onClick={() => setSidebarOpen(false)}>
+            <MenuFoldOutlined />
+          </button>
+        </div>
+        <div className="sidebar-body">
+          <button type="button" className="sidebar-new" onClick={handleNewConversation}>
+            <PlusOutlined />
+            <span>开启新对话</span>
+          </button>
+          {convGroups.length === 0 ? (
+            <div className="sidebar-empty">暂无会话</div>
           ) : (
-            <Button type="primary" className="composer-send" icon={<SendOutlined />} onClick={() => handleSend()} disabled={!input.trim() && !image}>
-              发送
-            </Button>
+            convGroups.map((group) => (
+              <div key={group.label} className="sidebar-group">
+                <div className="sidebar-group-label">{group.label}</div>
+                {group.items.map((meta) => (
+                  <div
+                    key={meta.id}
+                    role="button"
+                    tabIndex={0}
+                    className={`sidebar-item${meta.id === conversationId ? ' active' : ''}`}
+                    onClick={() => pickConversation(meta.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        pickConversation(meta.id);
+                      }
+                    }}
+                  >
+                    <span className="sidebar-item-title" title={meta.title}>{meta.title}</span>
+                    <Popconfirm
+                      title="删除该会话？"
+                      getPopupContainer={(trigger) => trigger.closest('.chat-sidebar') ?? document.body}
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        void deleteConversation(meta.id);
+                      }}
+                    >
+                      <button type="button" className="sidebar-item-del" aria-label="删除会话" onClick={(e) => e.stopPropagation()}>
+                        <DeleteOutlined />
+                      </button>
+                    </Popconfirm>
+                  </div>
+                ))}
+              </div>
+            ))
           )}
         </div>
-        <div className="composer-tip">
-          <span>回答基于知识库检索，可点击来源查看引用片段</span>
-          <span className="composer-dev">
-            <Segmented
-              size="small"
-              value={mode}
-              aria-label="问答模式"
-              onChange={(v) => setMode(v as import('@myrag/shared').QaMode)}
-              options={[
-                { label: '深度检索', value: 'deep' },
-                { label: '快速回答', value: 'fast' },
-              ]}
-            />
-            {DEV_MODE_ENABLED && (
-              <>
-                {'开发者模式'}
-                <Switch size="small" checked={devMode} onChange={setDevMode} />
-              </>
+        <div className="sidebar-foot">
+          <button type="button" className="sidebar-user" onClick={() => navigate('/my')}>
+            <span className="sidebar-user-avatar" aria-hidden="true"><UserOutlined /></span>
+            <span className="sidebar-user-name">{user ? user.displayName : '访客'}</span>
+            <span className="sidebar-user-more" aria-hidden="true">···</span>
+          </button>
+        </div>
+      </aside>
+      {sidebarOpen && (
+        <button type="button" className="chat-backdrop" aria-label="关闭会话栏" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      <div className="chat-main">
+        {!sidebarOpen && (
+          <button type="button" className="chat-sidebar-fab" onClick={() => setSidebarOpen(true)}>
+            <HistoryOutlined />
+            <span>历史会话</span>
+          </button>
+        )}
+        <div className="chat-scroll">
+          {isLoadingHistory ? (
+            <Spin style={{ display: 'block', margin: '80px auto' }} />
+          ) : messages.length === 0 ? (
+            <Hero onPick={(q) => handleSend(q)} suggestions={suggestions} />
+          ) : (
+            <div className="chat-messages">
+              {messages.map((m) => (
+                <MessageItem key={m.id} msg={m} onAsk={handleSend} onPreview={setPreviewSource} devMode={devMode} />
+              ))}
+              <div ref={endRef} />
+            </div>
+          )}
+        </div>
+
+        <div className="composer">
+          <div className="composer-wrap">
+            <div className="chat-mode-row">
+              <Segmented
+                className="chat-mode-seg"
+                value={mode}
+                aria-label="问答模式"
+                onChange={(v) => setMode(v as import('@myrag/shared').QaMode)}
+                options={[
+                  { label: '快速回答', value: 'fast' },
+                  { label: '深度检索', value: 'deep' },
+                ]}
+              />
+            </div>
+            {docRef && (
+              <div className="chat-doc-ref">
+                <FileTextOutlined />
+                <span className="chat-doc-ref-name" title={docRef.filename}>
+                  引用 {docRef.filename}
+                </span>
+                <Button size="small" type="text" onClick={() => setDocRef(null)}>
+                  移除
+                </Button>
+              </div>
             )}
-          </span>
+            {IMAGE_UPLOAD_ENABLED && imagePreview && (
+              <div className="chat-image-preview">
+                <img src={imagePreview} alt="预览" />
+                <Button size="small" type="text" danger onClick={() => { setImage(null); setImagePreview(null); }}>
+                  移除
+                </Button>
+              </div>
+            )}
+            <div className="composer-box">
+              <Input.TextArea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="给财务知识库发送消息，Enter 发送 / Shift+Enter 换行"
+                autoSize={{ minRows: 1, maxRows: 4 }}
+                className="composer-input"
+                onPressEnter={(e) => {
+                  if (!e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                disabled={isGenerating}
+              />
+              <div className="composer-foot">
+                <div className="composer-foot-left">
+                  <Tooltip title="新对话">
+                    <Button type="text" className="composer-icon" icon={<PlusOutlined />} onClick={handleNewConversation} disabled={isGenerating} />
+                  </Tooltip>
+                </div>
+                <div className="composer-foot-right">
+                  {IMAGE_UPLOAD_ENABLED && (
+                    <>
+                      <Tooltip title="发送图片">
+                        <button type="button" className="composer-attach" onClick={() => fileRef.current?.click()} disabled={isGenerating} aria-label="发送图片">
+                          <FileImageOutlined />
+                        </button>
+                      </Tooltip>
+                      <input
+                        ref={fileRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/bmp"
+                        style={{ display: 'none' }}
+                        onChange={(e) => handlePickImage(e.target.files?.[0])}
+                      />
+                    </>
+                  )}
+                  {isGenerating ? (
+                    <button type="button" className="composer-send is-stop" aria-label="停止生成" onClick={stopGeneration}>
+                      <StopOutlined />
+                    </button>
+                  ) : (
+                    <button type="button" className="composer-send" aria-label="发送" onClick={() => handleSend()} disabled={!input.trim() && !image}>
+                      <ArrowUpOutlined />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="composer-tip">
+              <span>回答基于知识库检索，可点击来源查看引用片段</span>
+              {DEV_MODE_ENABLED && (
+                <span className="composer-dev">
+                  {'开发者模式'}
+                  <Switch size="small" checked={devMode} onChange={setDevMode} />
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
