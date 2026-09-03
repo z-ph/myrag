@@ -31,7 +31,7 @@ WORKDIR /app
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
  && apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      libreoffice-calc-nogui libreoffice-impress-nogui \
+      libreoffice-calc-nogui libreoffice-impress-nogui libreoffice-writer-nogui \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 ENV NODE_ENV=production
 

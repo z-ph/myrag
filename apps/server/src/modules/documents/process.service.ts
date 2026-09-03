@@ -8,6 +8,7 @@ import { batchTasks, documents, documentChunks, taskSets, type DocumentRow } fro
 import type { LlmClient } from '../../llm/client';
 import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
+import type { GraphStore, SparseStore } from '../rag/retrieval.service';
 import { chunkText, extractDocumentTime, extractKeywords } from '../../pipeline/chunker';
 import { parseDocument, ParseError } from '../../pipeline/parsers';
 import { genId, sha256, logger } from '../../lib/util';
@@ -58,6 +59,7 @@ export function detectFileType(filename: string): FileType | null {
   if (['.doc', '.docx'].includes(ext)) return 'DOCUMENT';
   if (['.ppt', '.pptx'].includes(ext)) return 'PRESENTATION';
   if (['.xls', '.xlsx'].includes(ext)) return 'EXCEL';
+  if (['.html', '.htm'].includes(ext)) return 'HTML';
   if (['.jpg', '.jpeg', '.png', '.bmp'].includes(ext)) return 'IMAGE';
   return null;
 }
@@ -81,6 +83,8 @@ export function createProcessService(
   cfg: ServerConfig,
   settings: SettingsService,
   enqueueRebuild: EnqueueRebuild,
+  sparse?: SparseStore,
+  graph?: GraphStore,
 ): ProcessService {
 
   /** write 阶段分批大小：按此批量 upsert 向量点 + 写快照，逐批报真实进度 */
@@ -98,8 +102,12 @@ export function createProcessService(
     const report = createProgressTracker((event) => onProgress?.(event));
 
     // 1. 解析：扫描件 OCR 按「已完成页 / 总页数」推进；非 OCR 一次完成
-    const { text, ocrModel, ocrDurationMs } = await parseDocument(fileType, buffer, llm, (done, total) =>
-      report('parse', done / Math.max(total, 1), done, total),
+    const { text, ocrModel, ocrDurationMs } = await parseDocument(
+      fileType,
+      buffer,
+      llm,
+      (done, total) => report('parse', done / Math.max(total, 1), done, total),
+      originalFilename,
     );
     const cleanText = text.replace(/\u0000/g, '').trim();
     if (!cleanText) {
@@ -167,6 +175,11 @@ export function createProcessService(
       written += batchChunks.length;
       await report('write', written / chunks.length, written, chunks.length);
     }
+
+    // 与向量快照同批次完成后写入独立稀疏索引和知识图谱；两者都支持未启用时安全跳过。
+    const indexChunks = chunks.map((chunk) => ({ chunkIndex: chunk.index, text: chunk.text }));
+    await sparse?.upsertDocument?.(documentId, indexChunks);
+    await graph?.upsertDocument?.(documentId, originalFilename, indexChunks);
 
     // 5. 更新文档元数据（OCR 信息，仅 OCR 场景）
     if (ocrModel || ocrDurationMs !== undefined) {
@@ -328,6 +341,8 @@ export function createProcessService(
       }
       // 清除旧向量与快照，重新处理
       await qdrant.deleteByDocument(documentId);
+      await sparse?.deleteDocument?.(documentId);
+      await graph?.deleteDocument?.(documentId);
       await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
       return processDocumentRow(doc, onProgress);
     },
@@ -389,6 +404,8 @@ function detectContentType(filename: string): string {
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     '.xls': 'application/vnd.ms-excel',
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.html': 'text/html',
+    '.htm': 'text/html',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.png': 'image/png',

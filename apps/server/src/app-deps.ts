@@ -8,6 +8,8 @@ import type { ObjectStorage } from './store/object-storage';
 import { createObjectStorage } from './store/object-storage';
 import type { QdrantStore } from './vector/qdrant';
 import { createQdrantStore } from './vector/qdrant';
+import { createPostgresSparseStore } from './sparse/postgres';
+import { createNeo4jGraphStore } from './graph/neo4j';
 import type { LlmClient } from './llm/client';
 import { createLlmClient } from './llm/client';
 import type { AuthContext } from './middleware/auth';
@@ -74,6 +76,8 @@ export function createApp(cfg: ServerConfig): AppContainer {
   const handle: DbHandle = createDb(cfg);
   const redis = createRedisStore(cfg);
   const qdrant = createQdrantStore(cfg);
+  const sparse = createPostgresSparseStore(handle.db, { k1: cfg.bm25K1, b: cfg.bm25B });
+  const graph = createNeo4jGraphStore(cfg);
   const settingsService = createSettingsService(handle.db, redis);
   const promptService = createPromptService(handle.db, redis);
   const llm = createLlmClient(cfg, settingsService);
@@ -90,13 +94,15 @@ export function createApp(cfg: ServerConfig): AppContainer {
     cfg,
     settingsService,
     (taskId, documentIds) => batchService.enqueueRebuild(taskId, documentIds),
+    sparse,
+    graph,
   );
-  const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg);
+  const documentService = createDocumentService(handle.db, qdrant, objectStorage, cfg, sparse, graph);
   batchService = createBatchService(handle.db, processService, cfg);
   const chunkedService = createChunkedService(handle.db, batchService, processService, cfg.dataDir);
   const conversationService = createConversationService(handle.db, cfg, objectStorage);
   const cleanupService = createCleanupService(conversationService, settingsService, cfg);
-  const retriever = createRagRetriever({ db: handle.db, qdrant, llm, settings: settingsService });
+  const retriever = createRagRetriever({ db: handle.db, qdrant, sparse, graph, llm, settings: settingsService });
   const imageService = createImageService(llm, promptService);
   const ragService = createRagService(
     llm,

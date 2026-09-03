@@ -64,6 +64,9 @@ export interface ServerConfig {
   /** 向量维度（0 = 不传，使用模型默认维度；text-embedding-v3/v4 支持指定） */
   llmEmbeddingDimensions: number;
   llmOcrModel: string;
+  /** OCR 专用端点，为空时使用 llmBaseUrl / llmApiKey */
+  llmOcrBaseUrl: string;
+  llmOcrApiKey: string;
   llmTimeoutMs: number;
   /** 对话生成温度 */
   llmChatTemperature: number;
@@ -75,6 +78,18 @@ export interface ServerConfig {
   /** vision/OCR 专用端点，为空时使用 llmBaseUrl / llmApiKey */
   llmVisionBaseUrl: string;
   llmVisionApiKey: string;
+
+  // 本地交叉编码器重排服务（vLLM /rerank）
+  rerankBaseUrl: string;
+  rerankApiKey: string;
+  rerankModel: string;
+
+  // 知识图谱（Neo4j HTTP API）
+  neo4jEnabled: boolean;
+  neo4jUri: string;
+  neo4jUser: string;
+  neo4jPassword: string;
+  neo4jDatabase: string;
 
   // 认证
   jwtSecret: string;
@@ -154,6 +169,8 @@ const ServerConfigSchema = z.object({
   llmEmbeddingBaseUrl: z.string(),
   llmEmbeddingApiKey: z.string(),
   llmOcrModel: z.string(),
+  llmOcrBaseUrl: z.string(),
+  llmOcrApiKey: z.string(),
   llmTimeoutMs: z.number(),
   llmChatTemperature: z.number(),
   llmVisionTemperature: z.number(),
@@ -161,6 +178,14 @@ const ServerConfigSchema = z.object({
   llmVisionModel: z.string(),
   llmVisionBaseUrl: z.string(),
   llmVisionApiKey: z.string(),
+  rerankBaseUrl: z.string(),
+  rerankApiKey: z.string(),
+  rerankModel: z.string(),
+  neo4jEnabled: z.boolean(),
+  neo4jUri: z.string(),
+  neo4jUser: z.string(),
+  neo4jPassword: z.string(),
+  neo4jDatabase: z.string(),
   jwtSecret: z.string(),
   jwtTtlSeconds: z.number(),
   adminUsername: z.string(),
@@ -225,12 +250,22 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     llmEmbeddingBaseUrl: env.LLM_EMBEDDING_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
     llmEmbeddingApiKey: env.LLM_EMBEDDING_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmOcrModel: env.LLM_OCR_MODEL ?? env.OPENAI_OCR_MODEL??'',
+    llmOcrBaseUrl: env.LLM_OCR_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
+    llmOcrApiKey: env.LLM_OCR_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
     llmChatTemperature: num('LLM_CHAT_TEMPERATURE', DEFAULTS.llmChatTemperature),
     llmVisionTemperature: num('LLM_VISION_TEMPERATURE', DEFAULTS.llmVisionTemperature),
     embedBatchSize: num('EMBED_BATCH_SIZE', DEFAULTS.embedBatchSize),
     llmVisionModel: env.LLM_VISION_MODEL ?? env.OPENAI_VISION_MODEL??'',
     llmVisionBaseUrl: env.LLM_VISION_BASE_URL ?? env.LLM_BASE_URL ?? env.OPENAI_BASE_URL ?? '',
     llmVisionApiKey: env.LLM_VISION_API_KEY ?? env.LLM_API_KEY ?? env.OPENAI_API_KEY ?? '',
+    rerankBaseUrl: env.RERANK_BASE_URL ?? 'http://localhost:8003',
+    rerankApiKey: env.RERANK_API_KEY ?? '',
+    rerankModel: env.RERANK_MODEL ?? 'bge-reranker-v2-m3',
+    neo4jEnabled: ['1', 'true', 'yes', 'on'].includes((env.NEO4J_ENABLED ?? '').toLowerCase()),
+    neo4jUri: env.NEO4J_URI ?? 'http://localhost:7474',
+    neo4jUser: env.NEO4J_USER ?? 'neo4j',
+    neo4jPassword: env.NEO4J_PASSWORD ?? '',
+    neo4jDatabase: env.NEO4J_DATABASE ?? 'neo4j',
     llmTimeoutMs: num('LLM_TIMEOUT_MS', 120_000),
     jwtSecret: env.JWT_SECRET ?? 'dev-secret-change-me',
     jwtTtlSeconds: num('JWT_TTL_SECONDS', DEFAULTS.jwtTtlSeconds),

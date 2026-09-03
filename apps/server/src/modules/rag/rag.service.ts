@@ -29,6 +29,7 @@ import { chunkKey, packContext, toSourceReferences, type ChunkDocument } from '.
 import { foldHistoryRecap } from './prompts';
 import type { PromptService } from '../prompts/prompt.service';
 import type { DocumentService } from '../documents/document.service';
+import { SensitiveTextStream, sanitizeSensitiveText } from '../../lib/redaction';
 
 export interface AskInput {
   question: string;
@@ -133,6 +134,7 @@ async function consumeAgentStream(
   let reasoning = '';
   let answer = '';
   const toolCalls: ToolCallRecord[] = [];
+  const answerRedactor = new SensitiveTextStream();
   await Promise.all([
     (async () => {
       for await (const m of stream.messages) {
@@ -146,8 +148,11 @@ async function consumeAgentStream(
           (async () => {
             for await (const d of m.text) {
               if (d) {
-                answer += d;
-                handlers.onDelta(d);
+                const safe = answerRedactor.push(d);
+                if (safe) {
+                  answer += safe;
+                  handlers.onDelta(safe);
+                }
               }
             }
           })(),
@@ -169,6 +174,11 @@ async function consumeAgentStream(
       }
     })(),
   ]);
+  const tail = answerRedactor.finish();
+  if (tail) {
+    answer += tail;
+    handlers.onDelta(tail);
+  }
   return { answer, reasoning, toolCalls };
 }
 
@@ -311,6 +321,7 @@ export function createRagService(
                     sourceType: 'TEXT',
                     vectorScore: 0,
                     bm25Score: 0,
+                    graphScore: 0,
                     score: 0,
                   },
                 }),
@@ -462,15 +473,24 @@ export function createRagService(
       let answer = '';
       if (streaming) {
         const stream = await chatModel.stream(messages, { signal });
+        const answerRedactor = new SensitiveTextStream();
         for await (const chunk of stream) {
           const delta = messageContentToText(chunk.content);
           if (!delta) continue;
-          answer += delta;
-          handlers.onDelta(delta);
+          const safe = answerRedactor.push(delta);
+          if (safe) {
+            answer += safe;
+            handlers.onDelta(safe);
+          }
+        }
+        const tail = answerRedactor.finish();
+        if (tail) {
+          answer += tail;
+          handlers.onDelta(tail);
         }
       } else {
         const response = await chatModel.invoke(messages, { signal });
-        answer = messageContentToText(response.content);
+        answer = sanitizeSensitiveText(messageContentToText(response.content));
       }
       return {
         answer: stripThink(answer).trim(),

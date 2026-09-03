@@ -33,7 +33,9 @@ SSE 事件：`start` / `reasoning` / `tool_call` / `tool_result` / `delta` / `so
 | 分块 | Text splitter | 中文标题感知 `chunkText`（制度文档域定制） |
 | 向量化 | `OpenAIEmbeddings` | `llm/client.ts`（`stripNewLines: false`，`encodingFormat: 'float'`） |
 | 向量库 | 未用官方 VectorStore | 自研 `QdrantStore` + PostgreSQL 快照 hydrate |
-| 检索 | `BaseRetriever` | `RagRetriever.retrieve`：向量召回 → BM25 混合 → 相关度过滤 → Jaccard 去重 → MMR |
+| 稀疏索引 | 自研 PostgreSQL 倒排表 | `sparse_chunk_docs` + `sparse_chunk_terms`，独立执行 BM25 召回 |
+| 知识图谱 | Neo4j HTTP API | `Chunk`、`Entity` 和 `CONSTRAINT` 关系；按实体匹配召回图谱事实 |
+| 检索 | `BaseRetriever` | `RagRetriever.retrieve`：向量、稀疏、图谱三路召回 → 加权融合 → vLLM cross-encoder 重排 → 相关度过滤 → Jaccard 去重 → MMR |
 | 生成 | `ChatOpenAI` | `streamEvents` 消费思考与正文；思考不回灌 |
 | 图片理解 | `withStructuredOutput` | `image.service.ts`：失败回退 `visionChat` + 本地 JSON 解析 |
 

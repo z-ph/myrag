@@ -5,6 +5,7 @@ export const ALLOWED_EXTENSIONS = [
   '.doc', '.docx',
   '.ppt', '.pptx',
   '.xls', '.xlsx',
+  '.html', '.htm',
   '.jpg', '.jpeg', '.png', '.bmp',
 ] as const;
 
@@ -15,5 +16,6 @@ export const EXTENSION_TO_TYPE: Record<string, string> = {
   '.doc': 'DOCUMENT', '.docx': 'DOCUMENT',
   '.ppt': 'PRESENTATION', '.pptx': 'PRESENTATION',
   '.xls': 'EXCEL', '.xlsx': 'EXCEL',
+  '.html': 'HTML', '.htm': 'HTML',
   '.jpg': 'IMAGE', '.jpeg': 'IMAGE', '.png': 'IMAGE', '.bmp': 'IMAGE',
 };

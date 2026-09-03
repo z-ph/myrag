@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { isOleBuffer, ParseError } from '../src/pipeline/parsers';
-import { convertViaLibreOffice, hasLibreOffice } from '../src/pipeline/libreoffice';
+import { convertToPdf, convertViaLibreOffice, hasLibreOffice } from '../src/pipeline/libreoffice';
 
 /** OLE 复合文档魔数（.doc/.ppt/.xls 文件头均为 D0 CF 11 E0） */
 const OLE_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, ...Array(16).fill(0)]);
@@ -39,4 +39,12 @@ describe('convertViaLibreOffice', () => {
     if (sofficeAvailable) return; // 有 soffice 的环境本用例退化为冒烟
     await expect(convertViaLibreOffice(OLE_MAGIC, '.xls', '.xlsx')).rejects.toThrow(ParseError);
   });
+
+  it.skipIf(!sofficeAvailable)('真实转换 HTML → PDF 并返回 PDF 文件', async () => {
+    const pdf = await convertToPdf(
+      Buffer.from('<!doctype html><html><body><h1>科研经费</h1><p>原始正文</p></body></html>'),
+      '.html',
+    );
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+  }, 30_000);
 });

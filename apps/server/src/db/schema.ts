@@ -294,6 +294,39 @@ export const documentChunksRelations = relations(documentChunks, ({ one }) => ({
   document: one(documents, { fields: [documentChunks.documentId], references: [documents.documentId] }),
 }));
 
+// ---------- 持久化 BM25 稀疏索引 ----------
+/** 每个文档分块的长度，供 BM25 长度归一化使用。 */
+export const sparseChunkDocs = pgTable(
+  'sparse_chunk_docs',
+  {
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+    documentId: varchar('document_id', { length: 64 }).notNull(),
+    chunkIndex: integer('chunk_index').notNull(),
+    documentLength: integer('document_length').notNull(),
+  },
+  (t) => [
+    uniqueIndex('uq_sparse_chunk_docs_doc_chunk').on(t.documentId, t.chunkIndex),
+    index('idx_sparse_chunk_docs_document_id').on(t.documentId),
+  ],
+);
+
+/** 倒排表：一个分词项在一个分块中的词频。 */
+export const sparseChunkTerms = pgTable(
+  'sparse_chunk_terms',
+  {
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+    documentId: varchar('document_id', { length: 64 }).notNull(),
+    chunkIndex: integer('chunk_index').notNull(),
+    term: varchar('term', { length: 255 }).notNull(),
+    termFrequency: integer('term_frequency').notNull(),
+  },
+  (t) => [
+    uniqueIndex('uq_sparse_chunk_terms_doc_chunk_term').on(t.documentId, t.chunkIndex, t.term),
+    index('idx_sparse_chunk_terms_term').on(t.term),
+    index('idx_sparse_chunk_terms_document_id').on(t.documentId),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type NewUserRow = typeof users.$inferInsert;
 export type DocumentRow = typeof documents.$inferSelect;

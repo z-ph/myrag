@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/api';
 import { documentsApi, ragApi } from '../src/api';
@@ -54,7 +55,9 @@ function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <ChatPage />
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

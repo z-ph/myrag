@@ -1,5 +1,5 @@
 /** 文档大类 */
-export const FILE_TYPES = ['TEXT', 'PDF', 'DOCUMENT', 'PRESENTATION', 'EXCEL', 'IMAGE'] as const;
+export const FILE_TYPES = ['TEXT', 'PDF', 'DOCUMENT', 'PRESENTATION', 'EXCEL', 'HTML', 'IMAGE'] as const;
 export type FileType = (typeof FILE_TYPES)[number];
 
 /** 存储模式 */
@@ -64,6 +64,8 @@ export const DEFAULTS = {
   candidateMultiplier: 4,
   /** BM25 权重（其余为向量分权重） */
   bm25Weight: 0.4,
+  /** 图谱召回权重（剩余权重给向量召回） */
+  graphWeight: 0.2,
   /** BM25 参数 */
   bm25K1: 1.5,
   bm25B: 0.75,
@@ -114,6 +116,7 @@ export const DEFAULTS = {
     '.doc', '.docx',
     '.ppt', '.pptx',
     '.xls', '.xlsx',
+    '.html', '.htm',
     '.jpg', '.jpeg', '.png', '.bmp',
   ],
   /** JWT 有效期（秒） */

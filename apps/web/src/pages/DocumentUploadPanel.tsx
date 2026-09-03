@@ -231,7 +231,7 @@ export function DocumentUploadPanel({
             </p>
             <p className="docs-drop-title">拖入文件或文件夹，或点击选择文件夹</p>
             <p className="docs-drop-hint">
-              支持 Word、PDF、文本、PPT、Excel、图片；单文件不超过 {MAX_MB}MB，单次最多 {DEFAULTS.batchUploadMaxFiles} 个。
+              支持 Word、PDF、HTML、文本、PPT、Excel、图片；单文件不超过 {MAX_MB}MB，单次最多 {DEFAULTS.batchUploadMaxFiles} 个。
             </p>
             <div className="docs-drop-actions" onClick={(e) => e.stopPropagation()}>
               <Button type="link" size="small" onClick={() => fileInputRef.current?.click()}>

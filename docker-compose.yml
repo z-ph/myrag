@@ -38,17 +38,27 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       MINIO_ENDPOINT: minio:9000
-      # 容器内走 infra_llm DNS；宿主开发仍用 .env 的 LLM_BASE_URL
+      # LLM/LiteLLM 通过 cwc-infra 的宿主映射端口访问；宿主开发可直接复用同一变量
       LLM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL is required}
       LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY is required}
+      # 重排服务通过宿主端口访问 vLLM；图谱服务通过 data 网络访问 Neo4j
+      RERANK_BASE_URL: ${RERANK_BASE_URL:-http://host.docker.internal:8003}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_MODEL: ${RERANK_MODEL:-bge-reranker-v2-m3}
+      NEO4J_ENABLED: ${NEO4J_ENABLED:-false}
+      NEO4J_URI: http://neo4j:7474
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
     depends_on:
       db-init:
         condition: service_completed_successfully
     ports:
       - "${SERVER_HOST_PORT:?SERVER_HOST_PORT is required}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - data
-      # - llm
 
   web:
     build:
@@ -69,8 +79,3 @@ networks:
   data:
     name: cwc-infra_default
     external: true
-  # llm:
-  #   name: cwc-infra_llm
-  #   external: true
-
-

@@ -5,11 +5,39 @@ import type { SettingsService } from '@myrag/shared';
 import type { Db } from '../../db';
 import { documentChunks } from '../../db/schema';
 import type { LlmClient } from '../../llm/client';
-import type { QdrantStore, VectorSearchHit } from '../../vector/qdrant';
+import type { QdrantStore } from '../../vector/qdrant';
 import { AppError } from '../../lib/errors';
 import { logger } from '../../lib/util';
-import { createBm25Scorer, jaccard } from './bm25';
+import { jaccard } from './bm25';
 import type { ChunkDocument, ChunkMetadata } from './chunk';
+
+export interface SparseSearchHit {
+  documentId: string;
+  chunkIndex: number;
+  score: number;
+}
+
+export interface SparseStore {
+  /** 独立稀疏索引召回，不依赖向量候选集 */
+  search(query: string, topK: number, documentIds?: string[]): Promise<SparseSearchHit[]>;
+  upsertDocument?(documentId: string, chunks: Array<{ chunkIndex: number; text: string }>): Promise<void>;
+  deleteDocument?(documentId: string): Promise<void>;
+}
+
+export interface GraphSearchHit {
+  documentId: string;
+  filename: string;
+  chunkIndex: number;
+  text: string;
+  score: number;
+}
+
+export interface GraphStore {
+  /** 从图谱实体和关系中召回关联文本/事实 */
+  search(query: string, topK: number, documentIds?: string[]): Promise<GraphSearchHit[]>;
+  upsertDocument?(documentId: string, filename: string, chunks: Array<{ chunkIndex: number; text: string }>): Promise<void>;
+  deleteDocument?(documentId: string): Promise<void>;
+}
 
 export interface RetrievalDebug {
   totalCandidates: number;
@@ -25,7 +53,7 @@ function minMaxNormalize(scores: number[]): number[] {
   if (scores.length === 0) return [];
   const min = Math.min(...scores);
   const max = Math.max(...scores);
-  if (max - min < 1e-9) return scores.map(() => 1);
+  if (max - min < 1e-9) return max <= 1e-9 ? scores.map(() => 0) : scores.map(() => 1);
   return scores.map((s) => (s - min) / (max - min));
 }
 
@@ -59,13 +87,25 @@ function mmrSelect(candidates: ChunkDocument[], lambda: number, limit: number): 
 export interface RagRetrieverFields {
   db: Db;
   qdrant: QdrantStore;
+  sparse?: SparseStore;
+  graph?: GraphStore;
   llm: LlmClient;
   settings: SettingsService;
 }
 
+type CandidateHit = {
+  documentId: string;
+  chunkIndex: number;
+  filename?: string;
+  graphText?: string;
+  vectorScore: number;
+  sparseScore: number;
+  graphScore: number;
+};
+
 /**
  * 检索器（langchain BaseRetriever）：文本问答的混合检索管线。
- * `retrieve` / `_getRelevantDocuments` = 向量召回 → BM25 混合重排 → 相关度过滤 →（可选 LLM rerank）→ Jaccard 去重 → MMR。
+ * `retrieve` / `_getRelevantDocuments` = 向量、稀疏、图谱三路召回 → 加权融合 → 相关度过滤 →（可选 cross-encoder rerank）→ Jaccard 去重 → MMR。
  * 由 `search_knowledge_base` 工具调用。
  */
 export class RagRetriever extends BaseRetriever<ChunkMetadata> {
@@ -74,6 +114,8 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
 
   private readonly db: Db;
   private readonly qdrant: QdrantStore;
+  private readonly sparse?: SparseStore;
+  private readonly graph?: GraphStore;
   private readonly llm: LlmClient;
   private readonly settings: SettingsService;
   /** 最近一次 `invoke` 的管线调试信息（可观测用） */
@@ -83,6 +125,8 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     super({ tags: ['rag', 'hybrid-retrieval'] });
     this.db = fields.db;
     this.qdrant = fields.qdrant;
+    this.sparse = fields.sparse;
+    this.graph = fields.graph;
     this.llm = fields.llm;
     this.settings = fields.settings;
   }
@@ -97,23 +141,66 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     return this.runPipeline(question, maxResults ?? this.settings.get().maxResults, documentIds);
   }
 
-  /** 混合管线：向量召回 → BM25 重排 → 相关度过滤 →（可选 LLM rerank）→ 去重 → MMR */
+  /** 混合管线：三路召回 → 加权融合 → 相关度过滤 →（可选 cross-encoder rerank）→ 去重 → MMR */
   private async runPipeline(question: string, limit: number, documentIds?: string[]): Promise<ChunkDocument[]> {
     const s = this.settings.get();
     const [vector] = await this.llm.embed([question]);
     if (!vector) throw new AppError(502, '向量化服务返回异常');
-    const hits = (await this.qdrant.search(vector, limit * s.candidateMultiplier, documentIds)).filter((h) => h.score >= s.minScore);
-    const candidates = await this.hydrate(hits);
+    const topK = limit * s.candidateMultiplier;
+    const [vectorHits, sparseHits, graphHits] = await Promise.all([
+      this.qdrant.search(vector, topK, documentIds),
+      this.sparse?.search(question, topK, documentIds) ?? Promise.resolve([]),
+      this.graph?.search(question, topK, documentIds) ?? Promise.resolve([]),
+    ]);
 
-    // BM25 混合重排（K1/B 参数取自动态设置）
-    const bm25 = createBm25Scorer(s.bm25K1, s.bm25B);
-    const texts = candidates.map((c) => c.pageContent);
-    const bm25Scores = bm25.score(question, texts);
+    const merged = new Map<string, CandidateHit>();
+    const ensure = (documentId: string, chunkIndex: number): CandidateHit => {
+      const key = `${documentId}:${chunkIndex}`;
+      const existing = merged.get(key);
+      if (existing) return existing;
+      const created: CandidateHit = {
+        documentId,
+        chunkIndex,
+        vectorScore: 0,
+        sparseScore: 0,
+        graphScore: 0,
+      };
+      merged.set(key, created);
+      return created;
+    };
+    for (const hit of vectorHits) {
+      if (hit.score < s.minScore) continue;
+      const candidate = ensure(hit.payload.document_id, hit.payload.chunk_index);
+      candidate.filename = hit.payload.filename;
+      candidate.vectorScore = hit.score;
+    }
+    for (const hit of sparseHits) {
+      const candidate = ensure(hit.documentId, hit.chunkIndex);
+      candidate.sparseScore = hit.score;
+    }
+    for (const hit of graphHits) {
+      const candidate = ensure(hit.documentId, hit.chunkIndex);
+      candidate.filename = hit.filename;
+      candidate.graphText = hit.text;
+      candidate.graphScore = hit.score;
+    }
+
+    const candidates = await this.hydrate([...merged.values()]);
+
+    // 三路召回分数归一化后融合；权重可由运行时设置覆盖。
+    const graphWeight = typeof s.graphWeight === 'number' ? s.graphWeight : 0.2;
+    const denseWeight = Math.max(0, 1 - s.bm25Weight - graphWeight);
     const normVector = minMaxNormalize(candidates.map((c) => c.metadata.vectorScore));
-    const normBm25 = minMaxNormalize(bm25Scores);
+    const normSparse = minMaxNormalize(candidates.map((c) => c.metadata.bm25Score));
+    const normGraph = minMaxNormalize(candidates.map((c) => c.metadata.graphScore));
     candidates.forEach((c, i) => {
-      c.metadata.bm25Score = normBm25[i] ?? 0;
-      c.metadata.score = (1 - s.bm25Weight) * (normVector[i] ?? 0) + s.bm25Weight * c.metadata.bm25Score;
+      const vector = normVector[i] ?? 0;
+      const sparse = normSparse[i] ?? 0;
+      const graph = normGraph[i] ?? 0;
+      c.metadata.vectorScore = vector;
+      c.metadata.bm25Score = sparse;
+      c.metadata.graphScore = graph;
+      c.metadata.score = denseWeight * vector + s.bm25Weight * sparse + graphWeight * graph;
     });
     candidates.sort((a, b) => b.metadata.score - a.metadata.score);
     const afterRelevance = candidates.filter((c) => c.metadata.score >= s.relevanceThreshold);
@@ -160,9 +247,9 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
   }
 
   /** 从快照表批量补齐 hits 的文本与元数据，组装为 langchain Document */
-  private async hydrate(hits: VectorSearchHit[]): Promise<ChunkDocument[]> {
+  private async hydrate(hits: CandidateHit[]): Promise<ChunkDocument[]> {
     if (hits.length === 0) return [];
-    const docIds = [...new Set(hits.map((h) => h.payload.document_id))];
+    const docIds = [...new Set(hits.map((h) => h.documentId))];
     const snapshots = await this.db
       .select({
         documentId: documentChunks.documentId,
@@ -177,22 +264,26 @@ export class RagRetriever extends BaseRetriever<ChunkMetadata> {
     const byKey = new Map(snapshots.map((s) => [`${s.documentId}:${s.chunkIndex}`, s]));
     const out: ChunkDocument[] = [];
     for (const hit of hits) {
-      const snap = byKey.get(`${hit.payload.document_id}:${hit.payload.chunk_index}`);
-      if (!snap || !snap.text) continue;
+      const snap = byKey.get(`${hit.documentId}:${hit.chunkIndex}`);
+      // 图谱中的文本是增强上下文，不作为快照缺失时的回退，避免删除文档后
+      // Neo4j 暂时残留导致已删除内容重新出现在回答中。
+      if (!snap?.text) continue;
+      const text = hit.graphText || snap.text;
       out.push(
         new Document<ChunkMetadata>({
-          pageContent: snap.text,
+          pageContent: text,
           metadata: {
-            documentId: hit.payload.document_id,
-            filename: hit.payload.filename,
-            chunkIndex: hit.payload.chunk_index,
-            title: snap.title ?? undefined,
-            keywords: snap.keywords ?? undefined,
-            category: snap.category ?? undefined,
+            documentId: hit.documentId,
+            filename: hit.filename ?? hit.documentId,
+            chunkIndex: hit.chunkIndex,
+            title: snap?.title ?? undefined,
+            keywords: snap?.keywords ?? undefined,
+            category: snap?.category ?? undefined,
             sourceType: 'TEXT',
-            vectorScore: hit.score,
-            bm25Score: 0,
-            score: hit.score,
+            vectorScore: hit.vectorScore,
+            bm25Score: hit.sparseScore,
+            graphScore: hit.graphScore,
+            score: 0,
           },
         }),
       );

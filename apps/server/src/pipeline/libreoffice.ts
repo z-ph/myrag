@@ -28,15 +28,18 @@ export async function hasLibreOffice(): Promise<boolean> {
   }
 }
 
+export type LibreOfficeInputExtension = '.doc' | '.docx' | '.ppt' | '.pptx' | '.xls' | '.xlsx' | '.html' | '.htm';
+export type LibreOfficeOutputExtension = '.pdf' | '.pptx' | '.xlsx';
+
 /**
  * 用 LibreOffice headless 把 buffer 从 fromExt 转换为 toExt，返回转换后的内容。
- * - 独立临时目录 + 独立 UserInstallation profile：批量并发（batchConcurrency=2 + 直传）互不抢锁
- * - --norestore 崩溃恢复不弹恢复向导；headless 下密码保护/损坏文件以非零码退出
+ * - 独立临时目录 + 独立 UserInstallation profile，批量并发时互不抢锁
+ * - --norestore 崩溃恢复不弹恢复向导；密码保护/损坏文件以非零码退出
  */
 export async function convertViaLibreOffice(
   buffer: Buffer,
-  fromExt: '.ppt' | '.xls',
-  toExt: '.pptx' | '.xlsx',
+  fromExt: LibreOfficeInputExtension,
+  toExt: LibreOfficeOutputExtension,
 ): Promise<Buffer> {
   let dir: string | undefined;
   try {
@@ -62,14 +65,22 @@ export async function convertViaLibreOffice(
     return await readFile(join(dir, `input${toExt}`));
   } catch (err) {
     if (err instanceof Error && 'killed' in err && err.killed) {
-      throw new ParseError('旧格式文档转换超时，请转换为 PPTX/XLSX 后重新上传');
+      throw new ParseError('文档转换超时，请转换为 PDF 后重新上传');
     }
     const code = err instanceof Error && 'code' in err ? (err as { code?: number }).code : undefined;
     if (code === 127 || (err instanceof Error && err.message.includes('ENOENT'))) {
-      throw new ParseError('服务器未安装 LibreOffice，无法解析旧版 Office 文档');
+      throw new ParseError('服务器未安装 LibreOffice，无法执行文档转 PDF');
     }
-    throw new ParseError('旧版 Office 文档转换失败，文件可能已加密或损坏', err);
+    throw new ParseError('文档转换失败，文件可能已加密或损坏', err);
   } finally {
     if (dir) void rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/** 将 Office/HTML 统一转换为 PDF，供后续原生文本提取和逐页 OCR 共用。 */
+export function convertToPdf(
+  buffer: Buffer,
+  fromExt: LibreOfficeInputExtension,
+): Promise<Buffer> {
+  return convertViaLibreOffice(buffer, fromExt, '.pdf');
 }

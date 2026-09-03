@@ -17,6 +17,7 @@ export const RUNTIME_SETTING_KEYS = [
   'minScore',
   'candidateMultiplier',
   'bm25Weight',
+  'graphWeight',
   'bm25K1',
   'bm25B',
   'relevanceThreshold',
@@ -47,6 +48,7 @@ export const RUNTIME_SETTING_DEFAULTS: RuntimeSettings = {
   minScore: DEFAULTS.minScore,
   candidateMultiplier: DEFAULTS.candidateMultiplier,
   bm25Weight: DEFAULTS.bm25Weight,
+  graphWeight: DEFAULTS.graphWeight,
   bm25K1: DEFAULTS.bm25K1,
   bm25B: DEFAULTS.bm25B,
   relevanceThreshold: DEFAULTS.relevanceThreshold,
@@ -58,8 +60,8 @@ export const RUNTIME_SETTING_DEFAULTS: RuntimeSettings = {
   llmVisionTemperature: DEFAULTS.llmVisionTemperature,
   guestCleanupEnabled: DEFAULTS.guestCleanupEnabled,
   guestRetentionDays: DEFAULTS.guestRetentionDays,
-  /** 0=关 1=开，默认关闭，渐进式启用 */
-  rerankerEnabled: 0,
+  /** 0=关 1=开；服务未配置重排端点时自动回退三路融合排序 */
+  rerankerEnabled: 1,
   /** 重排后取前 N 条进入去重/MMR */
   rerankerTopN: 10,
 };
@@ -74,6 +76,7 @@ export const runtimeSettingsPartialSchema = z.object({
   minScore: z.number().min(0).max(1).optional(),
   candidateMultiplier: z.number().int().min(1).max(50).optional(),
   bm25Weight: z.number().min(0).max(1).optional(),
+  graphWeight: z.number().min(0).max(1).optional(),
   bm25K1: z.number().min(0).max(10).optional(),
   bm25B: z.number().min(0).max(1).optional(),
   relevanceThreshold: z.number().min(0).max(1).optional(),

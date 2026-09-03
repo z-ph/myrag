@@ -16,6 +16,8 @@ export interface ChunkMetadata {
   sourceType: SourceType;
   vectorScore: number;
   bm25Score: number;
+  /** 知识图谱召回原始分数（归一化前） */
+  graphScore: number;
   /** 混合分（向量分归一化后按权重合成） */
   score: number;
   mmrScore?: number;

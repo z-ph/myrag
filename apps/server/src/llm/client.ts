@@ -20,6 +20,8 @@ export interface LlmClient {
   embed(texts: string[]): Promise<number[][]>;
   /** 图片理解（视觉模型，自由文本；OCR 等场景） */
   visionChat(system: string, prompt: string, imageBase64: string): Promise<string>;
+  /** 文档 OCR（使用独立 OCR 模型，可与通用视觉模型分离部署） */
+  ocrChat(system: string, prompt: string, imageBase64: string): Promise<string>;
   /**
    * 图片理解 + 结构化输出（langchain withStructuredOutput）。
    * 网关不支持 tool/json_schema 时由调用方自行 fallback 到 visionChat。
@@ -29,7 +31,7 @@ export interface LlmClient {
     input: VisionMessageInput,
     options?: { name?: string },
   ): Promise<T>;
-  /** LLM 相关性重排：对每个候选打 0-10 分，返回与 candidates 同序的分数数组 */
+  /** 交叉编码器相关性重排：返回与 candidates 同序的分数数组 */
   rerank(query: string, candidates: string[]): Promise<number[]>;
 }
 
@@ -65,38 +67,10 @@ export function stripReasoning(text: string): string {
   return clean.trim();
 }
 
-const RERANK_SYSTEM =
-  '你是一个相关性评分器。给定用户问题和若干文档片段，为每个片段打 0-10 的相关性分数（10=完全相关，0=无关）。只返回 JSON 数组，不要其他内容。';
-
 /** OpenAI 兼容网关识别的 chat template 参数：快速问答不生成思考内容。 */
 export const NO_THINKING_CHAT_TEMPLATE_KWARGS = {
   chat_template_kwargs: { enable_thinking: false },
 } as const;
-
-/** 从模型输出提取 JSON 数组（兼容 markdown 代码块包裹、前后杂文） */
-function extractJsonArray(raw: string): unknown[] {
-  const cleaned = raw.replace(/```(?:json)?\s*([\s\S]*?)```/gi, '$1').trim();
-  const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error('rerank 输出不含 JSON 数组');
-  const parsed: unknown = JSON.parse(jsonMatch[0]);
-  if (!Array.isArray(parsed)) throw new Error('rerank 输出不是 JSON 数组');
-  return parsed;
-}
-
-/** 将模型打分结果对齐到 candidates 顺序；缺项为 undefined，由调用方回退原分 */
-function scoresFromRerankItems(items: unknown[], candidateCount: number): number[] {
-  const scores = new Array<number>(candidateCount);
-  for (const item of items) {
-    if (!item || typeof item !== 'object') continue;
-    const rec = item as { index?: unknown; score?: unknown };
-    const index = typeof rec.index === 'number' ? rec.index : Number(rec.index);
-    const score = typeof rec.score === 'number' ? rec.score : Number(rec.score);
-    if (!Number.isInteger(index) || index < 0 || index >= candidateCount) continue;
-    if (!Number.isFinite(score)) continue;
-    scores[index] = Math.min(10, Math.max(0, score));
-  }
-  return scores;
-}
 
 /**
  * 统一错误归一化：langchain / openai SDK 异常 → 语义化 AppError(502)；
@@ -141,6 +115,54 @@ function baseUrlOf(url: string): string | undefined {
 }
 
 /**
+ * 调用 vLLM 的 cross-encoder /rerank 接口，并将无序结果还原为候选片段顺序。
+ * vLLM 兼容 OpenAI 风格的模型名，但重排接口本身不是 chat completion，
+ * 因此这里直接使用 fetch，避免把候选片段拼成一个评分 prompt。
+ */
+async function rerankWithHttp(
+  cfg: ServerConfig,
+  query: string,
+  candidates: string[],
+): Promise<number[]> {
+  const baseUrl = baseUrlOf(cfg.rerankBaseUrl);
+  if (!baseUrl) throw new Error('RERANK_BASE_URL 未配置');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.llmTimeoutMs);
+  try {
+    const response = await fetch(`${baseUrl}/rerank`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cfg.rerankApiKey ? { Authorization: `Bearer ${cfg.rerankApiKey}` } : {}),
+      },
+      body: JSON.stringify({ model: cfg.rerankModel, query, documents: candidates }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`rerank HTTP ${response.status}`);
+
+    const payload: unknown = await response.json();
+    if (!payload || typeof payload !== 'object') throw new Error('rerank 响应格式异常');
+    const results = (payload as { results?: unknown }).results;
+    if (!Array.isArray(results)) throw new Error('rerank 响应缺少 results 数组');
+
+    const scores = new Array<number>(candidates.length);
+    for (const item of results) {
+      if (!item || typeof item !== 'object') continue;
+      const rec = item as { index?: unknown; relevance_score?: unknown; score?: unknown };
+      const index = typeof rec.index === 'number' ? rec.index : Number(rec.index);
+      const scoreValue = rec.relevance_score ?? rec.score;
+      const score = typeof scoreValue === 'number' ? scoreValue : Number(scoreValue);
+      if (!Number.isInteger(index) || index < 0 || index >= candidates.length) continue;
+      if (Number.isFinite(score)) scores[index] = score;
+    }
+    return scores;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * langchain.js 客户端封装：三个模型可指向不同 OpenAI 兼容端点。
  * 流式双通道（content / reasoning_content）与 think 块剥离为 langchain 未覆盖的
  * 业务逻辑，在消费端保留自研（reasoning 仅展示、不回灌上下文）。
@@ -163,12 +185,17 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
     ...chatFields,
     modelKwargs: NO_THINKING_CHAT_TEMPLATE_KWARGS,
   });
-  // 独立实例：langchain 1.x 无 bind，且 invocationParams 读 this.temperature
-  const rerankModel = new ChatOpenAI({ ...chatFields, temperature: 0 });
   const visionModel = new ChatOpenAI({
     model: cfg.llmVisionModel,
     apiKey: cfg.llmVisionApiKey,
     configuration: { baseURL: baseUrlOf(cfg.llmVisionBaseUrl) },
+    timeout: cfg.llmTimeoutMs,
+    maxRetries: 2,
+  });
+  const ocrModel = new ChatOpenAI({
+    model: cfg.llmOcrModel,
+    apiKey: cfg.llmOcrApiKey,
+    configuration: { baseURL: baseUrlOf(cfg.llmOcrBaseUrl) },
     timeout: cfg.llmTimeoutMs,
     maxRetries: 2,
   });
@@ -211,6 +238,17 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
       }
     },
 
+    async ocrChat(system, prompt, imageBase64) {
+      try {
+        ocrModel.temperature = 0;
+        const res = await withRetry(() => ocrModel.invoke(buildVisionMessages(system, prompt, imageBase64)));
+        const content = typeof res.content === 'string' ? res.content : '';
+        return stripThink(content);
+      } catch (err) {
+        wrapLlmError(err, 'OCR 模型服务返回异常');
+      }
+    },
+
     async visionStructured(schema, input, options) {
       try {
         visionModel.temperature = settings.get().llmVisionTemperature;
@@ -230,19 +268,13 @@ export function createLlmClient(cfg: ServerConfig, settings: SettingsService): L
 
     async rerank(query, candidates) {
       if (candidates.length === 0) return [];
-      const userPrompt =
-        `用户问题：${query}\n\n文档片段：\n` +
-        `${candidates.map((c, i) => `[${i}] ${c.slice(0, 500)}`).join('\n\n')}\n\n` +
-        '请为每个片段打分，返回 JSON：[{"index":0,"score":8},...]';
       try {
-        const res = await rerankModel.invoke([new SystemMessage(RERANK_SYSTEM), new HumanMessage(userPrompt)]);
-        const content = typeof res.content === 'string' ? res.content : '';
-        return scoresFromRerankItems(extractJsonArray(stripThink(content)), candidates.length);
+        return await rerankWithHttp(cfg, query, candidates);
       } catch (err) {
-        // 不在此处降级：由 retrieval.service 的调用方 catch 后保持原 BM25 排序
+        // 不在此处降级：由 retrieval.service 的调用方 catch 后保持混合排序。
         if (err instanceof AppError) throw err;
         if (err instanceof Error && err.name === 'AbortError') throw err;
-        logger.error(`[llm] rerank 失败：${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+        logger.error(`[llm] vLLM rerank 失败：${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
         throw err;
       }
     },

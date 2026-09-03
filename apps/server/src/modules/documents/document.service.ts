@@ -14,6 +14,7 @@ import type { Db } from '../../db';
 import { documentChunks, documents } from '../../db/schema';
 import type { QdrantStore } from '../../vector/qdrant';
 import type { ObjectStorage } from '../../store/object-storage';
+import type { GraphStore, SparseStore } from '../rag/retrieval.service';
 import { notFound } from '../../lib/errors';
 import { logger } from '../../lib/util';
 
@@ -72,6 +73,8 @@ export function createDocumentService(
   qdrant: QdrantStore,
   objectStorage: ObjectStorage,
   cfg: ServerConfig,
+  sparse?: SparseStore,
+  graph?: GraphStore,
 ): DocumentService {
   return {
     async list(query = {}) {
@@ -154,6 +157,8 @@ export function createDocumentService(
         .set({ deleted: true, deletedBy: operator, deletedAt: new Date() })
         .where(eq(documents.documentId, documentId));
       await qdrant.deleteByDocument(documentId);
+      await sparse?.deleteDocument?.(documentId);
+      await graph?.deleteDocument?.(documentId);
       await db.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
 
       return {

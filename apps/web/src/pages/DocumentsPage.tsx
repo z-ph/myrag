@@ -129,6 +129,7 @@ const FILE_TYPE_LABEL: Record<string, string> = {
   DOCUMENT: 'Word',
   PRESENTATION: 'PPT',
   EXCEL: 'Excel',
+  HTML: 'HTML',
   IMAGE: '图片',
 };
 
