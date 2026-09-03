@@ -1,99 +1,65 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Drawer } from 'antd';
-import {
-  CommentOutlined,
-  FileTextOutlined,
-  DashboardOutlined,
-  MenuOutlined,
-  TeamOutlined,
-  UserOutlined,
-} from '@ant-design/icons';
+import { AlignLeftOutlined, PlusCircleOutlined } from '@ant-design/icons';
 import { useAuthStore } from './store/auth';
+import { useChatStore } from './store/chat';
+import { isNarrowViewport } from './utils/viewport';
+import AppSidebar from './pages/AppSidebar';
 import ChatPage from './pages/ChatPage';
 import DocumentsPage from './pages/DocumentsPage';
 import AdminPage from './pages/AdminPage';
 import UsersPage from './pages/UsersPage';
-import MyPage from './pages/MyPage';
-
-const NAV_ITEMS = [
-  { key: '/chat', icon: <CommentOutlined />, label: '智能问答' },
-  { key: '/documents', icon: <FileTextOutlined />, label: '文档库' },
-  { key: '/admin', icon: <DashboardOutlined />, label: '管理面板', adminOnly: true },
-  { key: '/users', icon: <TeamOutlined />, label: '用户管理', adminOnly: true },
-  { key: '/my', icon: <UserOutlined />, label: '我的' },
-];
+import LoginModal from './pages/LoginModal';
 
 function AppShell() {
+  const { user, loading, restore } = useAuthStore();
+  const startNewConversation = useChatStore((s) => s.startNewConversation);
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, loading, restore } = useAuthStore();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     void restore();
   }, []);
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const selectedKey = NAV_ITEMS.map((n) => n.key).find((k) => location.pathname.startsWith(k)) ?? '/chat';
-  const visibleItems = NAV_ITEMS.filter((n) => !n.adminOnly || user?.role === 'SUPER_ADMIN');
+  // 移动端默认收起侧栏，通过左上角图标打开
+  useEffect(() => {
+    if (isNarrowViewport()) setSidebarOpen(false);
+  }, []);
 
-  const go = (path: string) => {
-    setMenuOpen(false);
-    navigate(path);
+  const handleMobileNewChat = () => {
+    startNewConversation();
+    if (!location.pathname.startsWith('/chat')) navigate('/chat');
   };
 
-  const renderNav = (idPrefix: string) =>
-    visibleItems.map((n) => (
-      <button
-        key={`${idPrefix}-${n.key}`}
-        type="button"
-        className={`topbar-nav-item${selectedKey === n.key ? ' active' : ''}`}
-        onClick={() => go(n.key)}
-      >
-        <span className="topbar-nav-icon">{n.icon}</span>
-        <span>{n.label}</span>
-      </button>
-    ));
-
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button type="button" className="topbar-menu" aria-label="打开菜单" onClick={() => setMenuOpen(true)}>
-          <MenuOutlined />
+    <div className={`app-shell${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
+      <AppSidebar
+        onFold={() => setSidebarOpen(false)}
+        onNavigated={() => {
+          if (isNarrowViewport()) setSidebarOpen(false);
+        }}
+      />
+      {sidebarOpen && (
+        <button type="button" className="chat-backdrop" aria-label="关闭侧栏" onClick={() => setSidebarOpen(false)} />
+      )}
+      {!sidebarOpen && (
+        <button type="button" className="sidebar-reopen" aria-label="打开侧栏" onClick={() => setSidebarOpen(true)}>
+          <AlignLeftOutlined />
         </button>
-        <button type="button" className="topbar-brand" onClick={() => navigate('/chat')}>
-          <span className="seal" aria-hidden="true">
-            财
-          </span>
-          <span className="topbar-title">财务处知识库</span>
-        </button>
-        <nav className="topbar-nav">{renderNav('bar')}</nav>
-        <div className="topbar-right">
-          {user ? (
-            <span className="topbar-user">{user.displayName}</span>
-          ) : (
-            <button
-              type="button"
-              className="topbar-user topbar-user-guest"
-              onClick={() => navigate('/my')}
-              aria-label="去登录"
-            >
-              访客
+      )}
+      <main className="app-main">
+        {/* 窄屏顶栏：左历史、右新对话（仅聊天页显示新对话钮） */}
+        <div className="chat-mobile-bar">
+          <button type="button" className="chat-mobile-icon" aria-label="打开菜单" onClick={() => setSidebarOpen(true)}>
+            <AlignLeftOutlined />
+          </button>
+          {location.pathname.startsWith('/chat') && (
+            <button type="button" className="chat-mobile-icon" aria-label="新对话" onClick={handleMobileNewChat}>
+              <PlusCircleOutlined />
             </button>
           )}
         </div>
-      </header>
-      <Drawer
-        title="财务处知识库"
-        placement="left"
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
-        size={280}
-        className="topbar-drawer"
-      >
-        <nav className="topbar-drawer-nav">{renderNav('drawer')}</nav>
-      </Drawer>
-      <main className="app-main">
         {loading ? null : (
           <Routes>
             <Route path="/" element={<Navigate to="/chat" replace />} />
@@ -101,11 +67,11 @@ function AppShell() {
             <Route path="/documents" element={<DocumentsPage />} />
             <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat" replace />} />
             <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat" replace />} />
-            <Route path="/my" element={<MyPage />} />
             <Route path="*" element={<Navigate to="/chat" replace />} />
           </Routes>
         )}
       </main>
+      <LoginModal />
     </div>
   );
 }

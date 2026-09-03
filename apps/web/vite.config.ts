@@ -52,7 +52,8 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: true,
-      port: 5174,
+      // 5173/5174 常被本机其他 vite 项目占用，固定使用 5274 避免冲突
+      port: 5274,
       strictPort: true,
       proxy: {
         [apiPrefix]: {

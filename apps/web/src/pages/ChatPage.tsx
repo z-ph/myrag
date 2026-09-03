@@ -1,27 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button, Image, Input, message, Modal, Popconfirm, Segmented, Spin, Switch, Tooltip } from 'antd';
+import { Button, Image, Input, message, Modal, Segmented, Spin, Switch, Tooltip } from 'antd';
 import {
   ArrowUpOutlined,
   BookOutlined,
   CheckOutlined,
   CopyOutlined,
-  DeleteOutlined,
   DownloadOutlined,
   FileImageOutlined,
   FileTextOutlined,
-  HistoryOutlined,
   LoadingOutlined,
-  MenuFoldOutlined,
-  PlusOutlined,
   SearchOutlined,
   StopOutlined,
   ToolOutlined,
-  UserOutlined,
+  ThunderboltFilled,
 } from '@ant-design/icons';
 
 import { useQuery } from '@tanstack/react-query';
-import { useChatStore, type ChatMessage, type ConversationMeta, type ToolStep } from '../store/chat';
+import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
@@ -29,48 +24,6 @@ import { buildFollowUpQuestions, shouldShowAssistantCopy } from './chatMessageEx
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './chat.css';
-
-/**
- * 历史会话分组（DeepSeek 侧栏式）：今天 / 7天内 / 30天内 / 按月。
- * 传入前需按 updatedAt 降序，组内顺序保持不变。
- */
-interface ConvGroup {
-  label: string;
-  items: ConversationMeta[];
-}
-
-function groupConversations(metas: ConversationMeta[]): ConvGroup[] {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const day = 24 * 60 * 60 * 1000;
-  const today: ConversationMeta[] = [];
-  const week: ConversationMeta[] = [];
-  const month: ConversationMeta[] = [];
-  const older = new Map<string, ConversationMeta[]>();
-  for (const meta of metas) {
-    if (meta.updatedAt >= startOfToday) today.push(meta);
-    else if (meta.updatedAt >= startOfToday - 7 * day) week.push(meta);
-    else if (meta.updatedAt >= startOfToday - 30 * day) month.push(meta);
-    else {
-      const d = new Date(meta.updatedAt);
-      const label = `${d.getFullYear()}年${d.getMonth() + 1}月`;
-      const bucket = older.get(label);
-      if (bucket) bucket.push(meta);
-      else older.set(label, [meta]);
-    }
-  }
-  const groups: ConvGroup[] = [];
-  if (today.length) groups.push({ label: '今天', items: today });
-  if (week.length) groups.push({ label: '7天内', items: week });
-  if (month.length) groups.push({ label: '30天内', items: month });
-  for (const [label, items] of older) groups.push({ label, items });
-  return groups;
-}
-
-/** 窄屏判定：移动端侧栏以浮层形式打开 */
-function isNarrowViewport(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
-}
 
 /**
  * 修复中文模型常见的 markdown 空格缺失：`##标题`→`## 标题`、`1.列表`→`1. 列表`、`-列表`→`- 列表`。
@@ -103,18 +56,12 @@ const DEFAULT_SUGGESTIONS = [
   '差旅住宿费限额是多少？',
 ];
 
-function Hero({ onPick, suggestions }: { onPick: (q: string) => void; suggestions: string[] }) {
+function Hero() {
   return (
     <div className="hero">
-      <span className="seal seal-lg">财</span>
-      <h1 className="hero-title">有什么能帮你的吗？</h1>
-      <p className="hero-sub">问制度，找依据 —— 从财务处知识库检索制度、流程与标准，回答附来源依据。</p>
-      <div className="hero-chips">
-        {suggestions.map((s) => (
-          <button key={s} type="button" className="hero-chip" onClick={() => onPick(s)}>
-            {s}
-          </button>
-        ))}
+      <div className="hero-title-row">
+        <span className="seal hero-seal" aria-hidden="true">财</span>
+        <h1 className="hero-title">有什么能帮你的吗？</h1>
       </div>
     </div>
   );
@@ -523,28 +470,22 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
 export default function ChatPage() {
   const {
     messages,
-    historyMetas,
     isGenerating,
     isLoadingHistory,
     conversationId,
     loadConversation,
     refreshConversations,
-    startNewConversation,
-    deleteConversation,
     sendMessage,
     stopGeneration,
     mode,
     setMode,
   } = useChatStore();
 
-  const user = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.loading);
-  const navigate = useNavigate();
 
   const [input, setInput] = useState('');
   const [devMode, setDevMode] = useState(false);
   const [docRef, setDocRef] = useState<{ documentId: string; filename: string } | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [previewSource, setPreviewSource] = useState<SourceReference | null>(null);
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -562,20 +503,9 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading]);
 
-  // 移动端默认收起侧栏，通过「历史会话」按钮以浮层打开
-  useEffect(() => {
-    if (isNarrowViewport()) setSidebarOpen(false);
-  }, []);
-
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  const sortedMetas = useMemo(
-    () => [...historyMetas].sort((a, b) => b.updatedAt - a.updatedAt),
-    [historyMetas],
-  );
-  const convGroups = useMemo(() => groupConversations(sortedMetas), [sortedMetas]);
 
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
@@ -591,14 +521,6 @@ export default function ChatPage() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const handleNewConversation = () => {
-    startNewConversation();
-    setInput('');
-    setDocRef(null);
-    setImage(null);
-    setImagePreview(null);
-  };
-
   const handlePickImage = (file: File | undefined) => {
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/bmp'].includes(file.type)) {
@@ -609,89 +531,14 @@ export default function ChatPage() {
     setImagePreview(URL.createObjectURL(file));
   };
 
-  const pickConversation = (id: string) => {
-    void loadConversation(id);
-    if (isNarrowViewport()) setSidebarOpen(false);
-  };
-
   return (
-    <div className={`chat${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
-      <aside className="chat-sidebar" aria-label="历史会话">
-        <div className="sidebar-head">
-          <span className="seal sidebar-seal" aria-hidden="true">财</span>
-          <span className="sidebar-brand">财务处知识库</span>
-          <button type="button" className="sidebar-fold" aria-label="收起会话栏" onClick={() => setSidebarOpen(false)}>
-            <MenuFoldOutlined />
-          </button>
-        </div>
-        <div className="sidebar-body">
-          <button type="button" className="sidebar-new" onClick={handleNewConversation}>
-            <PlusOutlined />
-            <span>开启新对话</span>
-          </button>
-          {convGroups.length === 0 ? (
-            <div className="sidebar-empty">暂无会话</div>
-          ) : (
-            convGroups.map((group) => (
-              <div key={group.label} className="sidebar-group">
-                <div className="sidebar-group-label">{group.label}</div>
-                {group.items.map((meta) => (
-                  <div
-                    key={meta.id}
-                    role="button"
-                    tabIndex={0}
-                    className={`sidebar-item${meta.id === conversationId ? ' active' : ''}`}
-                    onClick={() => pickConversation(meta.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        pickConversation(meta.id);
-                      }
-                    }}
-                  >
-                    <span className="sidebar-item-title" title={meta.title}>{meta.title}</span>
-                    <Popconfirm
-                      title="删除该会话？"
-                      getPopupContainer={(trigger) => trigger.closest('.chat-sidebar') ?? document.body}
-                      onConfirm={(e) => {
-                        e?.stopPropagation();
-                        void deleteConversation(meta.id);
-                      }}
-                    >
-                      <button type="button" className="sidebar-item-del" aria-label="删除会话" onClick={(e) => e.stopPropagation()}>
-                        <DeleteOutlined />
-                      </button>
-                    </Popconfirm>
-                  </div>
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-        <div className="sidebar-foot">
-          <button type="button" className="sidebar-user" onClick={() => navigate('/my')}>
-            <span className="sidebar-user-avatar" aria-hidden="true"><UserOutlined /></span>
-            <span className="sidebar-user-name">{user ? user.displayName : '访客'}</span>
-            <span className="sidebar-user-more" aria-hidden="true">···</span>
-          </button>
-        </div>
-      </aside>
-      {sidebarOpen && (
-        <button type="button" className="chat-backdrop" aria-label="关闭会话栏" onClick={() => setSidebarOpen(false)} />
-      )}
-
+    <div className={`chat${!isLoadingHistory && messages.length === 0 ? ' is-empty' : ''}`}>
       <div className="chat-main">
-        {!sidebarOpen && (
-          <button type="button" className="chat-sidebar-fab" onClick={() => setSidebarOpen(true)}>
-            <HistoryOutlined />
-            <span>历史会话</span>
-          </button>
-        )}
         <div className="chat-scroll">
           {isLoadingHistory ? (
             <Spin style={{ display: 'block', margin: '80px auto' }} />
           ) : messages.length === 0 ? (
-            <Hero onPick={(q) => handleSend(q)} suggestions={suggestions} />
+            <Hero />
           ) : (
             <div className="chat-messages">
               {messages.map((m) => (
@@ -711,8 +558,8 @@ export default function ChatPage() {
                 aria-label="问答模式"
                 onChange={(v) => setMode(v as import('@myrag/shared').QaMode)}
                 options={[
-                  { label: '快速回答', value: 'fast' },
-                  { label: '深度检索', value: 'deep' },
+                  { label: <span className="mode-opt"><ThunderboltFilled />快速回答</span>, value: 'fast' },
+                  { label: <span className="mode-opt"><SearchOutlined />深度检索</span>, value: 'deep' },
                 ]}
               />
             </div>
@@ -739,8 +586,8 @@ export default function ChatPage() {
               <Input.TextArea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="给财务知识库发送消息，Enter 发送 / Shift+Enter 换行"
-                autoSize={{ minRows: 1, maxRows: 4 }}
+                placeholder="给财务知识库发送消息"
+                autoSize={{ minRows: 2, maxRows: 6 }}
                 className="composer-input"
                 onPressEnter={(e) => {
                   if (!e.shiftKey) {
@@ -751,11 +598,6 @@ export default function ChatPage() {
                 disabled={isGenerating}
               />
               <div className="composer-foot">
-                <div className="composer-foot-left">
-                  <Tooltip title="新对话">
-                    <Button type="text" className="composer-icon" icon={<PlusOutlined />} onClick={handleNewConversation} disabled={isGenerating} />
-                  </Tooltip>
-                </div>
                 <div className="composer-foot-right">
                   {IMAGE_UPLOAD_ENABLED && (
                     <>
@@ -785,6 +627,15 @@ export default function ChatPage() {
                 </div>
               </div>
             </div>
+            {messages.length === 0 && (
+              <div className="composer-chips">
+                {suggestions.slice(0, 3).map((s) => (
+                  <button key={s} type="button" className="hero-chip" onClick={() => handleSend(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="composer-tip">
               <span>回答基于知识库检索，可点击来源查看引用片段</span>
               {DEV_MODE_ENABLED && (

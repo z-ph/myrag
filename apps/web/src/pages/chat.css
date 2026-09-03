@@ -16,6 +16,22 @@
   flex-direction: column;
 }
 
+/* 空会话（DeepSeek 式）：标题 + 模式 + 输入框作为一组垂直居中 */
+.chat.is-empty .chat-main {
+  justify-content: center;
+}
+
+.chat.is-empty .chat-scroll {
+  flex: 0 0 auto;
+  padding: 8px 32px 0;
+}
+
+.chat.is-empty .hero {
+  margin: 0;
+  padding: 0 24px 0;
+  gap: 14px;
+}
+
 /* ── 会话侧栏 ─────────────────────────────────────────── */
 .chat-sidebar {
   width: 264px;
@@ -23,36 +39,83 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--paper);
-  border-right: 1px solid var(--line);
+  background: #f7f8fc;
+  border-right: 1px solid #eef0f5;
 }
 
 .sidebar-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 14px 12px 8px;
-}
-
-.sidebar-seal {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  font-size: 13px;
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.32);
+  padding: 16px 14px 10px;
 }
 
 .sidebar-brand {
   flex: 1;
   min-width: 0;
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  font-size: 15px;
+  font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 侧栏页脚导航（文档库 / 管理入口，替代顶部导航栏） */
+
+/* 侧栏页脚导航之上的菜单（智能问答 / 文档库 / 管理入口） */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px 0;
+  flex-shrink: 0;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar-nav-item:hover {
+  background: #eceef2;
+  color: var(--ink);
+}
+
+.sidebar-nav-item:focus-visible {
+  outline: 2px solid var(--seal);
+  outline-offset: -2px;
+}
+
+.sidebar-nav-item.active {
+  background: #e8ebf2;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.sidebar-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 15px;
+}
+
+/* 分割线：分隔菜单与历史会话 */
+.sidebar-divider {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  margin: 10px 14px;
 }
 
 .sidebar-fold {
@@ -93,14 +156,15 @@
   gap: 8px;
   width: 100%;
   margin: 4px 0 14px;
-  padding: 9px 14px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  padding: 10px 14px;
+  border: none;
+  background: #e8ebf2;
   border-radius: 999px;
   font-size: 13.5px;
+  font-weight: 500;
   color: var(--ink);
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: background 0.15s;
 }
 
 .sidebar-new .anticon {
@@ -108,9 +172,7 @@
 }
 
 .sidebar-new:hover {
-  border-color: var(--seal);
-  color: var(--seal);
-  background: var(--seal-soft);
+  background: #dce1ec;
 }
 
 .sidebar-new:focus-visible {
@@ -193,13 +255,13 @@
 }
 
 .sidebar-item.active {
-  background: var(--seal-soft);
-  color: var(--seal);
+  background: #e8ebf2;
+  color: var(--ink);
   font-weight: 500;
 }
 
 .sidebar-item.active:hover {
-  background: #f3dfdd;
+  background: #dce1ec;
 }
 
 .sidebar-foot {
@@ -260,33 +322,31 @@
   letter-spacing: 1px;
 }
 
-/* 侧栏收起后的「历史会话」入口（桌面收起 / 移动端打开浮层） */
-.chat-sidebar-fab {
-  position: absolute;
-  top: 14px;
-  left: 16px;
-  z-index: 5;
+/* 窄屏顶栏（DeepSeek 移动端式）：左历史、右新对话，仅窄屏显示；桌面隐藏 */
+.chat-mobile-bar {
+  display: none;
+}
+
+.chat-mobile-icon {
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: none;
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 20px;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: 999px;
-  font-size: 13px;
-  color: var(--ink-2);
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(16, 24, 40, 0.06);
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
 }
 
-.chat-sidebar-fab:hover {
-  color: var(--seal);
-  border-color: var(--seal);
-  background: var(--seal-soft);
+.chat-mobile-icon:hover {
+  background: #eceef2;
 }
 
-.chat-sidebar-fab:focus-visible {
+.chat-mobile-icon:focus-visible {
   outline: 2px solid var(--seal);
   outline-offset: 2px;
 }
@@ -296,8 +356,43 @@
   display: none;
 }
 
+/* 桌面收起侧栏后的重开按钮（固定左上角） */
+.sidebar-reopen {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 30;
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: var(--surface);
+  border-radius: 10px;
+  color: var(--ink-2);
+  font-size: 19px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(16, 24, 40, 0.08);
+  transition: color 0.15s, background 0.15s;
+}
+
+.sidebar-reopen:hover {
+  color: var(--seal);
+  background: var(--seal-soft);
+}
+
+.sidebar-reopen:focus-visible {
+  outline: 2px solid var(--seal);
+  outline-offset: 2px;
+}
+
 @media (min-width: 901px) {
-  .chat.sidebar-collapsed .chat-sidebar {
+  .app-shell.sidebar-collapsed .sidebar-reopen {
+    display: inline-flex;
+  }
+
+  .app-shell.sidebar-collapsed .chat-sidebar {
     display: none;
   }
 }
@@ -317,7 +412,7 @@
   max-width: 780px;
 }
 
-/* ── 空状态 Hero ──────────────────────────────────────── */
+/* ── 空状态 Hero（DeepSeek 式：logo 与标题同行） ──────── */
 .hero {
   width: 100%;
   max-width: 560px;
@@ -331,26 +426,27 @@
   padding: 40px 24px;
 }
 
-.seal-lg {
-  width: 60px;
-  height: 60px;
-  border-radius: 14px;
-  font-size: 30px;
-  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.32);
+.hero-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.hero-seal {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  font-size: 19px;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.32);
 }
 
 .hero-title {
-  font-family: var(--font-display);
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
+  font-family: var(--font-body);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
   color: var(--ink);
-  margin: 0;
-}
-
-.hero-sub {
-  font-size: 14.5px;
-  color: var(--ink-2);
   margin: 0;
 }
 
@@ -359,15 +455,14 @@
   flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
-  margin-top: 12px;
 }
 
 .hero-chip {
-  padding: 9px 16px;
+  padding: 8px 14px;
   border: 1px solid var(--line);
   background: var(--surface);
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--ink-2);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
@@ -1068,18 +1163,19 @@
   pointer-events: none;
 }
 
-/* 模式胶囊：位于输入框上方居中 */
+/* 模式胶囊：紧贴输入框上方居中（DeepSeek 式，与上下留出呼吸间隔） */
 .chat-mode-row {
   position: relative;
   display: flex;
   justify-content: center;
-  margin-bottom: 14px;
+  margin-top: 26px;
+  margin-bottom: 30px;
 }
 
 .chat-mode-seg.ant-segmented {
   background: #eef0f4;
   border-radius: 999px;
-  padding: 2px;
+  padding: 3px;
 }
 
 .chat-mode-seg .ant-segmented-item {
@@ -1088,14 +1184,26 @@
 }
 
 .chat-mode-seg .ant-segmented-item-selected {
-  background: var(--seal-soft);
   color: var(--seal);
   box-shadow: none;
+  background: transparent;
 }
 
 .chat-mode-seg .ant-segmented-thumb {
-  background: var(--seal-soft);
-  box-shadow: none;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px rgba(180, 56, 47, 0.5), 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+.mode-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: 13px;
+}
+
+.mode-opt .anticon {
+  font-size: 13px;
 }
 
 .composer-box {
@@ -1105,7 +1213,7 @@
   gap: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 24px;
   padding: 14px 14px 10px;
   box-shadow: 0 6px 24px rgba(16, 24, 40, 0.06);
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -1132,15 +1240,21 @@
   gap: 8px;
 }
 
-.composer-foot-left,
 .composer-foot-right {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
-.composer-icon {
-  color: var(--ink-3);
+/* 输入框下方的建议提问（DeepSeek 式：问题挂在对话框下面） */
+.composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+  position: relative;
 }
 
 .composer-attach {
@@ -1199,10 +1313,10 @@
   outline-offset: 2px;
 }
 
-/* 禁用态：浅底 + 清晰可读的灰字，避免文字与背景融合 */
+/* 禁用态：保持品牌色半透明（DeepSeek 式空态仍显示彩色发送钮） */
 .composer-send[disabled] {
-  background: #eef0f4;
-  color: #9aa1b0;
+  background: rgba(180, 56, 47, 0.4);
+  color: #fff;
   cursor: default;
 }
 
@@ -1357,7 +1471,7 @@
   margin-bottom: 2px;
 }
 
-/* ── 响应式：窄屏下侧栏变浮层 ─────────────────────────── */
+/* ── 响应式：窄屏下侧栏变浮层，顶部改图标栏 ───────────── */
 @media (max-width: 900px) {
   .chat-sidebar {
     position: fixed;
@@ -1370,7 +1484,7 @@
     transition: transform 0.2s ease;
   }
 
-  .chat.sidebar-collapsed .chat-sidebar {
+  .app-shell.sidebar-collapsed .chat-sidebar {
     transform: translateX(-104%);
   }
 
@@ -1385,8 +1499,22 @@
     cursor: pointer;
   }
 
+  .chat-mobile-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: var(--surface);
+    border-bottom: 1px solid #eef0f5;
+  }
+
   .chat-scroll {
-    padding: 60px 20px 12px;
+    padding: 66px 20px 12px;
   }
 
   .composer {
@@ -1410,10 +1538,6 @@
   .composer-box {
     border-radius: 18px;
     padding: 12px 12px 8px;
-  }
-
-  .chat-mode-row {
-    margin-bottom: 10px;
   }
 }
 

@@ -20,6 +20,7 @@ import { FILE_TYPES } from '@myrag/shared';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
 import { useAuthStore } from '../store/auth';
+import { useUiStore } from '../store/ui';
 import { useChatStore } from '../store/chat';
 import { DocumentUploadPanel } from './DocumentUploadPanel';
 import {
@@ -173,6 +174,7 @@ export default function DocumentsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
+  const openLogin = useUiStore((s) => s.openLogin);
   const isManager = useAuthStore((s) => s.isManager);
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
 
@@ -181,7 +183,7 @@ export default function DocumentsPage() {
       message.error(
         <span>
           {err.message}，
-          <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => navigate('/my')}>
+          <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => openLogin()}>
             去登录
           </Button>
         </span>,
