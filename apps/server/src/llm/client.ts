@@ -93,14 +93,30 @@ function isRateLimited(err: unknown): boolean {
   );
 }
 
-/** 429 指数退避重试：最多 retries 次，2→4→8 秒 */
+/** 检测是否瞬时网络故障（连接被对端掐断/超时等，网关间歇性抖动时可重试） */
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('connection error') ||
+    msg.includes('connection reset') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket hang up') ||
+    msg.includes('other side closed') ||
+    msg.includes('fetch failed') ||
+    msg.includes('timeout') ||
+    msg.includes('etimedout')
+  );
+}
+
+/** 429/瞬时网络错误指数退避重试：最多 retries 次，2→4→8 秒 */
 async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    if (isRateLimited(err) && retries > 0) {
+    if (retries > 0 && (isRateLimited(err) || isTransientNetworkError(err))) {
       const delayMs = Math.min(30000, 2000 * Math.pow(2, 3 - retries));
-      logger.warn(`[llm] 429 限流，${delayMs}ms 后重试（剩余 ${retries - 1} 次）`);
+      logger.warn(`[llm] ${isRateLimited(err) ? '429 限流' : '瞬时网络错误'}，${delayMs}ms 后重试（剩余 ${retries - 1} 次）：${err instanceof Error ? err.message.slice(0, 120) : err}`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       return withRetry(fn, retries - 1);
     }
