@@ -318,9 +318,9 @@ function buildSegments(
     if (text.trim()) segs.push({ type: 'reasoning', chunk: { text, startAt, endAt, live } });
   };
 
-  // 无工具：整块思考（生成中保持展开）+ 最终回答
+  // 无工具：整块思考（生成中且思考未结束时保持展开）+ 最终回答
   if (steps.length === 0) {
-    pushReasoning(reasoning, opts.startedAt, opts.reasoningEndAt, opts.generating);
+    pushReasoning(reasoning, opts.startedAt, opts.reasoningEndAt, opts.generating && opts.reasoningEndAt == null);
     segs.push({ type: 'text', text: content, final: true });
     return segs;
   }
@@ -348,9 +348,11 @@ function buildSegments(
 
     segs.push({ type: 'tool', tool: s });
   });
-  // 末段思考（生成中保持展开流式）+ 最终回答
+  // 末段思考 + 最终回答。末段只在「生成中且思考尚未结束」时保持展开流式；
+  // 正文开始输出（reasoningEndAt 已记录）即视为思考结束，收起并显示用时
   const lastStep = steps[steps.length - 1];
-  pushReasoning(reasoning.slice(rLast), lastStep?.endedAt ?? opts.startedAt, opts.reasoningEndAt, opts.generating);
+  const trailingLive = opts.generating && opts.reasoningEndAt == null;
+  pushReasoning(reasoning.slice(rLast), lastStep?.endedAt ?? opts.startedAt, opts.reasoningEndAt, trailingLive);
   if (content.length > cLast) segs.push({ type: 'text', text: content.slice(cLast), final: true });
   else segs.push({ type: 'text', text: '', final: true });
   return segs;
