@@ -20,7 +20,7 @@ vi.mock('../src/api', async (importOriginal) => {
 beforeEach(() => {
   localStorage.clear();
   useChatStore.getState().resetChat();
-  useChatStore.setState({ historyMetas: [], pendingDocRef: null, isLoadingHistory: false, streams: {}, displayedId: null });
+  useChatStore.setState({ historyMetas: [], pendingDocRef: null, isLoadingHistory: false, streams: {}, queues: {}, displayedId: null });
   vi.mocked(ragApi.askStream).mockReset();
   vi.mocked(ragApi.conversationDetail).mockReset();
   vi.mocked(ragApi.listConversations).mockReset();
@@ -221,5 +221,126 @@ describe('chat store URL-driven contract', () => {
     expect(useChatStore.getState().historyMetas).toEqual([
       { id: 'conv-new', title: '新身份会话', updatedAt: 1767225601000 },
     ]);
+  });
+});
+
+describe('chat store 生成中的排队与打断', () => {
+  /** askStream mock：挂起直到 signal abort（模拟真实流被中止），并记录 handlers */
+  function mockHangingStream() {
+    const handlersById = new Map<string, Parameters<typeof ragApi.askStream>[1]>();
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers, signal) => {
+      handlersById.set(params.conversationId, handlers);
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    });
+    return handlersById;
+  }
+
+  it('生成中入队：不触发新请求，当前回答结束后自动发送队首', async () => {
+    const handlersById = new Map<string, Parameters<typeof ragApi.askStream>[1]>();
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      handlersById.set(params.conversationId, handlers);
+    });
+
+    await useChatStore.getState().sendMessage('conv-q', '第一个问题');
+    useChatStore.getState().enqueueMessage('conv-q', '排队的追问');
+    // 生成中入队不立即发送
+    expect(ragApi.askStream).toHaveBeenCalledTimes(1);
+    expect(useChatStore.getState().queues['conv-q']).toHaveLength(1);
+
+    // 当前回答完成：drain 自动发送队首
+    handlersById.get('conv-q')?.onComplete(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ragApi.askStream).toHaveBeenCalledTimes(2);
+    expect(ragApi.askStream).toHaveBeenLastCalledWith(
+      expect.objectContaining({ conversationId: 'conv-q', question: '排队的追问' }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+    expect(useChatStore.getState().queues['conv-q']).toEqual([]);
+  });
+
+  it('排队消息可移除；多条按顺序逐条发送', async () => {
+    const handlersById = new Map<string, Parameters<typeof ragApi.askStream>[1]>();
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      handlersById.set(params.conversationId, handlers);
+    });
+
+    await useChatStore.getState().sendMessage('conv-q2', '问题1');
+    useChatStore.getState().enqueueMessage('conv-q2', '问题2');
+    useChatStore.getState().enqueueMessage('conv-q2', '问题3');
+    const queued = useChatStore.getState().queues['conv-q2'] ?? [];
+    expect(queued.map((q) => q.text)).toEqual(['问题2', '问题3']);
+
+    useChatStore.getState().removeQueuedMessage('conv-q2', queued[0]!.id);
+    expect((useChatStore.getState().queues['conv-q2'] ?? []).map((q) => q.text)).toEqual(['问题3']);
+
+    handlersById.get('conv-q2')?.onComplete(false);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(ragApi.askStream).toHaveBeenLastCalledWith(
+      expect.objectContaining({ question: '问题3' }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+    // 问题3 的回答结束后队列已空，不再有新请求
+    handlersById.get('conv-q2')?.onComplete(false);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(ragApi.askStream).toHaveBeenCalledTimes(2);
+    expect(useChatStore.getState().queues['conv-q2']).toEqual([]);
+  });
+
+  it('打断并立即发送：停止当前回答，新消息插队首马上发出', async () => {
+    const handlersById = mockHangingStream();
+
+    // 挂起式 mock 下 sendMessage 不会返回，等流注册即可
+    void useChatStore.getState().sendMessage('conv-i', '被打断的问题');
+    await vi.waitFor(() => expect(useChatStore.getState().streams['conv-i']).toBeDefined());
+    expect(ragApi.cancelGeneration).not.toHaveBeenCalled();
+
+    useChatStore.getState().interruptAndSend('conv-i', '打断后的新问题');
+    // 旧流被本地中止 + 服务端取消
+    expect(ragApi.cancelGeneration).toHaveBeenCalledWith('conv-i');
+
+    // 等待 abort 触发旧流 reject → finish(CANCELLED) → drain 发送新问题
+    await vi.waitFor(() => expect(ragApi.askStream).toHaveBeenCalledTimes(2));
+    expect(ragApi.askStream).toHaveBeenLastCalledWith(
+      expect.objectContaining({ conversationId: 'conv-i', question: '打断后的新问题' }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+    expect(useChatStore.getState().queues['conv-i']).toEqual([]);
+    expect(useChatStore.getState().streams['conv-i']).toBeDefined();
+    // 被打断的回答以 CANCELLED 收尾，原问题保留；新问题已插入消息流
+    const msgs = useChatStore.getState().messages;
+    expect(msgs[0]).toMatchObject({ role: 'user', content: '被打断的问题' });
+    expect(msgs[1]).toMatchObject({ role: 'assistant', status: 'CANCELLED' });
+    expect(msgs.at(-2)).toMatchObject({ role: 'user', content: '打断后的新问题' });
+    handlersById.get('conv-i')?.onComplete(false);
+  });
+
+  it('用户手动停止后队列继续发送；删除会话清空其队列', async () => {
+    const handlersById = mockHangingStream();
+
+    void useChatStore.getState().sendMessage('conv-s', '问题1');
+    await vi.waitFor(() => expect(useChatStore.getState().streams['conv-s']).toBeDefined());
+    useChatStore.getState().enqueueMessage('conv-s', '排队的问题');
+    useChatStore.getState().stopGeneration('conv-s');
+
+    // 手动停止：当前回答取消，但排队消息照常发出（DeepSeek 语义）
+    await vi.waitFor(() => expect(ragApi.askStream).toHaveBeenCalledTimes(2));
+    expect(ragApi.askStream).toHaveBeenLastCalledWith(
+      expect.objectContaining({ question: '排队的问题' }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+    handlersById.get('conv-s')?.onComplete(false);
+
+    // 删除会话：队列一并清空（直接注入一条队列消息，绕开「无生成时入队兜底直发」逻辑）
+    useChatStore.setState({ queues: { 'conv-s': [{ id: 'q-del', text: '将随会话删除' }] } });
+    expect(useChatStore.getState().queues['conv-s']).toHaveLength(1);
+    await useChatStore.getState().deleteConversation('conv-s');
+    expect(useChatStore.getState().queues['conv-s']).toBeUndefined();
   });
 });

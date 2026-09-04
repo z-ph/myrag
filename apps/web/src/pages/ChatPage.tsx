@@ -574,10 +574,14 @@ export default function ChatPage() {
     resetChat,
     sendMessage,
     stopGeneration,
+    enqueueMessage,
+    removeQueuedMessage,
+    interruptAndSend,
     mode,
     setMode,
   } = useChatStore();
   const streams = useChatStore((s) => s.streams);
+  const queues = useChatStore((s) => s.queues);
 
   // URL 是当前会话 ID 的唯一来源：/chat/new 为新会话，/chat/{id} 为已有会话
   const { conversationId } = useParams<{ conversationId?: string }>();
@@ -585,6 +589,8 @@ export default function ChatPage() {
   const isNewConversation = conversationId === undefined;
   // 生成状态按会话隔离：只看当前会话是否在生成（其他会话的后台流不锁这里）
   const generatingHere = conversationId != null && streams[conversationId] != null;
+  // 当前会话的排队消息（生成中提交、回答结束后自动发送）
+  const convQueue = conversationId != null ? queues[conversationId] ?? [] : [];
   const [routeState, setRouteState] = useState<'new' | 'loading' | 'ready' | 'not-found' | 'error'>(
     isNewConversation ? 'new' : 'loading',
   );
@@ -657,13 +663,29 @@ export default function ChatPage() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const buildAsked = (q: string) =>
+    docRef ? `引用文档：${docRef.filename}\ndocumentId: ${docRef.documentId}\n\n${q}` : q;
+
+  const clearComposer = () => {
+    setInput('');
+    setDocRef(null);
+    setImage(null);
+    setImagePreview(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Enter / 建议提问 / 追问：生成中提交会进入队列，当前回答结束后自动发送
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
     if (routeState === 'loading' || isLoadingHistory) return;
     if (!q && !image) return;
-    const asked = docRef
-      ? `引用文档：${docRef.filename}\ndocumentId: ${docRef.documentId}\n\n${q}`
-      : q;
+    const asked = buildAsked(q);
+    // 生成中：排队而不是禁用输入（引用/图片随入队消息一并带上）
+    if (conversationId && streams[conversationId]) {
+      enqueueMessage(conversationId, asked, image ?? undefined);
+      clearComposer();
+      return;
+    }
     // 新会话首次发送：前端生成 ID 并以 replace 写入 URL，后退不会回到已消费的 /chat/new
     const targetId = conversationId ?? createConversationId();
     if (!conversationId) {
@@ -671,11 +693,20 @@ export default function ChatPage() {
       navigate(`/chat/${encodeURIComponent(targetId)}`, { replace: true });
     }
     void sendMessage(targetId, asked, image ?? undefined);
-    setInput('');
-    setDocRef(null);
-    setImage(null);
-    setImagePreview(null);
-    if (fileRef.current) fileRef.current.value = '';
+    clearComposer();
+  };
+
+  // 发送按钮：生成中点击 = 打断当前回答并立即发送（DSH steering 语义）
+  const handleSendNow = () => {
+    const q = input.trim();
+    if (!q && !image) return;
+    if (routeState === 'loading' || isLoadingHistory) return;
+    if (conversationId && streams[conversationId]) {
+      interruptAndSend(conversationId, buildAsked(q), image ?? undefined);
+      clearComposer();
+      return;
+    }
+    handleSend();
   };
 
   const handlePickImage = (file: File | undefined) => {
@@ -756,6 +787,21 @@ export default function ChatPage() {
                 </Button>
               </div>
             )}
+            {/* 生成中排队的消息：当前回答结束后自动逐条发送 */}
+            {convQueue.length > 0 && (
+              <div className="chat-queue">
+                {convQueue.map((item) => (
+                  <div className="chat-queue-item" key={item.id}>
+                    <span className="chat-queue-badge">排队中</span>
+                    <span className="chat-queue-text" title={item.text}>{item.text}</span>
+                    <Button size="small" type="text" className="chat-queue-remove" onClick={() => conversationId && removeQueuedMessage(conversationId, item.id)}>
+                      移除
+                    </Button>
+                  </div>
+                ))}
+                <div className="chat-queue-hint">回答结束后将自动发送</div>
+              </div>
+            )}
             <div className="composer-box">
               <Input.TextArea
                 value={input}
@@ -769,14 +815,13 @@ export default function ChatPage() {
                     handleSend();
                   }
                 }}
-                disabled={generatingHere}
               />
               <div className="composer-foot">
                 <div className="composer-foot-right">
                   {IMAGE_UPLOAD_ENABLED && (
                     <>
                       <Tooltip title="发送图片">
-                        <button type="button" className="composer-attach" onClick={() => fileRef.current?.click()} disabled={generatingHere} aria-label="发送图片">
+                        <button type="button" className="composer-attach" onClick={() => fileRef.current?.click()} aria-label="发送图片">
                           <FileImageOutlined />
                         </button>
                       </Tooltip>
@@ -790,14 +835,27 @@ export default function ChatPage() {
                     </>
                   )}
                   {generatingHere ? (
-                    <button
-                      type="button"
-                      className="composer-send is-stop"
-                      aria-label="停止生成"
-                      onClick={() => conversationId && stopGeneration(conversationId)}
-                    >
-                      <StopOutlined />
-                    </button>
+                    <>
+                      <Tooltip title="停止当前回答并发送">
+                        <button
+                          type="button"
+                          className="composer-send"
+                          aria-label="停止当前回答并发送"
+                          onClick={handleSendNow}
+                          disabled={!input.trim() && !image}
+                        >
+                          <ArrowUpOutlined />
+                        </button>
+                      </Tooltip>
+                      <button
+                        type="button"
+                        className="composer-send is-stop"
+                        aria-label="停止生成"
+                        onClick={() => conversationId && stopGeneration(conversationId)}
+                      >
+                        <StopOutlined />
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"

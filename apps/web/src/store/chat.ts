@@ -49,6 +49,13 @@ export interface ConversationMeta {
   updatedAt: number;
 }
 
+/** 排队中的消息：当前会话生成结束后按顺序自动发送（DSH queue 语义） */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  image?: File;
+}
+
 /** 一个会话进行中的生成流：多会话并行时按会话隔离，切走后仍在后台累积 */
 export interface ChatStream {
   conversationId: string;
@@ -71,6 +78,8 @@ interface ChatState {
   displayedId: string | null;
   /** 进行中的生成流，按会话隔离：不同会话可并行，同会话串行 */
   streams: Record<string, ChatStream>;
+  /** 生成中提交的消息按会话排队，当前回答结束后自动逐条发送 */
+  queues: Record<string, QueuedMessage[]>;
   isLoadingHistory: boolean;
   /** 会话列表（服务端驱动：登录用户与访客各自名下的会话） */
   historyMetas: ConversationMeta[];
@@ -90,6 +99,12 @@ interface ChatState {
   /** 会话 ID 由调用方（聊天页）显式传入：新会话为首次发送前生成的 ID。
    *  同一会话生成中再次发送会被忽略；不同会话互不影响、可并行。 */
   sendMessage(conversationId: string, question: string, image?: File): Promise<void>;
+  /** 生成中排队：追加到该会话队列，当前回答结束后自动发送；已无生成时兜底为直接发送 */
+  enqueueMessage(conversationId: string, text: string, image?: File): void;
+  /** 移除一条排队消息 */
+  removeQueuedMessage(conversationId: string, id: string): void;
+  /** 打断当前生成并立即发送（DSH steering 语义）：新消息插到队首，当前回答取消后马上发出 */
+  interruptAndSend(conversationId: string, text: string, image?: File): void;
   stopGeneration(conversationId: string): void;
   /** 身份切换（登录/登出）后调用：中断所有会话的生成、重置状态并刷新列表 */
   onIdentityChanged(): void;
@@ -108,6 +123,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     messages: [],
     displayedId: null,
     streams: {},
+    queues: {},
     isLoadingHistory: false,
     historyMetas: [],
     pendingDocRef: null,
@@ -199,6 +215,12 @@ export const useChatStore = create<ChatState>((set, get) => {
     async deleteConversation(id) {
       // 该会话若在生成，先停（本地断流 + 服务端取消），避免完成路径又把会话刷回列表
       get().stopGeneration(id);
+      // 删除会话同时清掉它的排队消息，避免 drain 把消息发进已删除的会话
+      set((s) => {
+        const queues = { ...s.queues };
+        delete queues[id];
+        return { queues };
+      });
       await ragApi.clearConversation(id).catch(() => {});
       await get().refreshConversations();
     },
@@ -288,6 +310,13 @@ export const useChatStore = create<ChatState>((set, get) => {
         // 消息请求一旦发出，服务端即懒创建会话（含停止/报错场景）。
         // 立即刷新侧栏列表，新会话不用等下一次进页面才出现。
         void get().refreshConversations();
+        // 回答结束（完成/取消/失败）后：自动发送该会话排队的下一条消息
+        const queue = get().queues[conversationId];
+        const next = queue?.[0];
+        if (next) {
+          set((s) => ({ queues: { ...s.queues, [conversationId]: (s.queues[conversationId] ?? []).slice(1) } }));
+          void get().sendMessage(conversationId, next.text, next.image);
+        }
         return true;
       };
 
@@ -360,11 +389,58 @@ export const useChatStore = create<ChatState>((set, get) => {
       void ragApi.cancelGeneration(conversationId).catch(() => {});
     },
 
+    enqueueMessage(conversationId, text, image) {
+      const trimmed = text.trim();
+      if (!trimmed && !image) return;
+      // 竞态兜底：队列动作发出时生成已结束，直接发送
+      if (!get().streams[conversationId]) {
+        void get().sendMessage(conversationId, trimmed, image);
+        return;
+      }
+      const item: QueuedMessage = {
+        id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        text: trimmed,
+        image,
+      };
+      set((s) => ({
+        queues: { ...s.queues, [conversationId]: [...(s.queues[conversationId] ?? []), item] },
+      }));
+    },
+
+    removeQueuedMessage(conversationId, id) {
+      set((s) => ({
+        queues: {
+          ...s.queues,
+          [conversationId]: (s.queues[conversationId] ?? []).filter((q) => q.id !== id),
+        },
+      }));
+    },
+
+    interruptAndSend(conversationId, text, image) {
+      const trimmed = text.trim();
+      if (!get().streams[conversationId]) {
+        void get().sendMessage(conversationId, trimmed, image);
+        return;
+      }
+      if (trimmed || image) {
+        const item: QueuedMessage = {
+          id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          text: trimmed,
+          image,
+        };
+        // 插到队首：当前回答取消收尾时，drain 会立即把它发送出去
+        set((s) => ({
+          queues: { ...s.queues, [conversationId]: [item, ...(s.queues[conversationId] ?? [])] },
+        }));
+      }
+      get().stopGeneration(conversationId);
+    },
+
     onIdentityChanged() {
       listGeneration += 1;
-      // 换身份后原会话流全部作废（属于上一个身份），中断并清空
+      // 换身份后原会话流全部作废（属于上一个身份），中断并清空；排队消息同样作废
       for (const stream of Object.values(get().streams)) stream.controller.abort();
-      set({ streams: {}, historyMetas: [] });
+      set({ streams: {}, queues: {}, historyMetas: [] });
       get().resetChat();
       void get().refreshConversations();
     },

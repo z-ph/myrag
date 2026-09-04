@@ -1289,6 +1289,55 @@
   font-size: 14px;
 }
 
+/* 生成中排队消息（DeepSeek 式：挂在输入框上方，回答结束后自动发送） */
+.chat-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chat-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 7px 12px;
+}
+
+.chat-queue-badge {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--seal);
+  background: var(--seal-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.chat-queue-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-queue-remove {
+  flex-shrink: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.chat-queue-hint {
+  font-size: 12px;
+  color: var(--ink-3);
+  padding-left: 4px;
+}
+
 .composer-box {
   position: relative;
   display: flex;
