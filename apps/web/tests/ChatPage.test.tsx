@@ -136,7 +136,8 @@ describe('ChatPage assistant extras', () => {
     useAuthStore.setState({ loading: false, restore: vi.fn().mockResolvedValue(undefined) });
     useChatStore.setState({
       messages: [],
-      isGenerating: false,
+      streams: {},
+      displayedId: null,
       isLoadingHistory: false,
       historyMetas: [],
       pendingDocRef: null,
@@ -235,7 +236,6 @@ describe('ChatPage assistant extras', () => {
   it('生成中不出现复制按钮和追问', () => {
     useChatStore.setState({
       messages: [assistant({ status: 'GENERATING' })],
-      isGenerating: true,
     });
     mount();
     expect(screen.queryByRole('button', { name: '复制' })).toBeNull();
@@ -348,7 +348,7 @@ describe('ChatPage assistant extras', () => {
     fireEvent.click(screen.getByRole('button', { name: /发送$/ }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentIds[0]}`));
     expect(sentIds[0]).toMatch(/^conv-/);
-    await waitFor(() => expect(useChatStore.getState().isGenerating).toBe(false));
+    await waitFor(() => expect(useChatStore.getState().streams).toEqual({}));
 
     fireEvent.change(screen.getByPlaceholderText(/给财务知识库发送消息/), { target: { value: '可重试问题' } });
     fireEvent.click(screen.getByRole('button', { name: /发送$/ }));

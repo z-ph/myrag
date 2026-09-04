@@ -59,6 +59,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
   const logout = useAuthStore((s) => s.logout);
   const openLogin = useUiStore((s) => s.openLogin);
   const { historyMetas, deleteConversation, resetChat } = useChatStore();
+  const streams = useChatStore((s) => s.streams);
   const sidebarBodyRef = useRef<HTMLDivElement>(null);
 
   // 当前会话 ID 取自 URL（/chat/{id}），保证侧栏高亮与地址栏一致
@@ -148,6 +149,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
                   }}
                 >
                   <span className="sidebar-item-title" title={meta.title}>{meta.title}</span>
+                  {streams[meta.id] && <span className="sidebar-item-live" aria-label="生成中" title="正在生成回答…" />}
                   <Popconfirm
                     title="删除该会话？"
                     getPopupContainer={(trigger) => trigger.closest('.chat-sidebar') ?? document.body}

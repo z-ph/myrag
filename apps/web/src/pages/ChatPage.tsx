@@ -568,7 +568,6 @@ function MessageItem({ msg, onAsk, onPreview, devMode }: { msg: ChatMessage; onA
 export default function ChatPage() {
   const {
     messages,
-    isGenerating,
     isLoadingHistory,
     loadConversation,
     refreshConversations,
@@ -578,11 +577,14 @@ export default function ChatPage() {
     mode,
     setMode,
   } = useChatStore();
+  const streams = useChatStore((s) => s.streams);
 
   // URL 是当前会话 ID 的唯一来源：/chat/new 为新会话，/chat/{id} 为已有会话
   const { conversationId } = useParams<{ conversationId?: string }>();
   const navigate = useNavigate();
   const isNewConversation = conversationId === undefined;
+  // 生成状态按会话隔离：只看当前会话是否在生成（其他会话的后台流不锁这里）
+  const generatingHere = conversationId != null && streams[conversationId] != null;
   const [routeState, setRouteState] = useState<'new' | 'loading' | 'ready' | 'not-found' | 'error'>(
     isNewConversation ? 'new' : 'loading',
   );
@@ -767,14 +769,14 @@ export default function ChatPage() {
                     handleSend();
                   }
                 }}
-                disabled={isGenerating}
+                disabled={generatingHere}
               />
               <div className="composer-foot">
                 <div className="composer-foot-right">
                   {IMAGE_UPLOAD_ENABLED && (
                     <>
                       <Tooltip title="发送图片">
-                        <button type="button" className="composer-attach" onClick={() => fileRef.current?.click()} disabled={isGenerating} aria-label="发送图片">
+                        <button type="button" className="composer-attach" onClick={() => fileRef.current?.click()} disabled={generatingHere} aria-label="发送图片">
                           <FileImageOutlined />
                         </button>
                       </Tooltip>
@@ -787,7 +789,7 @@ export default function ChatPage() {
                       />
                     </>
                   )}
-                  {isGenerating ? (
+                  {generatingHere ? (
                     <button
                       type="button"
                       className="composer-send is-stop"

@@ -20,7 +20,7 @@ vi.mock('../src/api', async (importOriginal) => {
 beforeEach(() => {
   localStorage.clear();
   useChatStore.getState().resetChat();
-  useChatStore.setState({ historyMetas: [], pendingDocRef: null, isLoadingHistory: false });
+  useChatStore.setState({ historyMetas: [], pendingDocRef: null, isLoadingHistory: false, streams: {}, displayedId: null });
   vi.mocked(ragApi.askStream).mockReset();
   vi.mocked(ragApi.conversationDetail).mockReset();
   vi.mocked(ragApi.listConversations).mockReset();
@@ -67,10 +67,17 @@ describe('chat store URL-driven contract', () => {
     expect(useChatStore.getState().isLoadingHistory).toBe(false);
   });
 
-  it('身份变化清空消息、生成状态、列表和 pending 文档引用', () => {
+  it('身份变化清空消息、生成流、列表和 pending 文档引用', () => {
     useChatStore.setState({
       messages: [{ id: 'm1', role: 'user', content: '旧身份消息', status: 'COMPLETED' }],
-      isGenerating: true,
+      streams: {
+        'conv-old': {
+          conversationId: 'conv-old',
+          userMsg: { id: 'u1', role: 'user', content: '旧问题', status: 'COMPLETED' },
+          aiMsg: { id: 'a1', role: 'assistant', content: '', status: 'GENERATING' },
+          controller: new AbortController(),
+        },
+      },
       historyMetas: [{ id: 'conv-old', title: '旧会话', updatedAt: 1 }],
       pendingDocRef: { documentId: 'd1', filename: '旧文档.pdf' },
     });
@@ -79,7 +86,7 @@ describe('chat store URL-driven contract', () => {
 
     expect(useChatStore.getState()).toMatchObject({
       messages: [],
-      isGenerating: false,
+      streams: {},
       historyMetas: [],
       pendingDocRef: null,
     });
@@ -102,33 +109,93 @@ describe('chat store URL-driven contract', () => {
     expect(useChatStore.getState().messages).toEqual([]);
   });
 
-  it('重置后旧 SSE 的完成路径不会改变新生成或刷新列表', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    let oldHandlers!: Parameters<typeof ragApi.askStream>[1];
-    vi.mocked(ragApi.askStream)
-      .mockImplementationOnce(async (_params, handlers, signal) => {
-        oldHandlers = handlers;
-        await new Promise<void>((_resolve, reject) => {
-          signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
-        });
-      })
-      .mockImplementationOnce(async () => new Promise(() => {}));
+  it('切走后旧流在后台完成：不污染当前视图，生成流按会话清除', async () => {
+    const handlersById = new Map<string, Parameters<typeof ragApi.askStream>[1]>();
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      handlersById.set(params.conversationId, handlers);
+    });
 
-    const oldRequest = useChatStore.getState().sendMessage('conv-old', '旧问题');
+    await useChatStore.getState().sendMessage('conv-old', '旧问题');
+    expect(Object.keys(useChatStore.getState().streams)).toEqual(['conv-old']);
+
+    // 模拟切走（新会话页）：resetChat 不中断后台流
     useChatStore.getState().resetChat();
-    vi.setSystemTime(new Date('2026-01-01T00:00:01Z'));
-    void useChatStore.getState().sendMessage('conv-new', '新问题');
-    await oldRequest;
-    oldHandlers.onComplete(false);
+    expect(Object.keys(useChatStore.getState().streams)).toEqual(['conv-old']);
 
-    expect(useChatStore.getState()).toMatchObject({ isGenerating: true });
-    expect(useChatStore.getState().messages).toEqual([
-      expect.objectContaining({ id: 'user-1767225601000', content: '新问题', status: 'COMPLETED' }),
-      expect.objectContaining({ id: 'assistant-1767225601000', status: 'GENERATING' }),
-    ]);
-    expect(ragApi.listConversations).not.toHaveBeenCalled();
-    vi.useRealTimers();
+    // 旧流的增量/完成只累积到自己的流状态，不进入当前空视图
+    handlersById.get('conv-old')?.onDelta('迟到的增量');
+    handlersById.get('conv-old')?.onReasoningDelta('迟到的思考');
+    expect(useChatStore.getState().messages).toEqual([]);
+
+    handlersById.get('conv-old')?.onComplete(false);
+    expect(useChatStore.getState().streams).toEqual({});
+    // 后台完成同样刷新侧栏列表（新会话即时出现）
+    expect(ragApi.listConversations).toHaveBeenCalled();
+  });
+
+  it('不同会话可并行生成，同会话生成中再次发送被忽略', async () => {
+    const handlersById = new Map<string, Parameters<typeof ragApi.askStream>[1]>();
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      handlersById.set(params.conversationId, handlers);
+    });
+
+    await useChatStore.getState().sendMessage('conv-a', '问题A');
+    await useChatStore.getState().sendMessage('conv-b', '问题B');
+    expect(ragApi.askStream).toHaveBeenCalledTimes(2);
+    expect(Object.keys(useChatStore.getState().streams).sort()).toEqual(['conv-a', 'conv-b']);
+
+    // 同会话并发被拦截，其他会话不受影响
+    await useChatStore.getState().sendMessage('conv-a', '问题A重复');
+    expect(ragApi.askStream).toHaveBeenCalledTimes(2);
+
+    handlersById.get('conv-a')?.onComplete(false);
+    expect(Object.keys(useChatStore.getState().streams)).toEqual(['conv-b']);
+    handlersById.get('conv-b')?.onComplete(false);
+    expect(useChatStore.getState().streams).toEqual({});
+  });
+
+  it('生成中切回该会话：服务端占位对被本地在途消息替换，内容无缝续看', async () => {
+    // rAF 改为同步执行且返回 undefined（== null），让每次 delta 都立即 flush，
+    // 断言前无需等待真实帧回调
+    vi.stubGlobal('requestAnimationFrame', ((cb: FrameRequestCallback) => {
+      cb(0);
+      return undefined as unknown as number;
+    }) as typeof requestAnimationFrame);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    const handlersById = new Map<string, Parameters<typeof ragApi.askStream>[1]>();
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      handlersById.set(params.conversationId, handlers);
+    });
+
+    try {
+      await useChatStore.getState().sendMessage('conv-live', '正在回答的问题');
+      handlersById.get('conv-live')?.onDelta('已生成的一半答案');
+      handlersById.get('conv-live')?.onReasoningDelta('一部分思考');
+      useChatStore.getState().resetChat();
+
+      // 服务端在请求开始时已落库 USER 问题 + 空 ASSISTANT 占位
+      vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+        conversationId: 'conv-live',
+        exists: true,
+        recentMessages: [
+          { role: 'USER', content: '正在回答的问题', timestamp: '2026-09-04T00:00:00.000Z', status: 'COMPLETED' },
+          { role: 'ASSISTANT', content: '', timestamp: '2026-09-04T00:00:01.000Z', status: 'GENERATING' },
+        ],
+        recentMessageCount: 2,
+      });
+      await useChatStore.getState().loadConversation('conv-live');
+
+      const msgs = useChatStore.getState().messages;
+      expect(msgs).toHaveLength(2);
+      expect(msgs[0]).toMatchObject({ role: 'user', content: '正在回答的问题' });
+      expect(msgs[1]).toMatchObject({ role: 'assistant', content: '已生成的一半答案', status: 'GENERATING' });
+
+      // 继续生成时增量实时进入当前视图
+      handlersById.get('conv-live')?.onDelta('的后半段');
+      expect(useChatStore.getState().messages[1]?.content).toBe('已生成的一半答案的后半段');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('身份变化后忽略旧身份的列表结果并保留新身份的刷新', async () => {

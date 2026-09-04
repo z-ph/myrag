@@ -244,6 +244,25 @@
   transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
 
+/* 会话生成中标记：呼吸小圆点（多会话并行时可感知后台进度） */
+.sidebar-item-live {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4d6bfe;
+  animation: sidebar-live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sidebar-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.72); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-item-live { animation: none; }
+}
+
 .sidebar-item:hover .sidebar-item-del,
 .sidebar-item-del:focus-visible {
   opacity: 1;
