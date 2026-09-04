@@ -204,7 +204,7 @@ function ReasoningBlock({
   return (
     <div className={`think-row${live ? ' is-live' : ''}`}>
       <button type="button" className="think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="think-icon">{live ? <span className="think-spinner" /> : <span className="think-star">✦</span>}</span>
+        <span className="think-icon"><span className="think-star">✦</span></span>
         <span className="think-label">{label}</span>
         <span className="think-chevron">⌄</span>
       </button>

@@ -790,28 +790,27 @@
   line-height: 1;
 }
 
-.think-spinner {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 2px solid #4d6bfe;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: think-spin 0.8s linear infinite;
-}
-
-@keyframes think-spin {
-  to { transform: rotate(360deg); }
+/* 思考中标题流光（与工具行「xx中」一致：灰字扫过品牌色） */
+.think-row.is-live .think-label {
+  background: linear-gradient(
+    90deg,
+    #9aa1ad 0%,
+    #9aa1ad 38%,
+    #4d6bfe 50%,
+    #9aa1ad 62%,
+    #9aa1ad 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
 }
 
 .think-label {
   flex-shrink: 0;
   font-weight: 500;
   color: var(--ink);
-}
-
-.think-row.is-live .think-label {
-  color: #4d6bfe;
 }
 
 .think-chevron {
@@ -1018,9 +1017,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .think-spinner,
+  .think-row.is-live .think-label,
   .live-dots i {
     animation: none;
+  }
+
+  .think-row.is-live .think-label {
+    background: none;
+    color: #4d6bfe;
   }
 }
 
