@@ -744,18 +744,6 @@
   padding-left: 20px;
 }
 
-/* 左侧虚线轨迹，串联整轮动作 */
-.agent-flow::before {
-  content: '';
-  position: absolute;
-  left: 5px;
-  top: 10px;
-  bottom: 10px;
-  width: 0;
-  border-left: 1px dashed var(--line);
-  pointer-events: none;
-}
-
 /* 穿插的叙述性段落（工具调用之前的「我先检索一下」等） */
 .flow-interim {
   font-size: 14px;
@@ -833,10 +821,12 @@
   color: #9aa1b0;
 }
 
-/* 思考正文：逐条圆点段落，无背景无边框 */
+/* 思考正文：左侧实线贯穿 + 逐条圆点段落 */
 .think-body {
   margin-top: 4px;
-  padding: 2px 0 2px 21px;
+  margin-left: 6px;
+  padding: 2px 0 2px 15px;
+  border-left: 1px solid #d9dce3;
   font-size: 13px;
   line-height: 1.7;
   max-height: 320px;
