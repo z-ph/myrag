@@ -25,7 +25,6 @@ export interface ChatMessage {
 export interface ToolStep {
   id: string;
   name: string;
-  label: string;
   args: Record<string, unknown>;
   output?: string;
   status: 'running' | 'done';
@@ -34,16 +33,6 @@ export interface ToolStep {
    * 用于把正文按发生顺序与工具调用穿插渲染（工具调用前的叙述性文字留在工具调用之前）。
    */
   atOffset?: number;
-}
-
-/** 工具名 → 展示文案 */
-const TOOL_LABELS: Record<string, string> = {
-  search_knowledge_base: '检索知识库',
-  read_document: '阅读文档正文',
-};
-
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name;
 }
 
 export interface ConversationMeta {
@@ -162,7 +151,6 @@ export const useChatStore = create<ChatState>((set, get) => {
             toolCalls: m.toolCalls?.map((tc) => ({
               id: tc.id,
               name: tc.name,
-              label: toolLabel(tc.name),
               args: tc.args,
               output: tc.output,
               status: 'done' as const,
@@ -279,7 +267,6 @@ export const useChatStore = create<ChatState>((set, get) => {
                           {
                             id: call.id,
                             name: call.name,
-                            label: toolLabel(call.name),
                             args: call.args,
                             status: 'running' as const,
                             atOffset: curLen + pendingLen,

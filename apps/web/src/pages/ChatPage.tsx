@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Image, Input, message, Modal, Segmented, Spin, Switch, Tooltip } from 'antd';
 import {
   ArrowUpOutlined,
-  BookOutlined,
   CheckOutlined,
   CopyOutlined,
   DownloadOutlined,
@@ -11,7 +10,6 @@ import {
   LoadingOutlined,
   SearchOutlined,
   StopOutlined,
-  ToolOutlined,
   ThunderboltFilled,
 } from '@ant-design/icons';
 
@@ -20,6 +18,7 @@ import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
 import OverlayScrollbar from '../components/OverlayScrollbar';
+import { getToolConfig, toolDisplay } from '../tool-registry';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
 import { buildFollowUpQuestions, shouldShowAssistantCopy } from './chatMessageExtras';
 import Markdown from 'react-markdown';
@@ -212,16 +211,10 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
   );
 }
 
-/** 工具名 → 图标（DSH 风格：每个工具一个轻量图标） */
+/** 工具行图标：从工具注册表取（未注册工具回退通用图标） */
 function ToolGlyphIcon({ name }: { name: string }) {
-  switch (name) {
-    case 'search_knowledge_base':
-      return <SearchOutlined />;
-    case 'read_document':
-      return <BookOutlined />;
-    default:
-      return <ToolOutlined />;
-  }
+  const Icon = getToolConfig(name).icon;
+  return Icon ? <Icon /> : null;
 }
 
 /** 工具行摘要：检索工具优先显示 query，否则取输出首段摘要 */
@@ -257,7 +250,7 @@ function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
         <span className="tool-row-icon">
           {running ? <LoadingOutlined spin /> : <ToolGlyphIcon name={tc.name} />}
         </span>
-        <span className="tool-row-name">{tc.label}</span>
+        <span className="tool-row-name">{toolDisplay(tc.name, tc.status)}</span>
         {preview && <span className="tool-row-preview">{preview}</span>}
         {done && <span className={`tool-row-chevron${open ? ' open' : ''}`}>▸</span>}
       </button>
@@ -341,13 +334,17 @@ function formatElapsed(ms: number): string {
 }
 
 /** 正在回答：跳动圆点 + 状态文案 + 经过时间（DSH「Deep diving… · 3m 04s」式） */
-function LiveRow({ startedAt, streaming, toolRunning, fastMode }: { startedAt?: number; streaming: boolean; toolRunning: boolean; fastMode: boolean }) {
+function LiveRow({ startedAt, streaming, runningTool, fastMode }: { startedAt?: number; streaming: boolean; runningTool?: string; fastMode: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, []);
-  const label = toolRunning ? '正在检索知识库…' : streaming || fastMode ? '正在生成回答…' : '正在思考…';
+  const label = runningTool
+    ? `${toolDisplay(runningTool, 'running')}…`
+    : streaming || fastMode
+      ? '正在生成回答…'
+      : '正在思考…';
   return (
     <div className="live-row" role="status" aria-live="polite">
       <span className="live-dots"><i /><i /><i /></span>
@@ -362,7 +359,6 @@ function AgentFlow({ msg, devMode }: { msg: ChatMessage; devMode: boolean }) {
   const generating = msg.status === 'GENERATING';
   const steps = msg.toolCalls ?? [];
   const segments = useMemo(() => buildSegments(msg.content, steps), [msg.content, steps]);
-  const toolRunning = steps.some((s) => s.status === 'running');
   const lastSeg: FlowSeg | undefined = segments[segments.length - 1];
   const streamingText =
     generating && lastSeg?.type === 'text' && lastSeg.text.trim().length > 0;
@@ -394,7 +390,14 @@ function AgentFlow({ msg, devMode }: { msg: ChatMessage; devMode: boolean }) {
           </div>
         );
       })}
-      {generating && <LiveRow startedAt={msg.startedAt} streaming={streamingText} toolRunning={toolRunning} fastMode={msg.mode === 'fast'} />}
+      {generating && (
+        <LiveRow
+          startedAt={msg.startedAt}
+          streaming={streamingText}
+          runningTool={steps.find((s) => s.status === 'running')?.name}
+          fastMode={msg.mode === 'fast'}
+        />
+      )}
     </div>
   );
 }
