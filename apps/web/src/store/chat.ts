@@ -19,6 +19,8 @@ export interface ChatMessage {
   imageUrl?: string;
   /** 本轮生成开始时间（用于「正在回答…」的经过时间） */
   startedAt?: number;
+  /** 思考结束时间（首个正文增量到达或生成结束时记录，用于末段思考的展示用时） */
+  reasoningEndAt?: number;
 }
 
 /** 一次工具调用（含执行结果） */
@@ -33,6 +35,12 @@ export interface ToolStep {
    * 用于把正文按发生顺序与工具调用穿插渲染（工具调用前的叙述性文字留在工具调用之前）。
    */
   atOffset?: number;
+  /** 该工具调用发生时思考内容的累计长度（用于把思考穿插到工具行之间） */
+  reasoningAtOffset?: number;
+  /** 工具调用开始时间戳（用于推算前一段思考的展示用时） */
+  startAt?: number;
+  /** 工具结果返回时间戳 */
+  endedAt?: number;
 }
 
 export interface ConversationMeta {
@@ -155,8 +163,13 @@ export const useChatStore = create<ChatState>((set, get) => {
               output: tc.output,
               status: 'done' as const,
               atOffset: tc.atOffset,
+              reasoningAtOffset: tc.reasoningAtOffset,
+              startAt: tc.startAt,
+              endedAt: tc.endedAt,
             })),
             status: m.status ?? 'COMPLETED',
+            // 历史助手消息的时间戳，作为首段思考的起始时间（推算「用时 N 秒」）
+            startedAt: m.role === 'USER' ? undefined : Date.parse(m.timestamp) || undefined,
           })),
         });
       } finally {
@@ -219,7 +232,13 @@ export const useChatStore = create<ChatState>((set, get) => {
         set((s) => ({
           messages: s.messages.map((m) =>
             m.id === aiMsg.id
-              ? { ...m, content: m.content + c, reasoning: (m.reasoning ?? '') + r }
+              ? {
+                  ...m,
+                  content: m.content + c,
+                  reasoning: (m.reasoning ?? '') + r,
+                  // 首个正文增量到达即视为思考结束（末段思考的展示用时起点在流开始/上个工具结束）
+                  reasoningEndAt: m.reasoningEndAt ?? (c ? Date.now() : undefined),
+                }
               : m,
           ),
         }));
@@ -234,7 +253,16 @@ export const useChatStore = create<ChatState>((set, get) => {
         set((s) => ({
           isGenerating: false,
           messages: s.messages.map((m) =>
-            m.id === aiMsg.id ? { ...m, status, content: content ?? m.content, reasoning: m.reasoning, sources: m.sources } : m,
+            m.id === aiMsg.id
+              ? {
+                  ...m,
+                  status,
+                  content: content ?? m.content,
+                  reasoning: m.reasoning,
+                  sources: m.sources,
+                  reasoningEndAt: m.reasoningEndAt ?? Date.now(),
+                }
+              : m,
           ),
         }));
       };
@@ -253,10 +281,12 @@ export const useChatStore = create<ChatState>((set, get) => {
               if (rafId == null) rafId = requestAnimationFrame(flushDeltas);
             },
             onToolCall(call) {
-              // 工具调用发生时正文的累计长度（含尚未 flush 的 delta 缓冲）：
-              // flush 只按顺序追加 contentBuf，故 offset = 已落库正文 + 缓冲。
+              // 工具调用发生时正文/思考的累计长度（含尚未 flush 的 delta 缓冲）：
+              // flush 只按顺序追加缓冲，故 offset = 已落库长度 + 缓冲长度。
               const pendingLen = contentBuf.length;
               const curLen = get().messages.find((m) => m.id === aiMsg.id)?.content.length ?? 0;
+              const curReasoningLen = get().messages.find((m) => m.id === aiMsg.id)?.reasoning?.length ?? 0;
+              const now = Date.now();
               set((s) => ({
                 messages: s.messages.map((m) =>
                   m.id === aiMsg.id
@@ -270,6 +300,8 @@ export const useChatStore = create<ChatState>((set, get) => {
                             args: call.args,
                             status: 'running' as const,
                             atOffset: curLen + pendingLen,
+                            reasoningAtOffset: curReasoningLen + reasoningBuf.length,
+                            startAt: now,
                           },
                         ],
                       }
@@ -284,7 +316,7 @@ export const useChatStore = create<ChatState>((set, get) => {
                     ? {
                         ...m,
                         toolCalls: (m.toolCalls ?? []).map((tc) =>
-                          tc.id === result.id ? { ...tc, output: result.output, status: 'done' as const } : tc,
+                          tc.id === result.id ? { ...tc, output: result.output, status: 'done' as const, endedAt: Date.now() } : tc,
                         ),
                       }
                     : m,

@@ -156,25 +156,32 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
   );
 }
 
-function ReasoningBlock({ reasoning, generating }: { reasoning: string; generating: boolean }) {
+function ReasoningBlock({
+  reasoning,
+  generating,
+  live: liveProp,
+  startAt,
+  endAt,
+}: {
+  reasoning: string;
+  generating: boolean;
+  /** 展开/流式状态；缺省时按 generating 推导（整块思考用） */
+  live?: boolean;
+  /** 该段思考的起止时间戳（用于「用时 N 秒」） */
+  startAt?: number;
+  endAt?: number;
+}) {
   const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const wasLiveRef = useRef(false);
-  const startRef = useRef<number | null>(null);
-  const [elapsed, setElapsed] = useState<number | null>(null);
-  const live = generating && reasoning.trim().length > 0;
+  const live = liveProp ?? (generating && reasoning.trim().length > 0);
 
-  // DSH 风格：思考中自动展开流式显示，结束后自动收起（渲染期同步派生状态）
+  // 思考中自动展开流式显示，结束后自动收起（渲染期同步派生状态）
   if (live && !wasLiveRef.current) {
     wasLiveRef.current = true;
-    if (startRef.current == null) startRef.current = Date.now();
     setOpen(true);
   } else if (!live && wasLiveRef.current) {
     wasLiveRef.current = false;
-    if (startRef.current != null) {
-      setElapsed(Math.max(1, Math.round((Date.now() - startRef.current) / 1000)));
-      startRef.current = null;
-    }
     setOpen(false);
   }
 
@@ -186,8 +193,12 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
   }, [reasoning, open, live]);
 
   if (!reasoning.trim()) return null;
-  // 元宝风格文案：思考中/已思考（用时 N 秒）；历史消息无计时信息时只显示"已思考"
-  const label = live ? '正在思考…' : elapsed != null ? `已思考（用时 ${elapsed} 秒）` : '已思考';
+  // 元宝风格文案：思考中/已思考（用时 N 秒）；无计时信息（历史旧消息）时只显示"已思考"
+  const label = live
+    ? '正在思考…'
+    : startAt != null && endAt != null
+      ? `已思考（用时 ${Math.max(1, Math.round((endAt - startAt) / 1000))} 秒）`
+      : '已思考';
   // 正文按段落拆成条目，逐条带圆点展示
   const items = reasoning.split('\n').map((s) => s.trim()).filter(Boolean);
   return (
@@ -278,31 +289,69 @@ function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
 }
 
 type FlowSeg =
+  | { type: 'reasoning'; chunk: ReasoningChunk }
   | { type: 'text'; text: string; final: boolean }
   | { type: 'tool'; tool: ToolStep };
 
+/** 一段穿插在工具行之间的思考（按工具调用的 reasoningAtOffset 切分） */
+interface ReasoningChunk {
+  text: string;
+  startAt?: number;
+  endAt?: number;
+  /** 生成中且是当前正在流式增长的段（自动展开 + 转圈） */
+  live: boolean;
+}
+
 /**
- * 把正文与工具调用按发生顺序穿插成渲染片段：
- * 工具调用之前的叙述性文字（如「我先检索一下」）留在工具调用之前，不再并入最终回答。
- * 历史消息无 atOffset 时回退为「工具轨迹在前、正文在后」。
+ * 把思考、正文与工具调用按发生顺序穿插成渲染片段（DeepSeek 式）：
+ * 每个工具行之前是「该次调用前的思考段 + 叙述性文字」，最后一段思考在末尾工具之后、最终回答之前。
+ * 历史旧消息缺偏移信息时回退：思考整块在前、工具轨迹居中、正文在后。
  */
-function buildSegments(content: string, steps: ToolStep[]): FlowSeg[] {
-  if (steps.length === 0) return [{ type: 'text', text: content, final: true }];
-  if (!steps.every((s) => typeof s.atOffset === 'number')) {
-    return [
-      ...steps.map((t) => ({ type: 'tool' as const, tool: t })),
-      { type: 'text', text: content, final: true },
-    ];
-  }
+function buildSegments(
+  content: string,
+  steps: ToolStep[],
+  reasoning: string,
+  opts: { generating: boolean; startedAt?: number; reasoningEndAt?: number },
+): FlowSeg[] {
   const segs: FlowSeg[] = [];
-  let last = 0;
-  for (const s of steps) {
-    const off = Math.min(Math.max(s.atOffset ?? 0, last), content.length);
-    if (off > last) segs.push({ type: 'text', text: content.slice(last, off), final: false });
-    segs.push({ type: 'tool', tool: s });
-    last = off;
+  const pushReasoning = (text: string, startAt?: number, endAt?: number, live = false) => {
+    if (text.trim()) segs.push({ type: 'reasoning', chunk: { text, startAt, endAt, live } });
+  };
+
+  // 无工具：整块思考（生成中保持展开）+ 最终回答
+  if (steps.length === 0) {
+    pushReasoning(reasoning, opts.startedAt, opts.reasoningEndAt, opts.generating);
+    segs.push({ type: 'text', text: content, final: true });
+    return segs;
   }
-  if (content.length > last) segs.push({ type: 'text', text: content.slice(last), final: true });
+
+  // 旧消息缺偏移：思考整块在前（不展开），工具轨迹随后、正文在后
+  if (!steps.every((s) => typeof s.reasoningAtOffset === 'number' && typeof s.atOffset === 'number')) {
+    pushReasoning(reasoning, opts.startedAt, opts.reasoningEndAt);
+    for (const t of steps) segs.push({ type: 'tool', tool: t });
+    segs.push({ type: 'text', text: content, final: true });
+    return segs;
+  }
+
+  let rLast = 0;
+  let cLast = 0;
+  steps.forEach((s, i) => {
+    // 该工具调用前的思考段：起点 = 上个工具结束（首个为消息开始），终点 = 本工具发起
+    const rOff = Math.min(Math.max(s.reasoningAtOffset ?? 0, rLast), reasoning.length);
+    const chunkStart = i === 0 ? opts.startedAt : steps[i - 1]?.endedAt;
+    pushReasoning(reasoning.slice(rLast, rOff), chunkStart, s.startAt);
+    rLast = rOff;
+
+    const cOff = Math.min(Math.max(s.atOffset ?? 0, cLast), content.length);
+    if (cOff > cLast) segs.push({ type: 'text', text: content.slice(cLast, cOff), final: false });
+    cLast = cOff;
+
+    segs.push({ type: 'tool', tool: s });
+  });
+  // 末段思考（生成中保持展开流式）+ 最终回答
+  const lastStep = steps[steps.length - 1];
+  pushReasoning(reasoning.slice(rLast), lastStep?.endedAt ?? opts.startedAt, opts.reasoningEndAt, opts.generating);
+  if (content.length > cLast) segs.push({ type: 'text', text: content.slice(cLast), final: true });
   else segs.push({ type: 'text', text: '', final: true });
   return segs;
 }
@@ -354,18 +403,37 @@ function LiveRow({ startedAt, streaming, runningTool, fastMode }: { startedAt?: 
   );
 }
 
-/** 助手内容流：思考行 + 正文/工具按序穿插 + 生成中状态行 + 完成后操作区 */
+/** 助手内容流：思考/正文/工具按发生顺序穿插 + 生成中状态行 */
 function AgentFlow({ msg, devMode }: { msg: ChatMessage; devMode: boolean }) {
   const generating = msg.status === 'GENERATING';
   const steps = msg.toolCalls ?? [];
-  const segments = useMemo(() => buildSegments(msg.content, steps), [msg.content, steps]);
+  const segments = useMemo(
+    () =>
+      buildSegments(msg.content, steps, msg.reasoning ?? '', {
+        generating,
+        startedAt: msg.startedAt,
+        reasoningEndAt: msg.reasoningEndAt,
+      }),
+    [msg.content, steps, msg.reasoning, generating, msg.startedAt, msg.reasoningEndAt],
+  );
   const lastSeg: FlowSeg | undefined = segments[segments.length - 1];
   const streamingText =
     generating && lastSeg?.type === 'text' && lastSeg.text.trim().length > 0;
   return (
     <div className={`agent-flow${generating ? ' is-live' : ''}`}>
-      <ReasoningBlock reasoning={msg.reasoning ?? ''} generating={generating} />
       {segments.map((seg, i) => {
+        if (seg.type === 'reasoning') {
+          return (
+            <ReasoningBlock
+              key={`reasoning-${i}`}
+              reasoning={seg.chunk.text}
+              generating={generating}
+              live={seg.chunk.live}
+              startAt={seg.chunk.startAt}
+              endAt={seg.chunk.endAt}
+            />
+          );
+        }
         if (seg.type === 'tool') return <ToolRow key={seg.tool.id} tc={seg.tool} devMode={devMode} />;
         if (seg.final) {
           return (

@@ -164,13 +164,17 @@ async function consumeAgentStream(
         const id = c.callId;
         const name = c.name;
         const args = (c.input ?? {}) as Record<string, unknown>;
-        // 记录调用发生时正文已累计的长度，供历史消息重建「正文/工具」穿插顺序
+        // 记录调用发生时正文/思考已累计的长度与时间戳，
+        // 供历史消息重建「思考/正文/工具」的穿插顺序与每段思考用时
         const atOffset = answer.length;
+        const reasoningAtOffset = reasoning.length;
+        const startAt = Date.now();
         handlers.onToolCall({ id, name, args });
         const out = await c.output;
         const output = typeof out === 'string' ? out : JSON.stringify(out);
+        const endedAt = Date.now();
         handlers.onToolResult({ id, name, output });
-        toolCalls.push({ id, name, args, output, atOffset });
+        toolCalls.push({ id, name, args, output, atOffset, reasoningAtOffset, startAt, endedAt });
       }
     })(),
   ]);

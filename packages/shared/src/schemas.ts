@@ -189,6 +189,11 @@ export const toolCallRecordSchema = z.object({
   output: z.string(),
   /** 工具调用发生时回答正文的累计长度，用于刷新后仍按发生顺序穿插渲染 */
   atOffset: z.number().int().nonnegative().optional(),
+  /** 工具调用发生时思考内容的累计长度，用于把思考按发生顺序穿插到工具行之间 */
+  reasoningAtOffset: z.number().int().nonnegative().optional(),
+  /** 工具调用开始/结束时间戳（ms），用于展示每段思考的「用时 N 秒」 */
+  startAt: z.number().optional(),
+  endedAt: z.number().optional(),
 });
 export type ToolCallRecord = z.infer<typeof toolCallRecordSchema>;
 
