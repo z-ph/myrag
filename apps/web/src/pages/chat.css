@@ -862,9 +862,8 @@
   max-height: 320px;
 }
 
-/* 工具行运行中的文字流光（DeepSeek 式：灰字上扫过品牌色流光） */
-.tool-row.is-running .tool-row-name,
-.tool-row.is-running .tool-row-preview {
+/* 工具行运行中的文字流光：只作用于「xx中」状态文案，内容摘要不流光 */
+.tool-row.is-running .tool-row-name {
   background: linear-gradient(
     90deg,
     #9aa1ad 0%,
@@ -886,8 +885,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tool-row.is-running .tool-row-name,
-  .tool-row.is-running .tool-row-preview {
+  .tool-row.is-running .tool-row-name {
     animation: none;
     background: none;
     color: var(--seal);
