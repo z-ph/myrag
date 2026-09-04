@@ -1029,6 +1029,23 @@
   50% { opacity: 1; transform: translateY(-2px); }
 }
 
+/* 状态行文案流光（与思考行、工具行「xx中」一致：灰字扫过品牌色） */
+.live-row .live-label {
+  background: linear-gradient(
+    90deg,
+    #9aa1ad 0%,
+    #9aa1ad 38%,
+    var(--seal) 50%,
+    #9aa1ad 62%,
+    #9aa1ad 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
+}
+
 .live-time {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -1037,13 +1054,19 @@
 
 @media (prefers-reduced-motion: reduce) {
   .think-row.is-live .think-label,
-  .live-dots i {
+  .live-dots i,
+  .live-row .live-label {
     animation: none;
   }
 
   .think-row.is-live .think-label {
     background: none;
     color: #4d6bfe;
+  }
+
+  .live-row .live-label {
+    background: none;
+    color: var(--ink-3);
   }
 }
 

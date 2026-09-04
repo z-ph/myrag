@@ -84,7 +84,7 @@ def main() -> int:
         last_text = ""
         while time.monotonic() < deadline:
             last_text = (locator.text_content() or "").strip()
-            if last_text and last_text != "正在思考…":
+            if last_text and last_text != "等待模型响应…":
                 return last_text
             page.wait_for_timeout(250)
         raise AssertionError(f"回答在 {timeout_ms}ms 内仍为空或仍在生成：{last_text!r}")

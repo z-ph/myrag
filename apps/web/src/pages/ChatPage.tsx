@@ -398,7 +398,7 @@ function LiveRow({ startedAt, streaming, runningTool, fastMode }: { startedAt?: 
     ? `${toolDisplay(runningTool, 'running')}…`
     : streaming || fastMode
       ? '正在生成回答…'
-      : '正在思考…';
+      : '等待模型响应…';
   return (
     <div className="live-row" role="status" aria-live="polite">
       <span className="live-dots"><i /><i /><i /></span>

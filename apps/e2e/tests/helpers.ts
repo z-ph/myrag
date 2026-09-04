@@ -23,7 +23,7 @@ export async function waitForAnswer(page: Page, timeout = 30_000): Promise<void>
   await expect(page.locator('.answer-typing')).toHaveCount(0);
   const text = (await answer.textContent()) ?? '';
   expect(text.trim().length).toBeGreaterThan(0);
-  expect(text.trim()).not.toBe('正在思考…');
+  expect(text.trim()).not.toBe('等待模型响应…');
 }
 
 /** 在聊天输入框提问并发送 */
