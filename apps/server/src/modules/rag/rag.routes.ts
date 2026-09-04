@@ -62,6 +62,7 @@ async function parseMessageForm(c: Context<AppVariables>) {
   return { ...parsed.data, question: question || '请分析这张图片', imageBase64, imageFile };
 }
 
+
 /** 会话域（挂载 /conversations，需登录，会话懒创建） */
 export function createConversationRoutes(deps: AppDeps) {
   const { ragService } = deps;
@@ -210,6 +211,7 @@ export function createConversationRoutes(deps: AppDeps) {
         async (c) => {
           const { conversationId } = c.req.valid('param');
           const detail = await deps.conversationService.getDetail(conversationId, c.get('auth').username, deps.settingsService.get().memoryWindow);
+          if (!detail.exists) throw notFound('会话不存在');
           return c.json(detail);
         },
       )

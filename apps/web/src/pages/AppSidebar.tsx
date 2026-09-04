@@ -58,8 +58,16 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const openLogin = useUiStore((s) => s.openLogin);
-  const { historyMetas, conversationId, loadConversation, startNewConversation, deleteConversation } = useChatStore();
+  const { historyMetas, deleteConversation, resetChat } = useChatStore();
   const sidebarBodyRef = useRef<HTMLDivElement>(null);
+
+  // 当前会话 ID 取自 URL（/chat/{id}），保证侧栏高亮与地址栏一致
+  const currentId = location.pathname.startsWith('/chat/')
+    ? decodeURIComponent(location.pathname.split('/')[2] ?? '')
+    : '';
+  // 删除完成时的导航判断必须用最新路由，避免点击瞬间的闭包过期值
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
 
   const NAV_ITEMS = [
     { key: '/chat', icon: <CommentOutlined />, label: '智能问答' },
@@ -74,18 +82,22 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
   const convGroups = useMemo(() => groupConversations(sortedMetas), [sortedMetas]);
 
   const go = (key: string) => {
-    navigate(key);
+    navigate(key === '/chat' ? '/chat/new' : key);
     onNavigated();
   };
   const handleNewConversation = () => {
-    startNewConversation();
-    navigate('/chat');
+    resetChat();
+    navigate('/chat/new');
     onNavigated();
   };
   const pickConversation = (id: string) => {
-    void loadConversation(id);
-    navigate('/chat');
+    navigate(`/chat/${encodeURIComponent(id)}`);
     onNavigated();
+  };
+  const handleDeleteConversation = async (id: string) => {
+    await deleteConversation(id);
+    // 删除的是当前打开的会话时，回到新会话页；其他会话保持当前 URL
+    if (id === currentIdRef.current) navigate('/chat/new', { replace: true });
   };
 
   return (
@@ -126,7 +138,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
                   key={meta.id}
                   role="button"
                   tabIndex={0}
-                  className={`sidebar-item${meta.id === conversationId ? ' active' : ''}`}
+                  className={`sidebar-item${meta.id === currentId ? ' active' : ''}`}
                   onClick={() => pickConversation(meta.id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -141,7 +153,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
                     getPopupContainer={(trigger) => trigger.closest('.chat-sidebar') ?? document.body}
                     onConfirm={(e) => {
                       e?.stopPropagation();
-                      void deleteConversation(meta.id);
+                      void handleDeleteConversation(meta.id);
                     }}
                   >
                     <button type="button" className="sidebar-item-del" aria-label="删除会话" onClick={(e) => e.stopPropagation()}>
@@ -153,7 +165,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
             </div>
           ))
         )}
-        <OverlayScrollbar getScroller={() => sidebarBodyRef.current} deps={[convGroups, conversationId]} />
+        <OverlayScrollbar getScroller={() => sidebarBodyRef.current} deps={[convGroups, currentId]} />
       </div>
       <div className="sidebar-foot">
         {user ? (

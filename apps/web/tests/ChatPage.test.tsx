@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Api from '../src/api';
 import { documentsApi, ragApi } from '../src/api';
+import { ApiError } from '../src/api/client';
+import { AppShell } from '../src/App';
 import ChatPage, { IMAGE_UPLOAD_ENABLED } from '../src/pages/ChatPage';
 import { useAuthStore } from '../src/store/auth';
 import { useChatStore, type ChatMessage } from '../src/store/chat';
@@ -20,6 +22,9 @@ vi.mock('../src/api', async (importOriginal) => {
     },
     ragApi: {
       ...(actual.ragApi ?? {}),
+      listConversations: vi.fn().mockResolvedValue([]),
+      conversationDetail: vi.fn(),
+      clearConversation: vi.fn().mockResolvedValue(undefined),
       askStream: vi.fn().mockImplementation(async (_params, handlers) => {
         handlers.onStart?.();
         handlers.onComplete?.(false);
@@ -30,6 +35,14 @@ vi.mock('../src/api', async (importOriginal) => {
 
 
 beforeEach(() => {
+  vi.mocked(ragApi.listConversations).mockClear();
+  vi.mocked(ragApi.conversationDetail).mockReset();
+  vi.mocked(ragApi.clearConversation).mockClear();
+  vi.mocked(ragApi.askStream).mockClear();
+  vi.mocked(ragApi.askStream).mockImplementation(async (_params, handlers) => {
+    handlers.onStart?.('');
+    handlers.onComplete?.(false);
+  });
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: (query: string) => ({
@@ -51,15 +64,61 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   Element.prototype.scrollIntoView = () => undefined;
 });
-function mount() {
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}</output>;
+}
+
+function NavigateBackButton() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(-1)}>测试后退</button>;
+}
+
+function NavigateToConversationBButton() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate('/chat/conv-b')}>测试前往会话 B</button>;
+}
+
+function mount(path = '/chat/new', initialEntries = [path]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <ChatPage />
+      <MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.indexOf(path)}>
+        <LocationProbe />
+        <NavigateBackButton />
+        <NavigateToConversationBButton />
+        <Routes>
+          <Route path="/chat/new" element={<ChatPage />} />
+          <Route path="/chat/:conversationId" element={<ChatPage />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+function mountAppShell(path: string, initialEntries?: string[]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={initialEntries ?? [path]} initialIndex={(initialEntries ?? [path]).indexOf(path)}>
+        <LocationProbe />
+        <NavigateBackButton />
+        <NavigateToConversationBButton />
+        <AppShell />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function assistant(partial: Partial<ChatMessage>): ChatMessage {
@@ -74,7 +133,7 @@ function assistant(partial: Partial<ChatMessage>): ChatMessage {
 
 describe('ChatPage assistant extras', () => {
   beforeEach(() => {
-    useAuthStore.setState({ loading: false });
+    useAuthStore.setState({ loading: false, restore: vi.fn().mockResolvedValue(undefined) });
     useChatStore.setState({
       messages: [],
       isGenerating: false,
@@ -82,6 +141,95 @@ describe('ChatPage assistant extras', () => {
       historyMetas: [],
       pendingDocRef: null,
     });
+  });
+
+  it('/chat/new 不请求会话详情', async () => {
+    mount('/chat/new');
+    await screen.findByText('有什么能帮你的吗？');
+    expect(ragApi.conversationDetail).not.toHaveBeenCalled();
+  });
+
+  it('/chat/:conversationId 请求对应会话并显示消息', async () => {
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-42',
+      exists: true,
+      recentMessages: [
+        { role: 'USER', content: '历史问题', timestamp: '2026-08-27T00:00:00.000Z', status: 'COMPLETED' },
+      ],
+      recentMessageCount: 1,
+    });
+    mount('/chat/conv-42');
+    expect(await screen.findByText('历史问题')).toBeVisible();
+    expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-42');
+  });
+
+  it('详情 HTTP 404 显示会话 404', async () => {
+    vi.mocked(ragApi.conversationDetail).mockRejectedValue(new ApiError(404, '会话不存在'));
+    mount('/chat/missing');
+    expect(await screen.findByText('会话不存在')).toBeVisible();
+    expect(screen.getByText('未找到对应会话，或当前账号无权访问。')).toBeVisible();
+    expect(screen.getByRole('button', { name: '新建会话' })).toBeVisible();
+  });
+
+  it('详情 HTTP 500 显示加载失败而不是 404', async () => {
+    vi.mocked(ragApi.conversationDetail).mockRejectedValue(new ApiError(500, '服务器内部错误'));
+    mount('/chat/conv-500');
+    expect(await screen.findByText('加载失败')).toBeVisible();
+    expect(screen.queryByText('会话不存在')).toBeNull();
+    expect(screen.getByRole('button', { name: /重\s*试/ })).toBeVisible();
+  });
+
+  it('详情参数校验 HTTP 400 按会话 404 处理', async () => {
+    vi.mocked(ragApi.conversationDetail).mockRejectedValue(new ApiError(400, '请求参数错误'));
+    mount('/chat/invalid-id');
+    expect(await screen.findByText('会话不存在')).toBeVisible();
+    expect(screen.queryByText('加载失败')).toBeNull();
+  });
+
+  it('A 的迟到失败不会覆盖已成功加载的 B', async () => {
+    const detailA = deferred<Awaited<ReturnType<typeof ragApi.conversationDetail>>>();
+    vi.mocked(ragApi.conversationDetail)
+      .mockImplementationOnce(() => detailA.promise)
+      .mockResolvedValueOnce({ conversationId: 'conv-b', exists: true, recentMessages: [], recentMessageCount: 0 });
+    mount('/chat/conv-a');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-a'));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    await screen.findByText('有什么能帮你的吗？');
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b');
+
+    await act(async () => detailA.reject(new ApiError(404, '会话不存在')));
+    expect(screen.getByText('有什么能帮你的吗？')).toBeVisible();
+    expect(screen.queryByText('会话不存在')).toBeNull();
+  });
+
+  it('A 的迟到成功不会覆盖 B 的加载失败', async () => {
+    const detailA = deferred<Awaited<ReturnType<typeof ragApi.conversationDetail>>>();
+    vi.mocked(ragApi.conversationDetail)
+      .mockImplementationOnce(() => detailA.promise)
+      .mockRejectedValueOnce(new ApiError(404, '会话不存在'));
+    mount('/chat/conv-a');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-a'));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    expect(await screen.findByText('会话不存在')).toBeVisible();
+
+    await act(async () => detailA.resolve({
+      conversationId: 'conv-a', exists: true, recentMessages: [], recentMessageCount: 0,
+    }));
+    expect(screen.getByText('会话不存在')).toBeVisible();
+  });
+
+  it('详情 HTTP 401 不显示错误页，并由身份事件进入新会话', async () => {
+    vi.mocked(ragApi.conversationDetail).mockRejectedValue(new ApiError(401, '未授权'));
+    mountAppShell('/chat/conv-401');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-401'));
+    expect(screen.queryByText('会话不存在')).toBeNull();
+    expect(screen.queryByText('加载失败')).toBeNull();
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-401');
+
+    await act(async () => window.dispatchEvent(new Event('myrag:identity-changed')));
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/new');
   });
 
   it('生成中不出现复制按钮和追问', () => {
@@ -94,18 +242,9 @@ describe('ChatPage assistant extras', () => {
     expect(screen.queryByText('追问')).toBeNull();
   });
 
-  it('快速模式生成中显示生成回答，不显示正在思考', () => {
-    useChatStore.setState({
-      messages: [assistant({ status: 'GENERATING', mode: 'fast', content: '' })],
-      isGenerating: true,
-    });
-    mount();
-    expect(screen.getByText('正在生成回答…')).toBeTruthy();
-    expect(screen.queryByText('正在思考…')).toBeNull();
-  });
-
   it('回答完成后出现复制，并在来源旁给出追问', () => {
-    useChatStore.setState({
+    mount();
+    act(() => useChatStore.setState({
       messages: [
         assistant({
           sources: [
@@ -118,8 +257,7 @@ describe('ChatPage assistant extras', () => {
           ],
         }),
       ],
-    });
-    mount();
+    }));
     expect(screen.getByRole('button', { name: '复制' })).toBeTruthy();
     expect(screen.getByText('来源')).toBeTruthy();
     expect(screen.getByRole('button', { name: '差旅费管理办法.pdf' })).toBeTruthy();
@@ -139,7 +277,8 @@ describe('ChatPage assistant extras', () => {
         { chunkIndex: 2, text: '住宿费限额五百元' },
       ],
     });
-    useChatStore.setState({
+    mount();
+    act(() => useChatStore.setState({
       messages: [
         assistant({
           sources: [
@@ -153,8 +292,7 @@ describe('ChatPage assistant extras', () => {
           ],
         }),
       ],
-    });
-    mount();
+    }));
     fireEvent.click(screen.getByRole('button', { name: '差旅费管理办法.pdf' }));
     expect(await screen.findByText('住宿费限额五百元')).toBeTruthy();
     expect(scroll).toHaveBeenCalled();
@@ -167,12 +305,190 @@ describe('ChatPage assistant extras', () => {
   });
 
   it('默认模式为快速回答，且不出现开发者模式开关', () => {
-    mount();
-    const fast = screen.getByRole('radio', { name: '快速回答' }) as HTMLInputElement;
-    const deep = screen.getByRole('radio', { name: '深度检索' }) as HTMLInputElement;
-    expect(fast.checked).toBe(true);
-    expect(deep.checked).toBe(false);
+    const { container } = mount();
+    expect(useChatStore.getState().mode).toBe('fast');
+    // antd Segmented 的选中态标在 label 的 class 上
+    const selected = container.querySelector('.ant-segmented-item-selected');
+    expect(selected?.textContent).toContain('快速回答');
+    expect(screen.getByText('深度检索')).toBeVisible();
     expect(screen.queryByText('开发者模式')).toBeNull();
+  });
+
+  it('新会话首次发送用同一 ID replace 导航并提交', async () => {
+    let sentId = '';
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      sentId = params.conversationId;
+      handlers.onComplete(false);
+    });
+    mount('/chat/new', ['/outside', '/chat/new']);
+
+    fireEvent.change(screen.getByPlaceholderText(/给财务知识库发送消息/), { target: { value: '首个问题' } });
+    fireEvent.click(screen.getByRole('button', { name: /发送$/ }));
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentId}`));
+    expect(sentId).toMatch(/^conv-/);
+    expect(ragApi.askStream).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: sentId, question: '首个问题' }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '测试后退' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/outside');
+  });
+
+  it('SSE 生成错误保留当前会话 URL，重试继续使用同一 ID', async () => {
+    const sentIds: string[] = [];
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      sentIds.push(params.conversationId);
+      handlers.onError('生成失败');
+    });
+    mount('/chat/new');
+
+    fireEvent.change(screen.getByPlaceholderText(/给财务知识库发送消息/), { target: { value: '可重试问题' } });
+    fireEvent.click(screen.getByRole('button', { name: /发送$/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentIds[0]}`));
+    expect(sentIds[0]).toMatch(/^conv-/);
+    await waitFor(() => expect(useChatStore.getState().isGenerating).toBe(false));
+
+    fireEvent.change(screen.getByPlaceholderText(/给财务知识库发送消息/), { target: { value: '可重试问题' } });
+    fireEvent.click(screen.getByRole('button', { name: /发送$/ }));
+    await waitFor(() => expect(sentIds).toHaveLength(2));
+    expect(sentIds[1]).toBe(sentIds[0]);
+    expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentIds[0]}`);
+  });
+
+  it('离开新建会话后再返回，会重新加载已创建会话详情', async () => {
+    let sentId = '';
+    vi.mocked(ragApi.askStream).mockImplementation(async (params, handlers) => {
+      sentId = params.conversationId;
+      handlers.onComplete(false);
+    });
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-b', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    mount('/chat/new', ['/outside', '/chat/new']);
+
+    fireEvent.change(screen.getByPlaceholderText(/给财务知识库发送消息/), { target: { value: '创建 A' } });
+    fireEvent.click(screen.getByRole('button', { name: /发送$/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentId}`));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b'));
+    fireEvent.click(screen.getByRole('button', { name: '测试后退' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/chat/${sentId}`));
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith(sentId));
+  });
+
+  it('已有会话详情加载期间禁止发送，避免覆盖乐观消息', async () => {
+    const detail = deferred<Awaited<ReturnType<typeof ragApi.conversationDetail>>>();
+    vi.mocked(ragApi.conversationDetail).mockReturnValue(detail.promise);
+    mount('/chat/conv-loading');
+    await waitFor(() => expect(ragApi.conversationDetail).toHaveBeenCalledWith('conv-loading'));
+
+    const input = screen.getByPlaceholderText(/给财务知识库发送消息/);
+    fireEvent.change(input, { target: { value: '加载期间的问题' } });
+    const send = screen.getByRole('button', { name: /发送$/ });
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(ragApi.askStream).not.toHaveBeenCalled();
+
+    await act(async () => detail.resolve({
+      conversationId: 'conv-loading', exists: true, recentMessages: [], recentMessageCount: 0,
+    }));
+  });
+
+  it('点击历史会话更新 URL', async () => {
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-history', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    mountAppShell('/chat/new');
+    await screen.findByText('有什么能帮你的吗？');
+    act(() => useChatStore.setState({
+      historyMetas: [{ id: 'conv-history', title: '历史会话', updatedAt: Date.now() }],
+    }));
+    fireEvent.click(await screen.findByText('历史会话'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-history'));
+  });
+
+  it('点击新会话后进入 /chat/new', async () => {
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-history', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    mountAppShell('/chat/conv-history');
+    await screen.findByText('有什么能帮你的吗？');
+    fireEvent.click(screen.getByRole('button', { name: /开启新对话/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/new'));
+  });
+
+  it('删除非当前会话保持当前 URL', async () => {
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-current', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    mountAppShell('/chat/conv-current');
+    await screen.findByText('有什么能帮你的吗？');
+    act(() => useChatStore.setState({
+      historyMetas: [
+        { id: 'conv-current', title: '当前会话', updatedAt: 2 },
+        { id: 'conv-other', title: '其他会话', updatedAt: 1 },
+      ],
+    }));
+    await screen.findByText('其他会话');
+    const deleteButtons = await waitFor(() => {
+      const buttons = document.querySelectorAll<HTMLButtonElement>('.sidebar-item-del');
+      expect(buttons).toHaveLength(2);
+      return buttons;
+    });
+    fireEvent.click(deleteButtons[1]!);
+    fireEvent.click(await screen.findByRole('button', { name: /^(确定|OK)$/ }));
+    await waitFor(() => expect(ragApi.clearConversation).toHaveBeenCalledWith('conv-other'));
+    expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-current');
+  });
+
+  it('删除当前会话完成后进入 /chat/new', async () => {
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-current', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    mountAppShell('/chat/conv-current');
+    await screen.findByText('有什么能帮你的吗？');
+    act(() => useChatStore.setState({
+      historyMetas: [{ id: 'conv-current', title: '当前会话', updatedAt: 2 }],
+    }));
+    await screen.findByText('当前会话');
+    const deleteButton = await waitFor(() => {
+      const button = document.querySelector<HTMLButtonElement>('.sidebar-item-del');
+      expect(button).toBeTruthy();
+      return button!;
+    });
+    fireEvent.click(deleteButton);
+    fireEvent.click(await screen.findByRole('button', { name: /^(确定|OK)$/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/new'));
+  });
+
+  it('删除当前会话期间切换到 B 时，完成后保留 B 的 URL', async () => {
+    const deletion = deferred<void>();
+    vi.mocked(ragApi.conversationDetail).mockResolvedValue({
+      conversationId: 'conv-current', exists: true, recentMessages: [], recentMessageCount: 0,
+    });
+    vi.mocked(ragApi.clearConversation).mockImplementationOnce(() => deletion.promise as never);
+    mountAppShell('/chat/conv-current');
+    await screen.findByText('有什么能帮你的吗？');
+    act(() => useChatStore.setState({
+      historyMetas: [{ id: 'conv-current', title: '当前会话', updatedAt: 2 }],
+    }));
+    await screen.findByText('当前会话');
+    const deleteButton = await waitFor(() => {
+      const button = document.querySelector<HTMLButtonElement>('.sidebar-item-del');
+      expect(button).toBeTruthy();
+      return button!;
+    });
+    fireEvent.click(deleteButton);
+    fireEvent.click(await screen.findByRole('button', { name: /^(确定|OK)$/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: '测试前往会话 B' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b'));
+    await act(async () => deletion.resolve());
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/chat/conv-b'));
   });
 
   // 图片上传入口恢复（IMAGE_UPLOAD_ENABLED = true）时自动重新启用

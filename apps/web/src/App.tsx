@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AlignLeftOutlined, PlusCircleOutlined } from '@ant-design/icons';
 import { useAuthStore } from './store/auth';
-import { useChatStore } from './store/chat';
 import { isNarrowViewport } from './utils/viewport';
 import OverlayScrollbar from './components/OverlayScrollbar';
 import AppSidebar from './pages/AppSidebar';
@@ -11,10 +10,10 @@ import DocumentsPage from './pages/DocumentsPage';
 import AdminPage from './pages/AdminPage';
 import UsersPage from './pages/UsersPage';
 import LoginModal from './pages/LoginModal';
+import { GenericNotFoundPage } from './pages/RouteStatusPage';
 
-function AppShell() {
+export function AppShell() {
   const { user, loading, restore } = useAuthStore();
-  const startNewConversation = useChatStore((s) => s.startNewConversation);
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -29,9 +28,15 @@ function AppShell() {
     if (isNarrowViewport()) setSidebarOpen(false);
   }, []);
 
+  // 身份变化（登录/退出/访客重签，含跨标签页同步）后清空会话并进入新会话页
+  useEffect(() => {
+    const onIdentityChanged = () => navigate('/chat/new', { replace: true });
+    window.addEventListener('myrag:identity-changed', onIdentityChanged);
+    return () => window.removeEventListener('myrag:identity-changed', onIdentityChanged);
+  }, [navigate]);
+
   const handleMobileNewChat = () => {
-    startNewConversation();
-    if (!location.pathname.startsWith('/chat')) navigate('/chat');
+    navigate('/chat/new');
   };
 
   return (
@@ -64,12 +69,14 @@ function AppShell() {
         </div>
         {loading ? null : (
           <Routes>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/" element={<Navigate to="/chat/new" replace />} />
+            <Route path="/chat" element={<Navigate to="/chat/new" replace />} />
+            <Route path="/chat/new" element={<ChatPage />} />
+            <Route path="/chat/:conversationId" element={<ChatPage />} />
             <Route path="/documents" element={<DocumentsPage />} />
-            <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat" replace />} />
-            <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat" replace />} />
-            <Route path="*" element={<Navigate to="/chat" replace />} />
+            <Route path="/admin" element={user?.role === 'SUPER_ADMIN' ? <AdminPage /> : <Navigate to="/chat/new" replace />} />
+            <Route path="/users" element={user?.role === 'SUPER_ADMIN' ? <UsersPage /> : <Navigate to="/chat/new" replace />} />
+            <Route path="*" element={<GenericNotFoundPage />} />
           </Routes>
         )}
         <OverlayScrollbar getScroller={() => mainRef.current} deps={[location.pathname, loading]} />

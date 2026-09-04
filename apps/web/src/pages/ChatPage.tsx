@@ -14,13 +14,16 @@ import {
 } from '@ant-design/icons';
 
 import { useQuery } from '@tanstack/react-query';
-import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useChatStore, createConversationId, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
+import { ApiError } from '../api/client';
 import OverlayScrollbar from '../components/OverlayScrollbar';
 import { getToolConfig, toolDisplay } from '../tool-registry';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
 import { buildFollowUpQuestions, shouldShowAssistantCopy } from './chatMessageExtras';
+import { ConversationNotFoundPage, RouteLoadError } from './RouteStatusPage';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './chat.css';
@@ -567,14 +570,26 @@ export default function ChatPage() {
     messages,
     isGenerating,
     isLoadingHistory,
-    conversationId,
     loadConversation,
     refreshConversations,
+    resetChat,
     sendMessage,
     stopGeneration,
     mode,
     setMode,
   } = useChatStore();
+
+  // URL 是当前会话 ID 的唯一来源：/chat/new 为新会话，/chat/{id} 为已有会话
+  const { conversationId } = useParams<{ conversationId?: string }>();
+  const navigate = useNavigate();
+  const isNewConversation = conversationId === undefined;
+  const [routeState, setRouteState] = useState<'new' | 'loading' | 'ready' | 'not-found' | 'error'>(
+    isNewConversation ? 'new' : 'loading',
+  );
+  const pendingCreationIdRef = useRef<string | null>(null);
+  const routeLoadTokenRef = useRef(0);
+  const routeConversationIdRef = useRef(conversationId);
+  routeConversationIdRef.current = conversationId;
 
   const authLoading = useAuthStore((s) => s.loading);
 
@@ -590,14 +605,51 @@ export default function ChatPage() {
   const { data: suggestionData } = useQuery({ queryKey: ['suggestions'], queryFn: () => settingsApi.getSuggestions() });
   const suggestions = suggestionData?.questions?.length ? suggestionData.questions : DEFAULT_SUGGESTIONS;
 
+  const loadRouteConversation = (id: string) => {
+    const requestToken = ++routeLoadTokenRef.current;
+    resetChat();
+    setRouteState('loading');
+    void loadConversation(id)
+      .then(() => {
+        if (
+          routeLoadTokenRef.current !== requestToken
+          || routeConversationIdRef.current !== id
+        ) return;
+        setRouteState('ready');
+      })
+      .catch((err: unknown) => {
+        if (
+          routeLoadTokenRef.current !== requestToken
+          || routeConversationIdRef.current !== id
+        ) return;
+        const status = err instanceof ApiError ? err.status : undefined;
+        if (status === 401) return;
+        setRouteState(status === 404 || status === 400 ? 'not-found' : 'error');
+      });
+  };
+
   useEffect(() => {
     if (authLoading) return;
     const pending = useChatStore.getState().takePendingDocRef();
-    if (pending) setDocRef(pending);
+    if (pending && isNewConversation) setDocRef(pending);
     void refreshConversations();
-    if (conversationId && !pending) void loadConversation(conversationId);
+    if (isNewConversation) {
+      pendingCreationIdRef.current = null;
+      resetChat();
+      setRouteState('new');
+      return;
+    }
+    // 首次发送已把该 ID 写入 URL：本页刚创建，无需再请求详情
+    if (pendingCreationIdRef.current && pendingCreationIdRef.current !== conversationId) {
+      pendingCreationIdRef.current = null;
+    }
+    if (pendingCreationIdRef.current === conversationId) {
+      setRouteState('ready');
+      return;
+    }
+    loadRouteConversation(conversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading]);
+  }, [authLoading, conversationId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -605,11 +657,18 @@ export default function ChatPage() {
 
   const handleSend = (text?: string) => {
     const q = (text ?? input).trim();
+    if (routeState === 'loading' || isLoadingHistory) return;
     if (!q && !image) return;
     const asked = docRef
       ? `引用文档：${docRef.filename}\ndocumentId: ${docRef.documentId}\n\n${q}`
       : q;
-    void sendMessage(asked, image ?? undefined);
+    // 新会话首次发送：前端生成 ID 并以 replace 写入 URL，后退不会回到已消费的 /chat/new
+    const targetId = conversationId ?? createConversationId();
+    if (!conversationId) {
+      pendingCreationIdRef.current = targetId;
+      navigate(`/chat/${encodeURIComponent(targetId)}`, { replace: true });
+    }
+    void sendMessage(targetId, asked, image ?? undefined);
     setInput('');
     setDocRef(null);
     setImage(null);
@@ -627,6 +686,11 @@ export default function ChatPage() {
     setImagePreview(URL.createObjectURL(file));
   };
 
+  if (!isNewConversation && routeState === 'not-found') return <ConversationNotFoundPage />;
+  if (!isNewConversation && routeState === 'error') {
+    return <RouteLoadError onRetry={() => loadRouteConversation(conversationId!)} />;
+  }
+
   return (
     <div className={`chat${!isLoadingHistory && messages.length === 0 ? ' is-empty' : ''}`}>
       <div className="chat-main">
@@ -639,7 +703,7 @@ export default function ChatPage() {
           </div>
         )}
         <div className="chat-scroll" ref={chatScrollRef}>
-          {isLoadingHistory ? (
+          {routeState === 'loading' || isLoadingHistory ? (
             <Spin style={{ display: 'block', margin: '80px auto' }} />
           ) : messages.length === 0 ? (
             <Hero />
@@ -724,11 +788,22 @@ export default function ChatPage() {
                     </>
                   )}
                   {isGenerating ? (
-                    <button type="button" className="composer-send is-stop" aria-label="停止生成" onClick={stopGeneration}>
+                    <button
+                      type="button"
+                      className="composer-send is-stop"
+                      aria-label="停止生成"
+                      onClick={() => conversationId && stopGeneration(conversationId)}
+                    >
                       <StopOutlined />
                     </button>
                   ) : (
-                    <button type="button" className="composer-send" aria-label="发送" onClick={() => handleSend()} disabled={!input.trim() && !image}>
+                    <button
+                      type="button"
+                      className="composer-send"
+                      aria-label="发送"
+                      onClick={() => handleSend()}
+                      disabled={routeState === 'loading' || isLoadingHistory || (!input.trim() && !image)}
+                    >
                       <ArrowUpOutlined />
                     </button>
                   )}

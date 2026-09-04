@@ -6,6 +6,16 @@ import { useChatStore } from './chat';
 
 /** 确保访客 token 存在：未登录用户进入时静默签发，失败不阻塞界面。 */
 let guestEnsuring: Promise<void> | null = null;
+let guestIdentityRecovering: Promise<void> | null = null;
+const identityFingerprint = () => `${getToken() ?? ''}|${getGuestToken() ?? ''}`;
+let lastIdentityFingerprint = identityFingerprint();
+
+function notifyIdentityChanged(): void {
+  lastIdentityFingerprint = identityFingerprint();
+  useChatStore.getState().onIdentityChanged();
+  window.dispatchEvent(new Event('myrag:identity-changed'));
+}
+
 function ensureGuestToken(): Promise<void> {
   if (getToken() || getGuestToken()) return Promise.resolve();
   if (!guestEnsuring) {
@@ -18,6 +28,23 @@ function ensureGuestToken(): Promise<void> {
       });
   }
   return guestEnsuring;
+}
+
+/**
+ * 恢复访客身份并通知一次。401 可能同时触发 unauthorized 事件与 restore catch，
+ * 两条链路必须共享该 promise，避免重复清空会话或重复路由跳转。
+ */
+function recoverGuestIdentity(): Promise<void> {
+  if (!guestIdentityRecovering) {
+    guestIdentityRecovering = ensureGuestToken()
+      .then(() => {
+        if (!getToken() && getGuestToken()) notifyIdentityChanged();
+      })
+      .finally(() => {
+        guestIdentityRecovering = null;
+      });
+  }
+  return guestIdentityRecovering;
 }
 
 interface AuthState {
@@ -49,13 +76,13 @@ export const useAuthStore = create<AuthState>((set) => ({
       isManager: result.user.role !== 'USER',
       isSuperAdmin: result.user.role === 'SUPER_ADMIN',
     });
-    useChatStore.getState().onIdentityChanged();
+    notifyIdentityChanged();
   },
 
   logout() {
     setToken(null);
     set({ user: null, loading: false, isManager: false, isSuperAdmin: false });
-    void ensureGuestToken().then(() => useChatStore.getState().onIdentityChanged());
+    void recoverGuestIdentity();
   },
 
   async restore() {
@@ -75,7 +102,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       setToken(null);
       set({ user: null, loading: false, isManager: false, isSuperAdmin: false });
-      void ensureGuestToken();
+      await recoverGuestIdentity();
     }
   },
 }));
@@ -86,6 +113,15 @@ export function setupAuthEvents(): void {
     useAuthStore.getState().logout();
   });
   window.addEventListener('myrag:guest-expired', () => {
-    void ensureGuestToken();
+    void recoverGuestIdentity();
   });
+  window.addEventListener('storage', handleStorageIdentityChange);
+}
+
+function handleStorageIdentityChange(event: StorageEvent): void {
+  if (event.key !== 'myrag-token' && event.key !== 'myrag-guest-token') return;
+  const next = identityFingerprint();
+  if (next === lastIdentityFingerprint) return;
+  notifyIdentityChanged();
+  void useAuthStore.getState().restore();
 }
