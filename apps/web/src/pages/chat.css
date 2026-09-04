@@ -766,7 +766,7 @@
   margin: 0 0 8px;
 }
 
-/* 思考过程行 */
+/* 思考行（元宝风格：✦ 已思考（用时 N 秒）+ 圆点条目正文，无卡片边框） */
 .think-row {
   position: relative;
 }
@@ -781,7 +781,7 @@
   padding: 4px 0;
   font-family: var(--font-body);
   font-size: 13px;
-  color: var(--ink-3);
+  color: var(--ink);
   cursor: pointer;
   text-align: left;
 }
@@ -790,22 +790,23 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  color: #b8bec9;
+  color: #4d6bfe;
 }
 
 .think-row.is-live .think-icon {
-  color: var(--seal);
+  color: #4d6bfe;
 }
 
 .think-star {
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .think-spinner {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border: 2px solid var(--seal);
+  border: 2px solid #4d6bfe;
   border-top-color: transparent;
   border-radius: 50%;
   animation: think-spin 0.8s linear infinite;
@@ -818,52 +819,62 @@
 .think-label {
   flex-shrink: 0;
   font-weight: 500;
+  color: var(--ink);
 }
 
 .think-row.is-live .think-label {
-  color: var(--seal);
-}
-
-.think-preview {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #b8bec9;
-  font-size: 12px;
+  color: #4d6bfe;
 }
 
 .think-chevron {
   flex-shrink: 0;
-  font-size: 10px;
-  color: #b8bec9;
-  transition: transform 0.15s;
+  font-size: 14px;
+  line-height: 1;
+  color: #9aa1b0;
 }
 
+/* 思考正文：逐条圆点段落，无背景无边框 */
 .think-body {
   margin-top: 4px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8f9fb;
-  font-size: 12px;
+  padding: 2px 0 2px 21px;
+  font-size: 13px;
   line-height: 1.7;
-  color: var(--ink-3);
-  white-space: pre-wrap;
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 
-/* DSH 风格：思考中正文放宽高度、持续流式滚动 */
+.think-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.think-list li {
+  position: relative;
+  padding-left: 17px;
+  margin: 0 0 10px;
+  color: var(--ink-2);
+}
+
+.think-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: #9aa1b0;
+}
+
+.think-list li:last-child {
+  margin-bottom: 0;
+}
+
+/* 思考中：持续流式滚动 */
 .think-body.is-live {
   max-height: 320px;
-  border-color: var(--seal-soft);
 }
 
-/* 流光渐变扫过效果（生成中文字） */
-.think-body.is-live .think-text {
+/* 工具行运行中的文字流光（DeepSeek 式：灰字上扫过品牌色流光） */
+.tool-row.is-running .tool-row-name,
+.tool-row.is-running .tool-row-preview {
   background: linear-gradient(
     90deg,
     #9aa1ad 0%,
@@ -876,19 +887,20 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: think-shimmer 2.2s linear infinite;
+  animation: text-shimmer 2.2s linear infinite;
 }
 
-@keyframes think-shimmer {
+@keyframes text-shimmer {
   from { background-position: 180% 0; }
   to { background-position: -220% 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .think-body.is-live .think-text {
+  .tool-row.is-running .tool-row-name,
+  .tool-row.is-running .tool-row-preview {
     animation: none;
     background: none;
-    color: var(--ink-3);
+    color: var(--seal);
   }
 }
 
@@ -1136,6 +1148,40 @@
   box-shadow: inset 3px 0 0 0 var(--seal);
 }
 
+/* ── 顶部模式徽标（对话开始后左上角展示当前模式，不可切换） ── */
+.chat-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  justify-content: flex-start;
+  padding: 12px 32px 10px;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--surface) 45%, rgba(255, 255, 255, 0));
+}
+
+.chat-mode-badge {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--ink-2);
+  background: #f1f2f6;
+  border: 1px solid #e4e7ee;
+  white-space: nowrap;
+}
+
+.chat-mode-badge .anticon {
+  font-size: 12px;
+  color: var(--seal);
+}
+
 /* ── 底部输入（DeepSeek 式：模式胶囊 + 大圆角输入框 + 圆形发送钮） ── */
 .composer {
   padding: 0 32px 18px;
@@ -1175,7 +1221,7 @@
 .chat-mode-seg.ant-segmented {
   background: #eef0f4;
   border-radius: 999px;
-  padding: 3px;
+  padding: 4px;
 }
 
 .chat-mode-seg .ant-segmented-item {
@@ -1185,25 +1231,28 @@
 
 .chat-mode-seg .ant-segmented-item-selected {
   color: var(--seal);
-  box-shadow: none;
-  background: transparent;
+  background: var(--surface);
+  border-radius: 999px;
+  /* 静止态高亮：antd v6 的 thumb 仅在切换动画期间存在，动画结束由选中项自身背景接管，两者样式必须一致 */
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.08), 0 2px 6px rgba(16, 24, 40, 0.08);
 }
 
 .chat-mode-seg .ant-segmented-thumb {
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px rgba(180, 56, 47, 0.5), 0 1px 3px rgba(16, 24, 40, 0.06);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.08), 0 2px 6px rgba(16, 24, 40, 0.08);
 }
 
 .mode-opt {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 4px;
-  font-size: 13px;
+  padding: 5px 10px;
+  font-size: 14px;
 }
 
 .mode-opt .anticon {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .composer-box {

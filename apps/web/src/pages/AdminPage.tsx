@@ -26,6 +26,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentsApi, maintenanceApi, promptsApi, settingsApi, usersApi } from '../api';
 import { runDocumentBatch } from './documentBatch';
+import OverlayScrollbar from '../components/OverlayScrollbar';
 
 /** 提示词 key 的展示名（未知 key 回退为原 key） */
 const PROMPT_LABELS: Record<string, string> = {
@@ -328,6 +329,12 @@ function TaskLanes({ lanes, loading, refresh }: { lanes?: Lanes; loading: boolea
 
   return (
     <Card className="task-lane" loading={loading}>
+      <OverlayScrollbar
+        getScroller={() =>
+          document.querySelector<HTMLElement>('.task-lane .ant-tabs-body-holder')
+        }
+        deps={[lanes]}
+      />
       <Tabs
         defaultActiveKey="running"
         items={[

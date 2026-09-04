@@ -19,6 +19,7 @@ import type { DocumentContent, DocumentListItem, FileType } from '@myrag/shared'
 import { FILE_TYPES } from '@myrag/shared';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { documentsApi } from '../api';
+import OverlayScrollbar from '../components/OverlayScrollbar';
 import { useAuthStore } from '../store/auth';
 import { useUiStore } from '../store/ui';
 import { useChatStore } from '../store/chat';
@@ -44,6 +45,7 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
   const [content, setContent] = useState<DocumentContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +92,7 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
           ) : error ? (
             <p className="doc-preview-empty">{error}</p>
           ) : content && content.chunks.length > 0 ? (
-            <div className="doc-preview-body">
+            <div className="doc-preview-body" ref={bodyRef}>
               {content.chunks.map((c) => (
                 <div key={c.chunkIndex} className="doc-preview-chunk">
                   {c.text}
@@ -99,6 +101,9 @@ function DocumentPreviewModal({ target, onClose }: { target: PreviewTarget | nul
             </div>
           ) : (
             <p className="doc-preview-empty">{previewEmptyHint(target.status)}</p>
+          )}
+          {content && content.chunks.length > 0 && (
+            <OverlayScrollbar getScroller={() => bodyRef.current} deps={[content]} />
           )}
           <Button
             type="primary"
@@ -204,6 +209,10 @@ export default function DocumentsPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const batchBusyRef = useRef(false);
+
+  // 悬浮滚动条的目标滚动容器（.ant-table 由 flex 布局约束为唯一滚动容器）
+  const tableCardRef = useRef<HTMLDivElement>(null);
+  const previewBodyRef = useRef<HTMLDivElement>(null);
 
   const writeParams = (next: { q: string; type: string; status: string; year: string }) => {
     const params = new URLSearchParams();
@@ -372,23 +381,26 @@ export default function DocumentsPage() {
     ),
   };
 
+  const filenameColumn: NonNullable<TableProps<DocumentListItem>['columns']>[number] = {
+    title: '文件名',
+    dataIndex: 'filename',
+    className: 'doc-name-cell',
+    ellipsis: { showTitle: false },
+    sorter: (a, b) => a.filename.localeCompare(b.filename, 'zh'),
+    render: (v: string) => (
+      <Tooltip title={v} placement="topLeft">
+        <span>{v}</span>
+      </Tooltip>
+    ),
+  };
+
   const columns: TableProps<DocumentListItem>['columns'] = isMobile
     ? [
-        {
-          title: '文件名',
-          dataIndex: 'filename',
-          className: 'doc-name-cell',
-          sorter: (a, b) => a.filename.localeCompare(b.filename, 'zh'),
-        },
+        filenameColumn,
         actionColumn,
       ]
     : [
-        {
-          title: '文件名',
-          dataIndex: 'filename',
-          className: 'doc-name-cell',
-          sorter: (a, b) => a.filename.localeCompare(b.filename, 'zh'),
-        },
+        filenameColumn,
         {
           title: '类型',
           dataIndex: 'fileType',
@@ -431,16 +443,12 @@ export default function DocumentsPage() {
       ];
 
   return (
-    <div className="page">
+    <div className="page page-docs">
       <div className="page-header">
         <h1>文档库</h1>
-        <p>
-          {isManager
-            ? '上传制度、流程等文档，向量入库后即可在智能问答中检索。'
-            : '浏览制度与流程文件，预览或下载后可在智能问答中检索。'}
-        </p>
+        {!isManager && <p>浏览制度与流程文件，预览或下载后可在智能问答中检索。</p>}
       </div>
-      <div className="page-card docs-toolbar">
+      <div className="docs-toolbar">
         <Space size={12} wrap>
           <Button
             icon={<FilterOutlined />}
@@ -554,12 +562,13 @@ export default function DocumentsPage() {
         )}
       </div>
 
-      <div className="page-card">
+      <div ref={tableCardRef} className="docs-table-card">
         <Table<DocumentListItem>
           rowKey="documentId"
           loading={isLoading}
           dataSource={data?.documents ?? []}
           columns={columns}
+          tableLayout="fixed"
           rowSelection={
             isManager
               ? {
@@ -587,6 +596,11 @@ export default function DocumentsPage() {
                 : '暂无文档',
           }}
           size={isMobile ? 'small' : 'middle'}
+        />
+        <OverlayScrollbar
+          getScroller={() => tableCardRef.current?.querySelector<HTMLDivElement>('.ant-table') ?? null}
+          topOffset={() => tableCardRef.current?.querySelector<HTMLElement>('.ant-table-thead')?.offsetHeight ?? 0}
+          deps={[data, isMobile]}
         />
       </div>
 

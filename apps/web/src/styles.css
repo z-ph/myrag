@@ -21,6 +21,37 @@
   box-sizing: border-box;
 }
 
+/* ── 全局窄滚动条（透明轨道 + 细悬浮拇指，不挤占内容宽度） ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 33, 56, 0.28) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(26, 33, 56, 0.28);
+  border-radius: 999px;
+  /* 透明描边让可视拇指只有 ~2px，悬浮在内容之上 */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(26, 33, 56, 0.45);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html,
 body,
 #root {
@@ -276,9 +307,107 @@ body {
   color: var(--seal);
 }
 
+/* 文件名单行省略（列已开 ellipsis + tableLayout fixed，Tooltip 显示全名） */
 .doc-name-cell {
-  white-space: normal;
-  word-break: break-word;
+  min-width: 160px;
+}
+
+/* ── 文档库：整页锁定视口高度，平铺无卡片；仅表格主体滚动 ── */
+.page-docs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-docs .docs-table-card {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* antd v6 结构：wrapper > ant-spin(root) > ant-spin-container > ant-table + pagination
+   高度沿这条链传导到 .ant-table，让它成为唯一滚动容器 */
+.page-docs .docs-table-card .ant-table-wrapper,
+.page-docs .docs-table-card .ant-table-wrapper > .ant-spin,
+.page-docs .docs-table-card .ant-spin-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-docs .docs-table-card .ant-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* 隐藏原生滚动条：不占任何布局宽度，由自定义悬浮滚动条代替 */
+  scrollbar-width: none;
+}
+
+.page-docs .docs-table-card .ant-table::-webkit-scrollbar {
+  display: none;
+}
+
+/* 中间容器不拦截滚动，保证 .ant-table 是唯一滚动容器 */
+.page-docs .docs-table-card .ant-table-container,
+.page-docs .docs-table-card .ant-table-content {
+  overflow: visible;
+}
+
+/* 页头 / 工具栏不被压缩，空间变化全部由表格吸收 */
+.page-docs .page-header,
+.page-docs .docs-toolbar {
+  flex-shrink: 0;
+}
+
+/* 分页（表尾）固定在底部，不参与滚动 */
+.page-docs .docs-table-card .ant-pagination {
+  flex-shrink: 0;
+}
+
+/* 表格主体滚动时表头吸顶 */
+.page-docs .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--paper);
+}
+
+/* ── 通用零占宽悬浮滚动条（OverlayScrollbar 组件） ────────── */
+.osb-native-hidden {
+  scrollbar-width: none !important;
+}
+
+.osb-native-hidden::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.osb-track {
+  position: fixed;
+  width: 8px;
+  z-index: 1500;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.osb-thumb {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  width: 6px;
+  border-radius: 999px;
+  background: rgba(26, 33, 56, 0.28);
+}
+
+.osb-track:hover .osb-thumb,
+.osb-track.is-dragging .osb-thumb {
+  background: rgba(26, 33, 56, 0.45);
 }
 
 .task-lane .ant-card-body {

@@ -19,6 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useChatStore, type ChatMessage, type ToolStep } from '../store/chat';
 import { useAuthStore } from '../store/auth';
 import { documentsApi, settingsApi } from '../api';
+import OverlayScrollbar from '../components/OverlayScrollbar';
 import type { DocumentContent, SourceReference } from '@myrag/shared';
 import { buildFollowUpQuestions, shouldShowAssistantCopy } from './chatMessageExtras';
 import Markdown from 'react-markdown';
@@ -100,6 +101,7 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
   const [content, setContent] = useState<DocumentContent | null>(null);
   const [loading, setLoading] = useState(false);
   const hitRef = useRef<HTMLDivElement>(null);
+  const sourceDocRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setContent(null);
@@ -129,7 +131,7 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
           {loading || !content ? (
             <Spin style={{ display: 'block', margin: '24px auto' }} />
           ) : (
-            <div className="source-preview-doc">
+            <div className="source-preview-doc" ref={sourceDocRef}>
               {content.chunks.map((c) => (
                 <div
                   key={c.chunkIndex}
@@ -140,6 +142,9 @@ function SourcePreviewModal({ source, onClose }: { source: SourceReference | nul
                 </div>
               ))}
             </div>
+          )}
+          {content && content.chunks.length > 0 && (
+            <OverlayScrollbar getScroller={() => sourceDocRef.current} deps={[content]} />
           )}
           {source.documentId && (
             <Button type="primary" icon={<DownloadOutlined />} href={`/api/documents/${source.documentId}/file`}>
@@ -156,14 +161,21 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
   const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const wasLiveRef = useRef(false);
+  const startRef = useRef<number | null>(null);
+  const [elapsed, setElapsed] = useState<number | null>(null);
   const live = generating && reasoning.trim().length > 0;
 
   // DSH 风格：思考中自动展开流式显示，结束后自动收起（渲染期同步派生状态）
   if (live && !wasLiveRef.current) {
     wasLiveRef.current = true;
+    if (startRef.current == null) startRef.current = Date.now();
     setOpen(true);
   } else if (!live && wasLiveRef.current) {
     wasLiveRef.current = false;
+    if (startRef.current != null) {
+      setElapsed(Math.max(1, Math.round((Date.now() - startRef.current) / 1000)));
+      startRef.current = null;
+    }
     setOpen(false);
   }
 
@@ -175,17 +187,25 @@ function ReasoningBlock({ reasoning, generating }: { reasoning: string; generati
   }, [reasoning, open, live]);
 
   if (!reasoning.trim()) return null;
+  // 元宝风格文案：思考中/已思考（用时 N 秒）；历史消息无计时信息时只显示"已思考"
+  const label = live ? '正在思考…' : elapsed != null ? `已思考（用时 ${elapsed} 秒）` : '已思考';
+  // 正文按段落拆成条目，逐条带圆点展示
+  const items = reasoning.split('\n').map((s) => s.trim()).filter(Boolean);
   return (
     <div className={`think-row${live ? ' is-live' : ''}`}>
       <button type="button" className="think-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="think-icon">{live ? <span className="think-spinner" /> : <span className="think-star">✦</span>}</span>
-        <span className="think-label">思考过程</span>
-        {!open && <span className="think-preview">{reasoning.replace(/\s+/g, ' ').slice(0, 70)}</span>}
-        <span className="think-chevron">{open ? '▾' : '▸'}</span>
+        <span className="think-label">{label}</span>
+        <span className="think-chevron">⌄</span>
       </button>
       {open && (
         <div className={`think-body${live ? ' is-live' : ''}`} ref={bodyRef}>
-          <span className="think-text">{reasoning}</span>
+          <ul className="think-list">
+            {items.map((item, i) => (
+              <li key={i}>{item}</li>
+            ))}
+          </ul>
+          <OverlayScrollbar getScroller={() => bodyRef.current} deps={[reasoning, open]} />
         </div>
       )}
     </div>
@@ -219,6 +239,7 @@ function renderToolOutput(output: string): React.ReactNode {
 /** 单条工具调用：DSH 风格行（图标 + 名称 + 单行摘要，点击展开结果） */
 function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
   const [open, setOpen] = useState(false);
+  const outputRef = useRef<HTMLDivElement>(null);
   const running = tc.status === 'running';
   const done = tc.status === 'done';
   const preview = useMemo(() => toolPreview(tc), [tc]);
@@ -241,7 +262,7 @@ function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
         {done && <span className={`tool-row-chevron${open ? ' open' : ''}`}>▸</span>}
       </button>
       {open && done && (
-        <div className="tool-output">
+        <div className="tool-output" ref={outputRef}>
           {devMode ? (
             <>
               <div className="tool-output-section">
@@ -258,6 +279,7 @@ function ToolRow({ tc, devMode }: { tc: ToolStep; devMode: boolean }) {
           )}
         </div>
       )}
+      {open && done && <OverlayScrollbar getScroller={() => outputRef.current} deps={[tc.output, open]} />}
     </div>
   );
 }
@@ -491,6 +513,7 @@ export default function ChatPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const { data: suggestionData } = useQuery({ queryKey: ['suggestions'], queryFn: () => settingsApi.getSuggestions() });
   const suggestions = suggestionData?.questions?.length ? suggestionData.questions : DEFAULT_SUGGESTIONS;
 
@@ -534,7 +557,15 @@ export default function ChatPage() {
   return (
     <div className={`chat${!isLoadingHistory && messages.length === 0 ? ' is-empty' : ''}`}>
       <div className="chat-main">
-        <div className="chat-scroll">
+        {messages.length > 0 && (
+          <div className="chat-topbar">
+            <span className={`chat-mode-badge is-${mode}`}>
+              {mode === 'fast' ? <ThunderboltFilled /> : <SearchOutlined />}
+              {mode === 'fast' ? '快速回答' : '深度检索'}
+            </span>
+          </div>
+        )}
+        <div className="chat-scroll" ref={chatScrollRef}>
           {isLoadingHistory ? (
             <Spin style={{ display: 'block', margin: '80px auto' }} />
           ) : messages.length === 0 ? (
@@ -548,21 +579,25 @@ export default function ChatPage() {
             </div>
           )}
         </div>
+        <OverlayScrollbar getScroller={() => chatScrollRef.current} deps={[messages, isLoadingHistory]} />
 
         <div className="composer">
           <div className="composer-wrap">
-            <div className="chat-mode-row">
-              <Segmented
-                className="chat-mode-seg"
-                value={mode}
-                aria-label="问答模式"
-                onChange={(v) => setMode(v as import('@myrag/shared').QaMode)}
-                options={[
-                  { label: <span className="mode-opt"><ThunderboltFilled />快速回答</span>, value: 'fast' },
-                  { label: <span className="mode-opt"><SearchOutlined />深度检索</span>, value: 'deep' },
-                ]}
-              />
-            </div>
+            {/* 模式胶囊只在空会话（尚未开始对话）时出现；对话开始后不可再切换 */}
+            {messages.length === 0 && (
+              <div className="chat-mode-row">
+                <Segmented
+                  className="chat-mode-seg"
+                  value={mode}
+                  aria-label="问答模式"
+                  onChange={(v) => setMode(v as import('@myrag/shared').QaMode)}
+                  options={[
+                    { label: <span className="mode-opt"><ThunderboltFilled />快速回答</span>, value: 'fast' },
+                    { label: <span className="mode-opt"><SearchOutlined />深度检索</span>, value: 'deep' },
+                  ]}
+                />
+              </div>
+            )}
             {docRef && (
               <div className="chat-doc-ref">
                 <FileTextOutlined />

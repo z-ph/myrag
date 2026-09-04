@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Dropdown, message, Popconfirm } from 'antd';
 import {
@@ -15,6 +15,7 @@ import {
 import { useAuthStore } from '../store/auth';
 import { useUiStore } from '../store/ui';
 import { useChatStore, type ConversationMeta } from '../store/chat';
+import OverlayScrollbar from '../components/OverlayScrollbar';
 
 /** 历史会话分组（DeepSeek 侧栏式）：今天 / 7天内 / 30天内 / 按月。传入前需按 updatedAt 降序。 */
 interface ConvGroup {
@@ -58,6 +59,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
   const logout = useAuthStore((s) => s.logout);
   const openLogin = useUiStore((s) => s.openLogin);
   const { historyMetas, conversationId, loadConversation, startNewConversation, deleteConversation } = useChatStore();
+  const sidebarBodyRef = useRef<HTMLDivElement>(null);
 
   const NAV_ITEMS = [
     { key: '/chat', icon: <CommentOutlined />, label: '智能问答' },
@@ -108,7 +110,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
         ))}
       </nav>
       <div className="sidebar-divider" role="separator" />
-      <div className="sidebar-body">
+      <div className="sidebar-body" ref={sidebarBodyRef}>
         <button type="button" className="sidebar-new" onClick={handleNewConversation}>
           <PlusCircleOutlined />
           <span>开启新对话</span>
@@ -151,6 +153,7 @@ export default function AppSidebar({ onFold, onNavigated }: { onFold: () => void
             </div>
           ))
         )}
+        <OverlayScrollbar getScroller={() => sidebarBodyRef.current} deps={[convGroups, conversationId]} />
       </div>
       <div className="sidebar-foot">
         {user ? (

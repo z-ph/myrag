@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AlignLeftOutlined, PlusCircleOutlined } from '@ant-design/icons';
 import { useAuthStore } from './store/auth';
 import { useChatStore } from './store/chat';
 import { isNarrowViewport } from './utils/viewport';
+import OverlayScrollbar from './components/OverlayScrollbar';
 import AppSidebar from './pages/AppSidebar';
 import ChatPage from './pages/ChatPage';
 import DocumentsPage from './pages/DocumentsPage';
@@ -17,6 +18,7 @@ function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     void restore();
@@ -48,7 +50,7 @@ function AppShell() {
           <AlignLeftOutlined />
         </button>
       )}
-      <main className="app-main">
+      <main className="app-main" ref={mainRef}>
         {/* 窄屏顶栏：左历史、右新对话（仅聊天页显示新对话钮） */}
         <div className="chat-mobile-bar">
           <button type="button" className="chat-mobile-icon" aria-label="打开菜单" onClick={() => setSidebarOpen(true)}>
@@ -70,6 +72,7 @@ function AppShell() {
             <Route path="*" element={<Navigate to="/chat" replace />} />
           </Routes>
         )}
+        <OverlayScrollbar getScroller={() => mainRef.current} deps={[location.pathname, loading]} />
       </main>
       <LoginModal />
     </div>
