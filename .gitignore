@@ -21,3 +21,6 @@ copilot/
 
 # AI 助手本地工作数据（memory 等，不入库）
 .workbuddy/
+
+# RAG 语料源文件（政策制度原件，仅本地保留，不入库）
+docs/knowledge-base-raw/
