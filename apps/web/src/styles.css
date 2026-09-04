@@ -391,7 +391,9 @@ body {
 .osb-track {
   position: fixed;
   width: 8px;
-  z-index: 1500;
+  /* 低于 antd 浮层（Popconfirm/Popover 1030、Modal 1000），避免滚动条悬浮在弹窗之上；
+     挂在 Modal 内的实例位于 .ant-modal-wrap 堆叠上下文中，不受此全局值影响 */
+  z-index: 900;
   cursor: pointer;
   touch-action: none;
 }
